@@ -438,8 +438,14 @@ bool WebcamCapture::configureReader(
                     MF_MT_FRAME_SIZE,
                     static_cast<UINT32>(chosen.width),
                     static_cast<UINT32>(chosen.height));
+                // The selected mode's own rate: asking 30 of a 24 fps mode is
+                // accepted, and the reader then reports 30 -- a rate the
+                // camera does not have.
                 MFSetAttributeRatio(
-                    outputType.Get(), MF_MT_FRAME_RATE, static_cast<UINT32>(std::max(1, requestedFps)), 1);
+                    outputType.Get(),
+                    MF_MT_FRAME_RATE,
+                    static_cast<UINT32>(chosen.fps > 0 ? chosen.fps : std::max(1, requestedFps)),
+                    1);
             }
             if (SUCCEEDED(sourceReader_->SetCurrentMediaType(
                     MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get()))) {
