@@ -9,7 +9,7 @@ struct WebcamFormat {
     int fps = 0;
     /**
      * True for MJPEG/H264 modes, which reach higher resolutions than a camera's
-     * uncompressed ones but need a decoder MFT in front of the RGB32 conversion.
+     * uncompressed ones but cost a decode on the CPU for every frame.
      */
     bool compressed = false;
 };
@@ -24,18 +24,20 @@ struct WebcamFormat {
 // then upscaled into the overlay, which is the pixelation users reported.
 //
 // Rules, in order:
-//   * uncompressed modes beat compressed ones outright, whatever their size.
-//     Pinning a camera's MJPEG mode and asking the source reader for RGB32
-//     leaves it delivering no samples at all on some hosts -- a recording with
-//     no camera in it, which is far worse than a smaller one that works;
+//   * a compressed mode is out when decoding it costs more than 1080p at 30
+//     fps (an MJPEG 4K mode, say), unless the camera offers nothing cheaper.
+//     Under that ceiling it competes like any other mode: a C920 only reaches
+//     1080p at 30 in MJPEG, its uncompressed 1080p runs at 5 fps;
 //   * only formats that fit inside the target in BOTH dimensions are eligible,
 //     so an ultrawide mode cannot sneak in on pixel count alone;
 //   * among those, the frame rate comes first: the highest rate up to the
-//     target wins, so a C920's 2304x1536 at 2 fps loses to its 800x448 at 30.
+//     target wins, so a C920's 2304x1536 at 2 fps loses to its 1080p at 30.
 //     Ranking pixels first drove that camera at 2 to 5 fps on every preset;
 //   * then the most pixels;
-//   * ties go to the lowest frame rate that still reaches the target, else the
-//     highest available -- a 1080p60 mode is no help when we encode at 30;
+//   * then an uncompressed mode over a compressed one, which only adds a decode;
+//   * remaining ties go to the lowest frame rate that still reaches the
+//     target, else the highest available -- a 1080p60 mode is no help when we
+//     encode at 30;
 //   * if nothing fits (a camera that only does 4K), the smallest mode at the
 //     best rate wins, so we scale down rather than push 1 GB/s of RGB32
 //     through the encoder;
