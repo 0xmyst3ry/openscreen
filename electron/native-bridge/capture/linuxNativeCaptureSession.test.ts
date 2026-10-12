@@ -490,4 +490,95 @@ describe("LinuxNativeCaptureSession", () => {
 		await pending;
 		expect(settled).toBe(true);
 	});
+
+	describe("first-frame timeout (#1101)", () => {
+		// Only the timers are faked: the fake helper's stdout still needs real
+		// ticks to deliver its events, which `setImmediate` gives.
+		const flushEvents = () => new Promise((resolve) => setImmediate(resolve));
+
+		async function startFaked(deferStart = false) {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const session = newSession(deferStart);
+			const started = session.start();
+			helper.emitEvent({ event: "ready", timestampMs: 1_000 });
+			await flushEvents();
+			await started;
+			return session;
+		}
+
+		async function answerPicker() {
+			helper.emitEvent({ event: "source-selected", timestampMs: 1_100, nodeId: 42 });
+			await flushEvents();
+		}
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		/**
+		 * A stream that never delivers a frame and never reports an error used to
+		 * leave the start hanging forever, with the HUD stuck before recording.
+		 */
+		it("fails the start and kills the helper when no frame follows the picker", async () => {
+			const session = await startFaked(true);
+			await answerPicker();
+
+			// A countdown between the answer and the arm is not first-frame time.
+			vi.advanceTimersByTime(60_000);
+			expect(helper.killed).toBe(false);
+
+			session.arm();
+			const outcome = expect(session.waitUntilCapturing()).rejects.toThrow(
+				/could not start screen capture/,
+			);
+			vi.advanceTimersByTime(9_999);
+			expect(helper.killed).toBe(false);
+			vi.advanceTimersByTime(1);
+
+			await outcome;
+			expect(helper.killed).toBe(true);
+		});
+
+		/** A human reading the picker has no upper bound; only what follows does. */
+		it("does not start the clock until the picker has answered", async () => {
+			const session = await startFaked();
+
+			let settled = false;
+			const capturing = session.waitUntilCapturing().finally(() => {
+				settled = true;
+			});
+			const outcome = expect(capturing).rejects.toThrow(/could not start screen capture/);
+			vi.advanceTimersByTime(600_000);
+			await flushEvents();
+			expect(settled).toBe(false);
+			expect(helper.killed).toBe(false);
+
+			await answerPicker();
+			vi.advanceTimersByTime(10_000);
+
+			await outcome;
+			expect(helper.killed).toBe(true);
+		});
+
+		it("leaves a capture whose first frame arrived in time running", async () => {
+			const session = await startFaked();
+
+			const capturing = session.waitUntilCapturing();
+			await answerPicker();
+			vi.advanceTimersByTime(9_000);
+			helper.emitEvent({
+				event: "capture-started",
+				timestampMs: 1_200,
+				path: "/tmp/recording.mp4",
+				width: 800,
+				height: 600,
+				fps: 30,
+			});
+			await flushEvents();
+			await capturing;
+
+			vi.advanceTimersByTime(60_000);
+			expect(helper.killed).toBe(false);
+		});
+	});
 });
