@@ -333,7 +333,7 @@ std::vector<WebcamFormat> readNativeFormats(IMFSourceReader* reader) {
  * Puts the camera itself on `wanted` by selecting the matching native type.
  *
  * Best-effort: a driver that refuses leaves the reader on whatever it had, and
- * the RGB32 request that follows still produces a usable -- if smaller -- frame.
+ * the output request that follows still produces a usable -- if smaller -- frame.
  */
 void selectNativeFormat(IMFSourceReader* reader, const WebcamFormat& wanted) {
     for (DWORD index = 0;; ++index) {
@@ -399,22 +399,8 @@ bool WebcamCapture::configureReader(
         return false;
     }
 
-    Microsoft::WRL::ComPtr<IMFMediaType> mediaType;
-    if (!succeeded(MFCreateMediaType(&mediaType), "MFCreateMediaType(webcam output)")) {
-        return false;
-    }
-    mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    // NV12 when the frame only has to reach the webcam encoder, which wants
-    // NV12 anyway. Asking for RGB32 instead makes the source reader decode AND
-    // convert every frame: measured at 92ms per 3840x2160 frame against 32ms
-    // for NV12, which is the difference between 11 fps and the camera's full
-    // 30. BGRA is still used when the frame is composited into the screen
-    // recording inline, which needs it in that layout.
-    deliversNv12_ = preferNv12;
-    mediaType->SetGUID(MF_MT_SUBTYPE, preferNv12 ? MFVideoFormat_NV12 : MFVideoFormat_RGB32);
-
     // Pick the capture format, then SELECT it on the source before asking for
-    // RGB32 output.
+    // an output type.
     //
     // Both halves matter. Handing Media Foundation an output type with no
     // MF_MT_FRAME_SIZE leaves the device on its default format -- 640x480 on a
@@ -434,27 +420,60 @@ bool WebcamCapture::configureReader(
               << chosen.fps << (chosen.compressed ? " (compressed)" : " (uncompressed)") << std::endl;
     selectNativeFormat(sourceReader_.Get(), chosen);
 
-    MFSetAttributeSize(
-        mediaType.Get(), MF_MT_FRAME_SIZE, static_cast<UINT32>(chosen.width), static_cast<UINT32>(chosen.height));
-    MFSetAttributeRatio(mediaType.Get(), MF_MT_FRAME_RATE, static_cast<UINT32>(std::max(1, requestedFps)), 1);
+    // Asks for `subtype` at the chosen size, then without one: some drivers
+    // refuse a size they nonetheless enumerate, and a slightly soft camera
+    // beats no camera -- the device default is what this code used before it
+    // asked for anything.
+    const auto requestOutput = [&](const GUID& subtype) {
+        for (const bool sized : {true, false}) {
+            Microsoft::WRL::ComPtr<IMFMediaType> outputType;
+            if (FAILED(MFCreateMediaType(&outputType))) {
+                return false;
+            }
+            outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+            outputType->SetGUID(MF_MT_SUBTYPE, subtype);
+            if (sized) {
+                MFSetAttributeSize(
+                    outputType.Get(),
+                    MF_MT_FRAME_SIZE,
+                    static_cast<UINT32>(chosen.width),
+                    static_cast<UINT32>(chosen.height));
+                MFSetAttributeRatio(
+                    outputType.Get(), MF_MT_FRAME_RATE, static_cast<UINT32>(std::max(1, requestedFps)), 1);
+            }
+            if (SUCCEEDED(sourceReader_->SetCurrentMediaType(
+                    MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get()))) {
+                return true;
+            }
+            if (sized) {
+                std::cerr << "WARNING: Webcam rejected "
+                          << (subtype == MFVideoFormat_NV12 ? "NV12" : "RGB32") << " at " << chosen.width
+                          << "x" << chosen.height << "; trying the device default size" << std::endl;
+            }
+        }
+        return false;
+    };
 
-    if (FAILED(sourceReader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, mediaType.Get()))) {
-        // Some drivers refuse a size they nonetheless enumerate. A slightly soft
-        // camera beats no camera, so drop the size and let the driver choose --
-        // exactly what this code did before it asked for anything.
-        std::cerr << "WARNING: Webcam rejected " << chosen.width << "x" << chosen.height
-                  << "; falling back to the device default format" << std::endl;
-        Microsoft::WRL::ComPtr<IMFMediaType> fallbackType;
-        if (!succeeded(MFCreateMediaType(&fallbackType), "MFCreateMediaType(webcam fallback)")) {
-            return false;
-        }
-        fallbackType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        fallbackType->SetGUID(MF_MT_SUBTYPE, preferNv12 ? MFVideoFormat_NV12 : MFVideoFormat_RGB32);
-        if (!succeeded(
-                sourceReader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, fallbackType.Get()),
-                "SetCurrentMediaType(webcam RGB32)")) {
-            return false;
-        }
+    // NV12 when the frame only has to reach the webcam encoder, which wants
+    // NV12 anyway. Asking for RGB32 instead makes the source reader decode AND
+    // convert every frame: measured at 92ms per 3840x2160 frame against 32ms
+    // for NV12, which is the difference between 11 fps and the camera's full
+    // 30. BGRA is still used when the frame is composited into the screen
+    // recording inline, which needs it in that layout.
+    //
+    // RGB32 is also the fallback for NV12, because it is the only conversion
+    // MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING documents: "Conversion from YUV
+    // to RGB-32". A reader that turns down NV12 from a YUY2 or MJPEG source is
+    // within its contract -- Windows 11 accepted both here, nothing promises
+    // it -- and without this fallback the refusal costs the take its camera.
+    // The webcam encoder takes BGRA as well as NV12.
+    deliversNv12_ = preferNv12 && requestOutput(MFVideoFormat_NV12);
+    if (preferNv12 && !deliversNv12_) {
+        std::cerr << "WARNING: Webcam cannot deliver NV12; capturing RGB32 instead" << std::endl;
+    }
+    if (!deliversNv12_ && !requestOutput(MFVideoFormat_RGB32)) {
+        std::cerr << "ERROR: Webcam accepted neither NV12 nor RGB32 output" << std::endl;
+        return false;
     }
     sourceReader_->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
     sourceReader_->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);

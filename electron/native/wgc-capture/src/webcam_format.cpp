@@ -16,6 +16,12 @@ long long pixels(const WebcamFormat& format) {
     return static_cast<long long>(format.width) * static_cast<long long>(format.height);
 }
 
+// The part of a mode's frame rate the recording can use: the webcam is encoded
+// at the target rate, so anything above it buys nothing.
+int usefulFps(const WebcamFormat& format, int targetFps) {
+    return std::min(format.fps, targetFps);
+}
+
 // True when `candidate` is a better frame rate than `best` for a target of
 // `targetFps`: the lowest rate that still reaches the target, or -- when no
 // mode reaches it -- the highest one on offer.
@@ -64,6 +70,14 @@ WebcamFormat chooseWebcamFormat(
         }
         if (best == nullptr) {
             best = &format;
+            continue;
+        }
+        // Frame rate before pixels: a camera's largest uncompressed modes are
+        // often stills-grade, 2 to 5 fps on a Logitech C920.
+        if (usefulFps(format, targetFps) != usefulFps(*best, targetFps)) {
+            if (usefulFps(format, targetFps) > usefulFps(*best, targetFps)) {
+                best = &format;
+            }
             continue;
         }
         if (pixels(format) != pixels(*best)) {
