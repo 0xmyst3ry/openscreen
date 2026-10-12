@@ -23,13 +23,26 @@ import { findPipeWireCursorHelperPath } from "../cursor/recording/pipeWireCursor
  * TIMEOUTS. `ready` arrives in milliseconds and means the helper loaded
  * libpipewire and reached the portal. `capture-started` cannot arrive until a
  * human has clicked through the compositor's dialog, which has no upper bound —
- * so it is deliberately NOT on a timer. The caller shows its own UI for that
- * wait; a timeout here would cancel recordings whose user was merely reading the
- * dialog.
+ * so the picker is deliberately NOT on a timer. The caller shows its own UI for
+ * that wait; a timeout there would cancel recordings whose user was merely
+ * reading the dialog. Once the picker has answered, the first frame IS bounded:
+ * see [`FIRST_FRAME_TIMEOUT_MS`].
  */
 
 const READY_TIMEOUT_MS = 5_000;
 const STOP_TIMEOUT_MS = 15_000;
+/**
+ * How long the first frame may take once the picker has answered (#1101).
+ *
+ * Normal start-up after the answer is well under that: connect the stream,
+ * negotiate a format (twice when a DMA-BUF allocation failure falls back to
+ * shared memory, #1069), skip up to eight crop-less frames, probe the encoder
+ * ladder. The helper's own give-ups land inside it too — 60 failed imports in a
+ * row is 1–2 s — so a helper that CAN say what went wrong does, and this only
+ * catches a stream that stays silent. Without it, frames the shim never
+ * delivers leave the HUD waiting forever, with nothing on screen to say so.
+ */
+const FIRST_FRAME_TIMEOUT_MS = 10_000;
 
 export interface LinuxCaptureConfig {
 	outputPath: string;
@@ -79,6 +92,7 @@ export class LinuxNativeCaptureSession {
 	private capturing = false;
 	private startedResolve: (() => void) | null = null;
 	private startedReject: ((error: Error) => void) | null = null;
+	private firstFrameTimer: NodeJS.Timeout | null = null;
 
 	private sourceSelected = false;
 	private sourceSelectedResolve: (() => void) | null = null;
@@ -187,9 +201,9 @@ export class LinuxNativeCaptureSession {
 	/**
 	 * Resolves once the user has answered the compositor's picker.
 	 *
-	 * No timeout, for the same reason as [`waitUntilCapturing`]: a human is
-	 * reading a dialog and there is no upper bound on that. Resolves immediately
-	 * if the answer already arrived, so callers need not race the event.
+	 * No timeout: a human is reading a dialog and there is no upper bound on
+	 * that. Resolves immediately if the answer already arrived, so callers need
+	 * not race the event.
 	 *
 	 * A session started WITHOUT `deferStart` still reports this — it simply
 	 * arrives moments before capture rather than being waited on.
@@ -223,8 +237,9 @@ export class LinuxNativeCaptureSession {
 	}
 
 	/**
-	 * Resolves when the first frame has been encoded — i.e. once the user has
-	 * answered the portal picker. No timeout, on purpose: see the class doc.
+	 * Resolves when the first frame has been encoded. The picker's wait is not
+	 * timed; the first frame after it is, and the helper is killed if it never
+	 * comes. See the class doc.
 	 */
 	waitUntilCapturing(): Promise<void> {
 		if (!this.process) {
@@ -236,9 +251,46 @@ export class LinuxNativeCaptureSession {
 			return Promise.resolve();
 		}
 		return new Promise<void>((resolve, reject) => {
-			this.startedResolve = resolve;
-			this.startedReject = reject;
+			const settle = () => {
+				if (this.firstFrameTimer) {
+					clearTimeout(this.firstFrameTimer);
+					this.firstFrameTimer = null;
+				}
+			};
+			this.startedResolve = () => {
+				settle();
+				resolve();
+			};
+			this.startedReject = (error) => {
+				settle();
+				reject(error);
+			};
+			this.startFirstFrameTimer();
 		});
+	}
+
+	/**
+	 * Starts the first-frame clock once a capture wait is pending AND the picker
+	 * has answered, whichever comes last. Never earlier: a prepared session sits
+	 * answered through the whole countdown, and the picker itself has no bound.
+	 */
+	private startFirstFrameTimer() {
+		if (!this.sourceSelected || !this.startedReject || this.firstFrameTimer) {
+			return;
+		}
+		this.firstFrameTimer = setTimeout(() => {
+			this.firstFrameTimer = null;
+			const reject = this.startedReject;
+			this.startedResolve = null;
+			this.startedReject = null;
+			this.kill();
+			reject?.(
+				new Error(
+					"OpenScreen could not start screen capture: the screen share delivered no " +
+						`frame within ${FIRST_FRAME_TIMEOUT_MS / 1000} s.`,
+				),
+			);
+		}, FIRST_FRAME_TIMEOUT_MS);
 	}
 
 	pause() {
@@ -374,6 +426,7 @@ export class LinuxNativeCaptureSession {
 				this.sourceSelectedResolve?.();
 				this.sourceSelectedResolve = null;
 				this.sourceSelectedReject = null;
+				this.startFirstFrameTimer();
 				return;
 
 			case "stream-started":
