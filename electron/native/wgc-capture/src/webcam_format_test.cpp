@@ -46,6 +46,26 @@ const std::vector<WebcamFormat> kC920 = {
     {1600, 896, 30, true},   {1920, 1080, 30, true},
 };
 
+// A Logitech StreamCam as Media Foundation lists it on Windows 11: every mode
+// it has at 30 fps, plus its largest YUY2 ones. The NV12 entries mirror the
+// MJPEG ones size for size, so the camera reaches 1080p at 30 uncompressed.
+const std::vector<WebcamFormat> kStreamCam = {
+    {640, 480, 30, false},   {848, 480, 30, false},   {960, 540, 15, false},
+    {1280, 720, 10, false},  {1600, 896, 8, false},   {1920, 1080, 5, false},
+    {640, 480, 30, false},   {640, 480, 30, true},    {848, 480, 30, false},
+    {848, 480, 30, true},    {960, 540, 30, false},   {960, 540, 30, true},
+    {1280, 720, 30, false},  {1280, 720, 30, true},   {1600, 896, 30, false},
+    {1600, 896, 30, true},   {1920, 1080, 30, false}, {1920, 1080, 30, true},
+};
+
+void expectCompressed(const std::string& label, WebcamFormat actual, bool compressed) {
+    if (actual.compressed == compressed) {
+        return;
+    }
+    std::printf("FAIL %s: expected a%s mode\n", label.c_str(), compressed ? " compressed" : "n uncompressed");
+    ++failures;
+}
+
 }  // namespace
 
 int main() {
@@ -53,26 +73,48 @@ int main() {
     // back with the 640x480 default it enumerates first.
     expectFormat("brio targets 1080p", chooseWebcamFormat(kBrio, 1920, 1080, 30), 1920, 1080, 30);
 
-    // Asked for more than the camera can do uncompressed, it must stop at the
-    // best uncompressed mode rather than pin an MJPEG one. Pinning MJPEG and
-    // asking the source reader for RGB32 produced a reader that delivered no
-    // samples at all, so the take had no camera in it.
-    expectFormat(
-        "4K request settles for the best uncompressed mode",
-        chooseWebcamFormat(kBrio, 3840, 2160, 30),
-        1920,
-        1080,
-        30);
-    if (chooseWebcamFormat(kBrio, 3840, 2160, 30).compressed) {
-        std::printf("FAIL 4K request must not pin a compressed mode\n");
-        ++failures;
+    // Asked for more than 1080p, a BRIO stays on its uncompressed 1080p30: its
+    // larger modes are MJPEG, and decoding 1440p or 4K at 30 costs more than
+    // the 1080p30 ceiling (4K takes 20 ms of every 33 ms frame on a desktop).
+    for (const int height : {1440, 2160}) {
+        const std::string label = "brio on " + std::to_string(height) + "p";
+        const WebcamFormat chosen = chooseWebcamFormat(kBrio, height * 16 / 9, height, 30);
+        expectFormat(label + " stays at 1080p30", chosen, 1920, 1080, 30);
+        expectCompressed(label, chosen, false);
     }
 
-    // getopenscreen/openscreen#1112: ranking pixels first drove a C920 at
-    // 2304x1536 and 2 fps on the default 2160p preset, and at 1920x1080 and
-    // 5 fps on 1080p. A usable rate comes before size.
-    expectFormat("c920 on 2160p keeps 30 fps", chooseWebcamFormat(kC920, 3840, 2160, 30), 800, 448, 30);
-    expectFormat("c920 on 1080p keeps 30 fps", chooseWebcamFormat(kC920, 1920, 1080, 30), 800, 448, 30);
+    // getopenscreen/openscreen#1112: a C920 only reaches 1080p at 30 in MJPEG;
+    // its uncompressed 1080p runs at 5 fps. Excluding MJPEG outright left it on
+    // YUY2 800x448 at 30 on every preset.
+    for (const int height : {1080, 1440, 2160}) {
+        const std::string label = "c920 on " + std::to_string(height) + "p";
+        const WebcamFormat chosen = chooseWebcamFormat(kC920, height * 16 / 9, height, 30);
+        expectFormat(label + " takes MJPEG 1080p30", chosen, 1920, 1080, 30);
+        expectCompressed(label, chosen, true);
+    }
+
+    // The StreamCam already has NV12 1080p30, so MJPEG would only add a decode.
+    for (const int height : {1080, 1440, 2160}) {
+        const std::string label = "streamcam on " + std::to_string(height) + "p";
+        const WebcamFormat chosen = chooseWebcamFormat(kStreamCam, height * 16 / 9, height, 30);
+        expectFormat(label + " keeps NV12 1080p30", chosen, 1920, 1080, 30);
+        expectCompressed(label, chosen, false);
+    }
+
+    // Same size and rate: the uncompressed mode wins wherever it is listed.
+    expectCompressed(
+        "uncompressed breaks a tie",
+        chooseWebcamFormat({{1920, 1080, 30, true}, {1920, 1080, 30, false}}, 1920, 1080, 30),
+        false);
+
+    // The decoder runs at the camera's rate, not ours: MJPEG 1080p60 costs
+    // twice the ceiling even though only 30 of its frames are kept.
+    expectFormat(
+        "a 1080p60 MJPEG mode is too costly to decode",
+        chooseWebcamFormat({{1920, 1080, 60, true}, {1280, 720, 30, false}}, 1920, 1080, 30),
+        1280,
+        720,
+        30);
 
     // A camera with nothing but compressed modes still has to be usable.
     expectFormat(
@@ -82,9 +124,17 @@ int main() {
         1080,
         30);
 
-    // Uncompressed wins even when it is much smaller than a compressed option.
+    // Even one too costly to decode: better a working 4K MJPEG than no camera.
     expectFormat(
-        "uncompressed beats a larger compressed mode",
+        "a camera with only costly compressed modes is still driven",
+        chooseWebcamFormat({{3840, 2160, 30, true}}, 1920, 1080, 30),
+        3840,
+        2160,
+        30);
+
+    // A mode too costly to decode loses even to a much smaller one.
+    expectFormat(
+        "4K MJPEG loses to a cheap mode",
         chooseWebcamFormat({{3840, 2160, 30, true}, {640, 480, 30, false}}, 3840, 2160, 30),
         640,
         480,

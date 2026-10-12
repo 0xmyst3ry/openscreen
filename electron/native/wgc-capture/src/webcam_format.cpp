@@ -22,6 +22,21 @@ int usefulFps(const WebcamFormat& format, int targetFps) {
     return std::min(format.fps, targetFps);
 }
 
+// The most a compressed mode may cost to decode, in pixels per second: 1080p
+// at 30. Decoding MJPEG to NV12 through the helper's own source-reader setup,
+// on an otherwise idle Ryzen 7 5800X, takes 4.9 ms a frame at 1920x1080,
+// 9.2 ms at 2560x1440 and 19.7 ms at 3840x2160 (p95 22.7). 1080p30 is 15% of
+// the 33 ms frame interval, a margin for slower CPUs and the screen encode
+// running beside it; 4K30 already takes 60% on a fast desktop.
+constexpr long long kMaxDecodedPixelsPerSecond = 1920LL * 1080LL * 30LL;
+
+// A compressed mode is decoded at the rate the camera runs, not the rate we
+// encode at, so a 60 fps mode costs twice its 30 fps twin.
+bool decodable(const WebcamFormat& format, int targetFps) {
+    const int fps = format.fps > 0 ? format.fps : targetFps;
+    return !format.compressed || pixels(format) * fps <= kMaxDecodedPixelsPerSecond;
+}
+
 // True when `candidate` is a better frame rate than `best` for a target of
 // `targetFps`: the lowest rate that still reaches the target, or -- when no
 // mode reaches it -- the highest one on offer.
@@ -43,14 +58,14 @@ WebcamFormat chooseWebcamFormat(
     int targetFps) {
     const WebcamFormat target{targetWidth, targetHeight, targetFps, false};
 
-    // Compressed modes are a last resort, so they are only considered when the
-    // camera offers nothing else at all.
-    const bool anyUncompressed = std::any_of(available.begin(), available.end(), [](const WebcamFormat& format) {
-        return isUsable(format) && !format.compressed;
+    // Compressed modes too costly to decode are only considered when the camera
+    // offers nothing else at all.
+    const bool anyDecodable = std::any_of(available.begin(), available.end(), [&](const WebcamFormat& format) {
+        return isUsable(format) && decodable(format, targetFps);
     });
 
     const auto eligible = [&](const WebcamFormat& format) {
-        return isUsable(format) && !(anyUncompressed && format.compressed);
+        return isUsable(format) && (!anyDecodable || decodable(format, targetFps));
     };
 
     const bool anyFits = std::any_of(available.begin(), available.end(), [&](const WebcamFormat& format) {
@@ -83,6 +98,13 @@ WebcamFormat chooseWebcamFormat(
         if (pixels(format) != pixels(*best)) {
             const bool wins = anyFits ? pixels(format) > pixels(*best) : pixels(format) < pixels(*best);
             if (wins) {
+                best = &format;
+            }
+            continue;
+        }
+        // Same picture either way: skip the decoder.
+        if (format.compressed != best->compressed) {
+            if (!format.compressed) {
                 best = &format;
             }
             continue;
