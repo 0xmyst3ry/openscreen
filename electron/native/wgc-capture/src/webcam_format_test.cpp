@@ -32,6 +32,20 @@ const std::vector<WebcamFormat> kBrio = {
     {340, 340, 30, false},   {1600, 896, 30, false}, {1024, 576, 30, false},
 };
 
+// A Logitech C920, the most common webcam there is. Its uncompressed (YUY2)
+// modes trade rate for size all the way down to 2 fps; only MJPEG reaches
+// 1080p at 30. 1600x896 is 7.5 fps, rounded here as the helper rounds it.
+const std::vector<WebcamFormat> kC920 = {
+    {640, 480, 30, false},   {160, 90, 30, false},   {160, 120, 30, false},
+    {176, 144, 30, false},   {320, 180, 30, false},  {320, 240, 30, false},
+    {352, 288, 30, false},   {432, 240, 30, false},  {640, 360, 30, false},
+    {800, 448, 30, false},   {800, 600, 24, false},  {864, 480, 24, false},
+    {960, 720, 15, false},   {1024, 576, 15, false}, {1280, 720, 10, false},
+    {1600, 896, 8, false},   {1920, 1080, 5, false}, {2304, 1296, 2, false},
+    {2304, 1536, 2, false},  {640, 480, 30, true},   {1280, 720, 30, true},
+    {1600, 896, 30, true},   {1920, 1080, 30, true},
+};
+
 }  // namespace
 
 int main() {
@@ -53,6 +67,12 @@ int main() {
         std::printf("FAIL 4K request must not pin a compressed mode\n");
         ++failures;
     }
+
+    // getopenscreen/openscreen#1112: ranking pixels first drove a C920 at
+    // 2304x1536 and 2 fps on the default 2160p preset, and at 1920x1080 and
+    // 5 fps on 1080p. A usable rate comes before size.
+    expectFormat("c920 on 2160p keeps 30 fps", chooseWebcamFormat(kC920, 3840, 2160, 30), 800, 448, 30);
+    expectFormat("c920 on 1080p keeps 30 fps", chooseWebcamFormat(kC920, 1920, 1080, 30), 800, 448, 30);
 
     // A camera with nothing but compressed modes still has to be usable.
     expectFormat(

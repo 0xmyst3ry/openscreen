@@ -30,11 +30,15 @@ struct WebcamFormat {
 //     no camera in it, which is far worse than a smaller one that works;
 //   * only formats that fit inside the target in BOTH dimensions are eligible,
 //     so an ultrawide mode cannot sneak in on pixel count alone;
-//   * among those, the most pixels wins;
+//   * among those, the frame rate comes first: the highest rate up to the
+//     target wins, so a C920's 2304x1536 at 2 fps loses to its 800x448 at 30.
+//     Ranking pixels first drove that camera at 2 to 5 fps on every preset;
+//   * then the most pixels;
 //   * ties go to the lowest frame rate that still reaches the target, else the
 //     highest available -- a 1080p60 mode is no help when we encode at 30;
-//   * if nothing fits (a camera that only does 4K), the smallest mode wins, so
-//     we scale down rather than push 1 GB/s of RGB32 through the encoder;
+//   * if nothing fits (a camera that only does 4K), the smallest mode at the
+//     best rate wins, so we scale down rather than push 1 GB/s of RGB32
+//     through the encoder;
 //   * an empty list returns the target unchanged, letting the caller fall back
 //     to whatever the driver would have picked on its own.
 WebcamFormat chooseWebcamFormat(
