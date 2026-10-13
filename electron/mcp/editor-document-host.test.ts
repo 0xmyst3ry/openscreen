@@ -114,6 +114,28 @@ describe("EditorDocumentHost", () => {
 		expect(second.sent).toHaveLength(0);
 	});
 
+	it("waits past the usual timeout for a transcription, and passes its outcome through", async () => {
+		vi.useFakeTimers();
+		const { host, fromRenderer } = setup();
+		const editor = new FakeWebContents();
+		fromRenderer(editor, AI_EDITION_MCP_HOST_CHANNEL, true);
+		const pending = host.transcribe("p", "asset_1", "fr");
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		expect(editor.sent[0]).toMatchObject({ op: "transcribe", projectId: "p", language: "fr" });
+		await answer(editor, fromRenderer, { status: "transcribed", language: "fr", words: 4 });
+		await expect(pending).resolves.toEqual({ status: "transcribed", language: "fr", words: 4 });
+	});
+
+	it("answers a transcription at once when its editor goes away", async () => {
+		const { host, fromRenderer } = setup();
+		const editor = new FakeWebContents();
+		fromRenderer(editor, AI_EDITION_MCP_HOST_CHANNEL, true);
+		const pending = host.transcribe("p", "asset_1", undefined);
+		await vi.waitFor(() => expect(editor.sent).toHaveLength(1));
+		editor.destroy();
+		await expect(pending).resolves.toBe("no-editor");
+	});
+
 	it("reports an unanswered apply as a timeout, not as a failure", async () => {
 		vi.useFakeTimers();
 		const { host, fromRenderer } = setup();

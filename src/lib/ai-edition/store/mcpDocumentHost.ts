@@ -1,7 +1,13 @@
 import { useEffect } from "react";
-import type { AiEditionMcpHostRequest, AiEditionMcpHostResponse } from "@/native/contracts";
+import type {
+	AiEditionMcpHostRequest,
+	AiEditionMcpHostResponse,
+	AiEditionMcpTranscription,
+} from "@/native/contracts";
+import { findAssetTranscript } from "../transcription/status";
 import { applyAgentDocumentIfCurrent } from "./agentDocumentApply";
 import { useProjectStore } from "./projectStore";
+import { useTranscriptionStore } from "./transcriptionStore";
 
 /**
  * The editor's side of the MCP server (electron/mcp/): hand it the live document
@@ -16,6 +22,7 @@ export async function answerMcpHostRequest(
 	if (request.op === "snapshot") {
 		return document ? { document, revision } : null;
 	}
+	if (request.op === "transcribe") return transcribeForMcp(request);
 	if (!document) return "no-live-document";
 	// The revision counter restarts when a project is closed, so a quick close
 	// and reopen of ANOTHER project can land on the revision the call was given.
@@ -27,6 +34,33 @@ export async function answerMcpHostRequest(
 	} catch {
 		return "save-failed";
 	}
+}
+
+/**
+ * The MCP `transcribe` tool on the project this editor holds: through the editor's own
+ * queue (`ensureTranscript`), so a job it already runs is waited for, never doubled.
+ */
+async function transcribeForMcp(
+	request: Extract<AiEditionMcpHostRequest, { op: "transcribe" }>,
+): Promise<AiEditionMcpTranscription> {
+	const held = () => {
+		const document = useProjectStore.getState().document;
+		return document?.project.id === request.projectId ? document : null;
+	};
+	if (!held()) return { status: "unavailable" };
+	await useTranscriptionStore.getState().ensureTranscript(request.assetId, request.language);
+	const job = useTranscriptionStore.getState().jobs[request.assetId];
+	const transcript = findAssetTranscript(held(), request.assetId);
+	// A transcript the asset kept answers a call that asked for no language, whatever an
+	// earlier job left behind.
+	if (job?.status === "failed" && job.failure && (request.language || !transcript)) {
+		return {
+			status: "failed",
+			failure: { kind: job.failure.kind, message: job.failure.message },
+		};
+	}
+	if (!transcript) return { status: "unavailable" };
+	return { status: "transcribed", language: transcript.language, words: transcript.words.length };
 }
 
 /** Makes this editor window the one the MCP server reads and writes, while mounted. */

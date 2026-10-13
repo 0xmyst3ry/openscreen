@@ -157,6 +157,7 @@ import {
 	shouldEnumerateRecordingSources,
 	shouldPersistSelectedSource,
 } from "../recording-source-settings";
+import { getSttManager } from "../stt";
 import { createRunnerWindow } from "../windows";
 import { getSourcesByType, shouldEnumerateSourceTypesSeparately } from "./desktopSourceTypes";
 import { registerNativeBridgeHandlers } from "./nativeBridge";
@@ -5061,6 +5062,8 @@ export function registerIpcHandlers(
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
 		cameraSegmentation: () => loudnessService.probeSegmentation(),
+		// The editor's own engine, in this process: `openscreen mcp` transcribes without the app.
+		transcribe: (request) => getSttManager().transcribe(request),
 		version: app.getVersion(),
 		// importMedia: the editor's own probe, and the grant a picked file gets, so the editor
 		// can play a file a client imported into the project it has open.

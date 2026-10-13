@@ -44,6 +44,7 @@ import {
 	LIST_PROJECTS_TOOL,
 	type McpToolDeps,
 	type McpToolRunner,
+	TRANSCRIBE_TOOL,
 } from "./openscreen-mcp-server";
 import { PROJECT_EDIT_TOOLS } from "./project-tools";
 
@@ -52,6 +53,8 @@ const DISCOVERY_FILE = "mcp-app.json";
 const CONNECT_TIMEOUT_MS = 3_000;
 // Above the editor's own 30 s for a snapshot plus 30 s for an apply.
 const CALL_TIMEOUT_MS = 90_000;
+// Whisper over a whole recording: above the editor's own hour for it.
+const TRANSCRIBE_TIMEOUT_MS = 65 * 60_000;
 const MAX_TOKEN_LINE_BYTES = 256;
 const MAX_ANSWER_BYTES = 256 * 1024 * 1024;
 
@@ -260,7 +263,9 @@ export async function connectToApp(
 /** A call that changes nothing, so running it again here after a lost answer is safe. */
 function isReadOnly(name: string): boolean {
 	if (name === LIST_PROJECTS_TOOL) return true;
-	if (name === "createCheckpoint" || name === "restoreCheckpoint") return false;
+	if (name === "createCheckpoint" || name === "restoreCheckpoint" || name === TRANSCRIBE_TOOL) {
+		return false;
+	}
 	return !isMutatingTool(name) && !PROJECT_EDIT_TOOLS.has(name);
 }
 
@@ -297,7 +302,7 @@ export function routeToApp(options: {
 			return (await connection.client.callTool(
 				{ name, arguments: (args ?? {}) as Record<string, unknown> },
 				undefined,
-				{ timeout: CALL_TIMEOUT_MS },
+				{ timeout: name === TRANSCRIBE_TOOL ? TRANSCRIBE_TIMEOUT_MS : CALL_TIMEOUT_MS },
 			)) as CallToolResult;
 		} catch {
 			// Closed or timed out: a hung app must not hold every later call too.

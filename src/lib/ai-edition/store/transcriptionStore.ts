@@ -27,7 +27,7 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { toastText as translateToast } from "@/i18n/toastText";
 import { transcribeAsset } from "../document/transcribe";
-import { carryOverWordEdits, withTranscript } from "../document/transcript";
+import { applyTranscriptionResult } from "../document/transcript";
 import type { AxcutDocument } from "../schema";
 import {
 	type AssetTranscriptionView,
@@ -44,6 +44,7 @@ import {
 	type TranscriptionProgress,
 	transcriptionFailureHintKey,
 	transcriptRelevantAssetIds,
+	withTranscriptionFailure,
 } from "../transcription/status";
 import { useProjectStore } from "./projectStore";
 
@@ -87,6 +88,14 @@ interface TranscriptionState {
 	 * leave that button unable to transcribe the talking clip next to it.
 	 */
 	requestTimelineTranscripts: () => Promise<void>;
+	/**
+	 * What a caller outside the editor asks for (the MCP `transcribe` tool): a transcript of
+	 * this asset, without a second run beside the editor's own. Without `language`, an asset
+	 * that has one is left alone and a job already queued or running is waited for; with
+	 * it, the job is waited for only when it runs in that language, else a run is asked for.
+	 * Resolves once the run settles.
+	 */
+	ensureTranscript: (assetId: string, language?: string) => Promise<void>;
 	reset: () => void;
 }
 
@@ -187,6 +196,17 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 				return get().request(assetId);
 			}),
 		).then(() => undefined);
+	},
+
+	ensureTranscript(assetId, language) {
+		const document = useProjectStore.getState().document;
+		if (document && document.project.id !== get().projectId) get().sync(document);
+		const job = get().jobs[assetId];
+		if (job && job.status !== "failed" && (language === undefined || language === job.language)) {
+			return waitForSettle(assetId);
+		}
+		if (language === undefined && findAssetTranscript(document, assetId)) return Promise.resolve();
+		return get().request(assetId, language);
 	},
 
 	reset() {
@@ -318,8 +338,7 @@ async function persistPermanentFailure(
 	assetId: string,
 	failure: TranscriptionFailure,
 ): Promise<void> {
-	const kind = failure.kind;
-	if (!isPermanentFailure(kind)) return;
+	if (!isPermanentFailure(failure.kind)) return;
 	const project = useProjectStore.getState();
 	const doc = project.document;
 	if (!doc || doc.project.id !== projectId) return;
@@ -328,21 +347,7 @@ async function persistPermanentFailure(
 	// false rather than throwing, and a note on the asset is not worth a second
 	// message on top of the one the user already got.
 	const persisted = await project.saveDocument(
-		{
-			...doc,
-			assets: doc.assets.map((a) =>
-				a.id === assetId
-					? {
-							...a,
-							transcriptionFailure: {
-								kind,
-								message: failure.message,
-								at: new Date().toISOString(),
-							},
-						}
-					: a,
-			),
-		},
+		withTranscriptionFailure(doc, assetId, failure),
 		// Bookkeeping, not an edit — it must not become an undo step.
 		{ history: false },
 	);
@@ -416,33 +421,17 @@ async function runJob(assetId: string, job: TranscriptionJob): Promise<void> {
 		// hand would go with it. Carry those corrections onto the new words first —
 		// strictly, so nothing is invented (see `carryOverWordEdits`). What could not be
 		// carried is lost; telling the user so is the UI's job, and there is no surface
-		// for it yet.
-		const merged = carryOverWordEdits(
-			current.transcripts.find((t) => t.assetId === assetId),
-			transcript,
-		);
-		if (merged.dropped > 0) {
+		// for it yet. The same save clears the verdict remembered on the asset.
+		const landed = applyTranscriptionResult(current, transcript);
+		if (landed.dropped > 0) {
 			console.warn(
-				`[transcription] ${merged.dropped} word correction(s) on asset ${assetId} could not be carried over to the new transcript.`,
+				`[transcription] ${landed.dropped} word correction(s) on asset ${assetId} could not be carried over to the new transcript.`,
 			);
 		}
-		// One save: the transcript, and (on a successful retry) the removal of
-		// the verdict remembered on the asset.
 		// `history: false`: a transcript landing from a background job is not an edit
 		// the user made, and making it the target of the next Ctrl+Z would both surprise
 		// them and throw the transcript away.
-		await useProjectStore.getState().saveDocument(
-			withTranscript(
-				{
-					...current,
-					assets: current.assets.map((a) =>
-						a.id === assetId && a.transcriptionFailure ? { ...a, transcriptionFailure: null } : a,
-					),
-				},
-				merged.transcript,
-			),
-			{ history: false },
-		);
+		await useProjectStore.getState().saveDocument(landed.document, { history: false });
 		dropJob(assetId, runId);
 		if (job.manual) toast.success(toastText("mediaStage.transcriptReady"));
 	} catch (error) {

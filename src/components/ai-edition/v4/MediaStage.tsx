@@ -3,12 +3,8 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
-import type {
-	AxcutAsset,
-	AxcutDocument,
-	AxcutTranscript,
-	TranscriptLanguageCode,
-} from "@/lib/ai-edition/schema";
+import { VOCABULARY_MAX_CHARS, withVocabulary } from "@/lib/ai-edition/document/transcript";
+import type { AxcutAsset, AxcutTranscript, TranscriptLanguageCode } from "@/lib/ai-edition/schema";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import {
 	useAssetTranscriptions,
@@ -51,19 +47,6 @@ export function detectedLanguageForTranscript(transcript: AxcutTranscript | null
 		return null;
 	}
 	return transcript.language;
-}
-
-/**
- * Whisper reads at most the last 223 tokens of its prompt; 600 characters of
- * names and terms stays under that for Latin scripts (issue #1023).
- */
-export const VOCABULARY_MAX_CHARS = 600;
-
-/** The document with its names and terms set, or null when nothing changed. */
-export function withVocabulary(document: AxcutDocument, text: string): AxcutDocument | null {
-	const vocabulary = text.trim().slice(0, VOCABULARY_MAX_CHARS) || undefined;
-	if (vocabulary === document.project.vocabulary) return null;
-	return { ...document, project: { ...document.project, vocabulary } };
 }
 
 export async function addSelectedAssetToTimeline(

@@ -1,5 +1,6 @@
 import type { TrimRegion } from "@/components/video-editor/types";
 import type { SttWordSegment } from "../../../electron/stt/transcriptionContract";
+import { segmentsFromStt } from "../ai-edition/transcription/fromStt";
 
 export interface CaptionSegment {
 	startSec: number;
@@ -138,30 +139,7 @@ function runTranscription(
 	// quiet music intros / room tone. VAD or nothing.
 	return api
 		.transcribe({ ...payload, language: forcedLanguage, prompt: options?.prompt })
-		.then((result) => {
-			const words = result.wordSegments ?? [];
-			let segments: CaptionSegment[];
-			let granularity: CaptionTimestampGranularity;
-			if (words.length > 0) {
-				segments = words.map((w) => ({
-					startSec: w.startSec,
-					endSec: w.endSec,
-					text: w.word,
-				}));
-				granularity = "word";
-			} else {
-				// ponytail: whisper dropped every word for a segment (e.g. OOV
-				// heavy); fall back to raw phrase spans so the user still gets
-				// captions to edit.
-				segments = (result.segments ?? []).map((s) => ({
-					startSec: s.startSec,
-					endSec: s.endSec,
-					text: s.text,
-				}));
-				granularity = "phrase";
-			}
-			return { segments, granularity, detectedLanguage: result.detectedLanguage };
-		})
+		.then((result) => ({ ...segmentsFromStt(result), detectedLanguage: result.detectedLanguage }))
 		.catch((error: unknown) => {
 			// A run the caller cancelled surfaces as an abort, not as an engine
 			// failure: the store drops it silently instead of toasting the user
