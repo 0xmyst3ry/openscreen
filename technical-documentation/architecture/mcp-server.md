@@ -12,7 +12,7 @@ The same tools are served over two transports, by two different processes:
 | Edits, recording, export | Off until the user turns on **MCP edits** | Always allowed |
 | Project open in the editor | Edited live through the editor, one undo step per call | The same while the app runs: the call is forwarded to it. With no app answering, refused ([the marker](#the-open-in-editor-marker)) |
 | Other projects | Read from and saved to their file, a checkpoint first | Same |
-| Tools | `listProjects`, the agent's tools, the project tools (`setProjectInfo`, `importMedia`, `removeMedia`), the checkpoint tools, and the media tools: `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo`, `getFrames`, `createProject` | The same |
+| Tools | `listProjects`, the agent's tools, `transcribe`, the project tools (`setProjectInfo`, `importMedia`, `removeMedia`), the checkpoint tools, and the media tools: `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo`, `getFrames`, `createProject` | The same |
 | A take | Recorded by the app's recording bar, as its Record button records; the editor opens it ([below](#the-media-tools)) | Recorded by a hidden runner of its own process, and made a project there |
 | Checkpoints | In the app's memory, shared with forwarded `openscreen mcp` calls, lost when the app quits | In the app's while it runs; otherwise in this process's, lost when it exits, which it does when the client disconnects |
 
@@ -29,16 +29,18 @@ The same tools are served over two transports, by two different processes:
 | [`electron/mcp/app-channel.ts`](../../electron/mcp/app-channel.ts) | The local channel `openscreen mcp` forwards its document calls through to the running app. See [`openscreen mcp` and the running app](#openscreen-mcp-and-the-running-app). |
 | [`electron/mcp/mcp-controller.ts`](../../electron/mcp/mcp-controller.ts) | In-app server lifecycle: start when enabled, restart on a port or token change, status for the settings UI. |
 | [`electron/mcp/mcp-settings-store.ts`](../../electron/mcp/mcp-settings-store.ts) | `mcp-server.json` (enabled, port, allowEdits) and `mcp-token.enc` (bearer token, `safeStorage`). |
-| [`src/lib/ai-edition/store/mcpDocumentHost.ts`](../../src/lib/ai-edition/store/mcpDocumentHost.ts) | Renderer side: answers snapshot / apply requests from the project store. Mounted by `NewEditorShell`. |
+| [`src/lib/ai-edition/store/mcpDocumentHost.ts`](../../src/lib/ai-edition/store/mcpDocumentHost.ts) | Renderer side: answers snapshot / apply requests from the project store, and transcribe requests through the editor's transcription queue. Mounted by `NewEditorShell`. |
+| [`electron/ai-edition/caption-tools.ts`](../../electron/ai-edition/caption-tools.ts) | The caption and vocabulary tools, routed there by `executeAgentTool`. |
 | [`src/components/ai-edition/McpServerSettings.tsx`](../../src/components/ai-edition/McpServerSettings.tsx) | The settings section: server toggle, the **MCP edits** toggle, port, token, copyable `claude mcp add` / `codex mcp add` commands. |
 
 ## One tool surface, two agents
 
 Nothing about the tools is reimplemented. The server registers `TOOL_ARG_SCHEMAS` (names and zod schemas) and `TOOL_DESCRIPTIONS`, and builds its `instructions` around `buildSystemPrompt`, all exported from [`deep-agent/service.ts`](../../electron/ai-edition/deep-agent/service.ts), where `buildTools` builds the in-app agent from the same table. Every call goes through `runDocumentTool`, the function the in-app agent's `documentTool` also calls: the cursor-telemetry read the zoom tools need (for `addAutoZooms`, the timeline wand's plan, `collectAutoZoomSuggestionsForDocument`, over every take on the timeline), then `executeAgentTool`.
 
-So a tool added to the agent appears over MCP with no further work, and the MCP test asserts the listed tools equal `listProjects`, then `OPENSCREEN_TOOL_NAMES`, then the three project tools, then the two checkpoint tools, then the [media tools](#the-media-tools). What the server adds:
+So a tool added to the agent appears over MCP with no further work, and the MCP test asserts the listed tools equal `listProjects`, then `OPENSCREEN_TOOL_NAMES`, then the three project tools, then the two checkpoint tools, then the [media tools](#the-media-tools). The caption tools are agent tools like the others (`getCaptions`, `setCaptionSettings`, `getCaptionTranslationUnits`, `putCaptionTranslation`, `removeCaptionTranslation`, `setVocabulary`): the caller translates the captions with its own model and stores them with `putCaptionTranslation`, so neither agent needs the app's provider for it. What the server adds:
 
 - **`listProjects`**, a tool of its own: every project's id, title, `updatedAt`, asset count, and `open` for the one in an editor (this process's, or the app's seen through the marker).
+- **`transcribe`**, registered where `McpToolDeps.transcribe` is wired (both transports, by `registerIpcHandlers`), see [Transcription](#transcription).
 - **An optional `projectId` on every agent tool and both checkpoint tools**, added to its schema with `.extend()` at registration and stripped again before the call reaches the executor, which never sees it. See [Which project a call acts on](#which-project-a-call-acts-on).
 - **`createCheckpoint` / `restoreCheckpoint`**, see [Checkpoints](#checkpoints).
 - **The project tools**, see [The project and its media](#the-project-and-its-media).
@@ -124,7 +126,7 @@ A client chains several edits in one turn, and each is its own undo step, so rev
 - **A project that is not open cannot be edited without one.** Ctrl+Z cannot reach an edit to it, so a write there is refused until a checkpoint of that project is in memory, and the client is told to call `createCheckpoint` first. Over stdio that is every project. `stopRecording` creates one for each new take and returns its id.
 - **They cover the cursor sidecar.** `setPointerTrack` rewrites `<video>.cursor.json`. Before the runner writes a sidecar, it keeps the file's previous content (or its absence) in every checkpoint of that project that has none for it yet; a restore writes those back, and deletes a sidecar the take never had. A restore is itself such a write, so each checkpoint gets back its own state whatever order they are restored in.
 - A restore is a write: refused while **MCP edits** is off, and refused when the checkpoint belongs to another project than the one the call acts on. That message names the checkpoint's `projectId`: restoring a closed project's checkpoint takes it explicitly.
-- It discards every edit since the checkpoint, the user's included. The tool description says so.
+- It discards every edit since the checkpoint, the user's included. The tool description says so. A transcript an asset gained since the checkpoint is kept, where the checkpoint had none for it: it is the media read, not an edit (`keepTranscriptsMadeSince`).
 - **Lifetime.** Checkpoints live in the runner's memory, the 20 most recent. In the app that is one runner (`createToolRunner`, built in `registerIpcHandlers`), shared by the in-app server and every forwarded `openscreen mcp` call; a restart of the in-app server keeps them, and they are lost when the app quits. An `openscreen mcp` with no app answering keeps its own, lost when the process exits, which it does when the client disconnects. The unknown-checkpoint message says which. The in-app agent does not need them: its whole turn is a single apply.
 
 ## The project and its media
@@ -136,6 +138,18 @@ Three tools of the runner's own ([`project-tools.ts`](../../electron/mcp/project
 - **`removeMedia`** drops an asset with `documentWithoutAsset`, `DocumentService.removeAsset`'s own change, but refuses while a clip or an audio track still uses it, naming them: removing footage the timeline plays is a `removeClip`, not a side effect. The file on disk is never touched.
 
 **Deleting a project is left out on purpose.** It cannot be undone, no checkpoint holds a deleted file, and nothing an agent makes needs it. The user deletes projects in the app.
+
+## Transcription
+
+`transcribe` runs the on-device Whisper on one asset and stores its transcript, which `getTranscriptWords`, `removeWords` and the captions read. A take from `stopRecording` has none until it runs; the editor makes one on its own when it opens a project.
+
+- **Outside the queue.** Whisper takes minutes, so the runner does not hold its queue for it: other calls go on, and only the landing is queued, as a `RunnerEdit` on the project as it is by then (`applyTranscriptionResult`: the transcript replaced, the word corrections that still match carried over, a remembered failure cleared, as the editor's queue lands one).
+- **The project open in an editor of this process** goes to that editor's own queue (`McpDocumentHost.transcribe` → `ensureTranscript`): a job already queued or running for the asset is waited for, never doubled. The host waits up to an hour, and answers at once when the editor goes away.
+- **Any other project** runs `SttManager.transcribe` in this process with the asset's path and the project's vocabulary as Whisper's prompt, one MCP transcription at a time. No runner window is needed: the engine and its ffmpeg decode already live in the main process. The renderer's own decode, the editor's fallback for an install with no ffmpeg, is not available there.
+- **Without `language`** a transcript already there is returned unchanged; with one (or `auto`) the asset is transcribed again.
+- **Failures** are classified as the editor classifies them (`classifyTranscriptionError`), and a deterministic one (no audio, unreadable codec) is remembered on the asset (`withTranscriptionFailure`).
+- **No checkpoint is needed** on a closed project, since `restoreCheckpoint` keeps the transcript anyway.
+- **Forwarded** from `openscreen mcp` to the app like every tool, with a 65-minute timeout instead of 90 s, and never run again locally after a lost answer. With no app, `openscreen mcp` transcribes in its own process and stops the Whisper helper before it exits.
 
 ## The media tools
 
@@ -167,7 +181,7 @@ The stdio server (`openscreen mcp`, [`stdio-server.ts`](../../electron/mcp/stdio
 - **Discovery.** Once listening, the app writes `<userData>/mcp-app.json` (`{ pid, endpoint, token }`, mode 0600) and removes it as it quits. `openscreen mcp` shares that userData and reads the file on each call it is not connected for: the app starting or quitting mid-session is picked up on the next call. A file whose pid is dead, or whose endpoint does not answer within 3 s, is a crashed app's and is ignored.
 - **Trust.** Every connection must first send the token from that file, or it is dropped. Node cannot set a named pipe's DACL, and the default one lets any user open it read-only; the token, in a file inside the user's profile, is what limits the channel to the current user. Any process of that user can connect, which grants nothing new: it could run `openscreen mcp` itself. So calls over the channel edit as `openscreen mcp` always did, whatever the in-app server's **MCP server** and **MCP edits** switches say: those guard the HTTP port, a door a web page or another tool could knock on.
 - **Fallback.** With no app, or one that does not answer, the calls run in the CLI process on the files, as before. The project a live app's editor holds is then still refused (#1138): the app's `.open-in-editor.json` marker says so, and the refusal asks to retry, close the project, or restart or update OpenScreen.
-- **Never twice.** A call the app received but did not answer within 90 s, or whose connection dropped, is not run again locally unless it is a read: the client is told the outcome is unknown and to re-read. The connection is dropped, so a hung app does not hold later calls.
+- **Never twice.** A call the app received but did not answer within 90 s (65 minutes for `transcribe`), or whose connection dropped, is not run again locally unless it is a read: the client is told the outcome is unknown and to re-read. The connection is dropped, so a hung app does not hold later calls.
 - **Checkpoints do not cross over.** One made while the app answered lives in the app and is gone once it quits; one made while no app was reachable (before the call was sent) lives in the CLI process and is unknown to the app. A `createCheckpoint` the app received but never answered creates none here: it gets the unknown-outcome error like any other write. Either way the restore says the checkpoint is unknown, and an edit to a closed project asks for a new one.
 
 ## Transport and security
@@ -214,3 +228,4 @@ codex mcp add openscreen -- "<executable>" mcp
 - **An editor that stops answering looks closed.** A snapshot unanswered for 30 s reads as "no project open", so an edit naming the project that editor holds would go to its file, and the editor's next save would drop it. It takes a renderer hung for 30 s.
 - **No project deletion**, on purpose ([above](#the-project-and-its-media)).
 - **An imported recording comes without its camera.** The editor's import links the webcam an OpenScreen recording was made with (`find-recording-camera`); `importMedia` and `createProject` do not, so the camera of a recording imported over MCP is not in the project.
+- **A transcription reports no progress.** `transcribe` answers once Whisper is done, which can outlast a client's own tool timeout on a long recording. In the app, the editor cancelling its own run (a regenerate in another language) also stops an MCP run of the same engine, which then reports a failure.

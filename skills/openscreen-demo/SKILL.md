@@ -88,6 +88,12 @@ Use the document tools, always with the `projectId`. Read the project first with
 - **Hide what is private:** an email address, a token or a name that shows on screen gets `addAnnotation` with `type: "blur"` over the span it is visible. Its x, y, width and height are percent of the recording's picture, not of the frame, so it stays on what it hides when a zoom moves the picture. Check it with `getFrames`.
 - **Music or a voiceover:** `importMedia` with the file's absolute path adds it to the project's media, then `addAudio` plays it over a span. `removeMedia` takes back a file the timeline no longer uses.
 - **Name:** `setProjectInfo` renames the project, if the `title` given to `stopRecording` no longer fits.
+- **Captions, for a narrated take** (recorded with `microphone`):
+  1. `transcribe` with the `projectId`. Whisper runs on this machine and can take a minute; a take has no transcript before this.
+  2. `setCaptionSettings` with `enabled: true` and a `style`, plus `anchorV`, `insetY` or `maxWordsPerLine` if the callouts need room.
+  3. To caption in another language: `getCaptionTranslationUnits` with the `language`, translate each unit yourself as a whole phrase, store them with `putCaptionTranslation`, then `setCaptionSettings` with that `language`.
+  4. `getCaptions` reads it all back. The export burns the captions in.
+  A misheard name is fixed with `setWordText` (or `setVocabulary`, then `transcribe` again with the `language`), a flubbed phrase cut with `getTranscriptWords` and `removeWords`.
 - **Undo:** `restoreCheckpoint` with the `checkpointId` takes the project back to the raw take in one step. It also puts back the take's own pointer track, undoing any `setPointerTrack` made since.
 - **Open in the app:** while OpenScreen is running, your edits go through it, so a project the user has open in its editor changes there live and they can undo each edit. If an edit is refused as "open in the OpenScreen editor", the app did not answer: retry once, then ask the user to close the project there or restart OpenScreen.
 
@@ -137,5 +143,6 @@ Only to a pull request the user asked for a video on, or one you open for them i
 - **`The recording did not start`:** the window title did not match, or capture is not permitted. Check `listSources` and the permissions in step 1.
 - **Recording, exporting or an edit refused, naming *MCP edits*:** you are connected to the server in the app, which records, exports and edits only once the user allows it. Ask them to turn on *MCP edits* under *AI settings* → *MCP server*.
 - **No cursor in the video:** the app was driven by a script. See step 4.
+- **`transcribe` fails with `no-audio`:** the take was recorded with neither `microphone` nor `systemAudio`. Record again with one of them.
 - **No zoom on an early click:** the first 2.5 s stay wide on purpose. Start the first action after that.
 - **`unknown flag: --attach`:** `gh` is older than 2.99.0. See step 8.

@@ -883,7 +883,8 @@ sync.
 
 ### Legacy caption annotations
 
-Documents produced by an older "generate captions" flow carry caption text
+Documents produced by an older "generate captions" flow, or by
+`openscreen captions` before it wrote the transcript, carry caption text
 as real `annotations[]` entries with `annotationSource === "auto-caption"`
 ([`src/components/ai-edition/CaptionsPane.tsx:96-99`](../../src/components/ai-edition/CaptionsPane.tsx:96)).
 They would now render *on top of* the derived layer, so the Captions pane
@@ -891,6 +892,23 @@ explicitly offers a "remove legacy caption annotations" action that
 filters them off the document — gated on the user's confirmation, since
 it deletes data
 ([`src/components/ai-edition/CaptionsPane.tsx:154-161`](../../src/components/ai-edition/CaptionsPane.tsx:154)).
+
+### Transcription outside the editor
+
+Two callers run the pipeline with no editor open, and both land the result
+as the editor's queue does (`applyTranscriptionResult`, word corrections
+carried over):
+
+- **`openscreen captions`** (`src/cli/captionProject.ts`) transcribes the
+  primary asset in its runner window through `transcribeAsset` (or keeps the
+  transcript the project has), clears the legacy caption annotations and turns
+  the captions on with `--min-words` / `--max-words` as `minWordsPerLine` /
+  `maxWordsPerLine`. The project is written back in the editor's own format.
+- **The MCP `transcribe` tool** calls `SttManager.transcribe` in the main
+  process and builds the transcript with the same converter the renderer uses
+  (`transcription/fromStt.ts`). On the project an editor holds, it asks that
+  editor's queue instead, so a run already under way is waited for. See
+  [mcp-server.md](mcp-server.md#transcription).
 
 ## Known gaps
 
