@@ -273,7 +273,7 @@
 			"subtitle": "La chat modifica il tuo video parlando con un modello linguistico. Scegli il fornitore di cui ti fidi e collega una chiave API per iniziare.",
 			"feature1": "Taglia i silenzi, stringi le pause, elimina le parole superflue",
 			"feature2": "Aggiungi sottotitoli, ingrandisci la camera, genera un titolo",
-			"feature3": "Riscrivi una sezione, riformula o dividi un clip su richiesta",
+			"feature3": "Riscrivi una sezione, riformula o riordina i clip su richiesta",
 			"cta": "Configura un fornitore",
 			"disclaimer": "La trascrizione del tuo video verrà inviata al fornitore che scegli. Nulla viene condiviso finché non ne colleghi uno."
 		},

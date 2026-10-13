@@ -34,7 +34,7 @@ The same tools are served over two transports, by two different processes:
 
 ## One tool surface, two agents
 
-Nothing about the tools is reimplemented. The server registers `TOOL_ARG_SCHEMAS` (names and zod schemas) and `TOOL_DESCRIPTIONS`, and builds its `instructions` around `buildSystemPrompt`, all exported from [`deep-agent/service.ts`](../../electron/ai-edition/deep-agent/service.ts), where `buildTools` builds the in-app agent from the same table. Every call goes through `runDocumentTool`, the function the in-app agent's `documentTool` also calls: the cursor-telemetry read the zoom tools need, then `executeAgentTool`.
+Nothing about the tools is reimplemented. The server registers `TOOL_ARG_SCHEMAS` (names and zod schemas) and `TOOL_DESCRIPTIONS`, and builds its `instructions` around `buildSystemPrompt`, all exported from [`deep-agent/service.ts`](../../electron/ai-edition/deep-agent/service.ts), where `buildTools` builds the in-app agent from the same table. Every call goes through `runDocumentTool`, the function the in-app agent's `documentTool` also calls: the cursor-telemetry read the zoom tools need (for `addAutoZooms`, the timeline wand's plan, `collectAutoZoomSuggestionsForDocument`, over every take on the timeline), then `executeAgentTool`.
 
 So a tool added to the agent appears over MCP with no further work, and the MCP test asserts the listed tools equal `listProjects`, then `OPENSCREEN_TOOL_NAMES`, then the three project tools, then the two checkpoint tools, then the [media tools](#the-media-tools). What the server adds:
 

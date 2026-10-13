@@ -273,7 +273,7 @@
 			"subtitle": "Sohbet, videonuzu bir dil modeliyle konuşarak düzenler. Güvendiğiniz sağlayıcıyı seçin ve başlamak için bir API anahtarı bağlayın.",
 			"feature1": "Sessizlikleri keser, duraklamaları sıkılaştırır, dolgu kelimeleri kaldırır",
 			"feature2": "Altyazı ekler, kameraya yakınlaştırır, başlık üretir",
-			"feature3": "Bir bölümü yeniden yazar, ifadeyi değiştirir veya klibi isteğe göre böler",
+			"feature3": "Bir bölümü yeniden yazar, ifadeyi değiştirir veya klipleri isteğe göre yeniden sıralar",
 			"cta": "Sağlayıcı kur",
 			"disclaimer": "Videonuzun transkripsiyonu seçtiğiniz sağlayıcıya gönderilecek. Bir sağlayıcı bağlamadan hiçbir şey paylaşılmaz."
 		},
