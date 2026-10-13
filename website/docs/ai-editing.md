@@ -41,7 +41,7 @@ The ChatGPT and GitHub Copilot sign-in options were **removed in 1.8.0**. They w
 
 ## Using the agent
 
-Describe the edit in plain language — "cut the dead air in the intro", "zoom in when I open the terminal". The agent works through real, undoable timeline operations, not a re-render: it can add and adjust trims, zooms, speed regions, annotations and Full Camera segments, edit clip in/out points, reorder or remove clips, and read the transcript to find what you're referring to.
+Describe the edit in plain language — "cut the dead air in the intro", "zoom in when I open the terminal". The agent works through real, undoable timeline operations, not a re-render: it can add and adjust trims, zooms, speed regions, annotations (text, arrows, and blurs that hide private details on screen), imported audio tracks with their fades, and Full Camera segments, edit clip in/out points, reorder or remove clips, and read the transcript to find what you're referring to.
 
 The panel around it:
 

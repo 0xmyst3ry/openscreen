@@ -41,7 +41,7 @@ Les options de connexion ChatGPT et GitHub Copilot ont été **supprimées dans 
 
 ## Utiliser l'agent {#using-the-agent}
 
-Décrivez la modification en langage courant : « coupe les temps morts de l'intro », « zoome quand j'ouvre le terminal ». L'agent travaille avec de vraies opérations de timeline annulables, pas avec un nouveau rendu : il peut ajouter et ajuster des coupes, des zooms, des régions de vitesse, des annotations et des segments Caméra plein écran, modifier les points d'entrée et de sortie des clips, réordonner ou retirer des clips, et lire la transcription pour trouver ce dont vous parlez.
+Décrivez la modification en langage courant : « coupe les temps morts de l'intro », « zoome quand j'ouvre le terminal ». L'agent travaille avec de vraies opérations de timeline annulables, pas avec un nouveau rendu : il peut ajouter et ajuster des coupes, des zooms, des régions de vitesse, des annotations (texte, flèches et flous qui masquent une information privée à l'écran), des pistes audio importées avec leurs fondus, et des segments Caméra plein écran, modifier les points d'entrée et de sortie des clips, réordonner ou retirer des clips, et lire la transcription pour trouver ce dont vous parlez.
 
 Le panneau qui l'entoure :
 
