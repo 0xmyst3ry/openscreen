@@ -327,7 +327,11 @@ describe("recording", () => {
 			},
 		};
 		const listed = JSON.parse(textOf(await call("listSources")));
-		expect(listed).toMatchObject({ microphones: ["USB Mic"], cameras: ["Logitech BRIO"] });
+		expect(listed).toMatchObject({
+			microphones: ["USB Mic"],
+			cameras: ["Logitech BRIO"],
+			cameraLabelsUnavailable: false,
+		});
 	});
 
 	it("says where the take is when it cannot become a project", async () => {

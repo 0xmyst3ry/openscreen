@@ -541,7 +541,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		server.registerTool(
 			"listSources",
 			{
-				description: `List the displays and windows OpenScreen can record, the microphones and the cameras. Pass startRecording a display's index or part of a window's title, and part of a microphone's or a camera's name. ${HIDDEN_WINDOWS_NOTE}`,
+				description: `List the displays and windows OpenScreen can record, the microphones and the cameras. Pass startRecording a display's index or part of a window's title, and part of a microphone's or a camera's name. microphoneLabelsUnavailable or cameraLabelsUnavailable true means their names need a permission the user has not granted, so the list is empty: ask the user to allow it. ${HIDDEN_WINDOWS_NOTE}`,
 				inputSchema: z.object({}),
 				annotations: READ_ONLY,
 			},
@@ -557,6 +557,9 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						windows: windows.map((window) => window.name),
 						microphones: microphones.map((mic) => mic.label),
 						cameras: cameras.map((camera) => camera.label),
+						// An empty list is not "none" when the names need a permission: say which.
+						microphoneLabelsUnavailable: result.sources.microphoneLabelsUnavailable,
+						cameraLabelsUnavailable: result.sources.cameraLabelsUnavailable,
 					}),
 				);
 			},

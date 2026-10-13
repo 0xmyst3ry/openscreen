@@ -172,6 +172,10 @@ describe("parseCliArgs", () => {
 		expect(parse(["export", "a.openscreen", "--format", "gif", "--fps", "30"])).toMatchObject({
 			kind: "error",
 		});
+		expect(parse(["export", "a.openscreen", "-o", "a.mp4", "--no-gif-loop"])).toMatchObject({
+			kind: "error",
+			message: "--no-gif-loop is only supported for GIF exports",
+		});
 	});
 
 	it("parses --auto-zoom", () => {

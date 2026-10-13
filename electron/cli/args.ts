@@ -334,6 +334,13 @@ function parseExport(args: string[], cwd: string): CliCommand {
 	if (request.format === "gif" && args.includes("--fps")) {
 		throw new Error("--fps is only supported for MP4 exports (use --gif-fps)");
 	}
+	// And the GIF options, on an MP4 they would not change.
+	const gifFlag = ["--gif-fps", "--gif-size", "--gif-loop", "--no-gif-loop"].find((flag) =>
+		args.includes(flag),
+	);
+	if (request.format === "mp4" && gifFlag) {
+		throw new Error(`${gifFlag} is only supported for GIF exports`);
+	}
 	return request;
 }
 
