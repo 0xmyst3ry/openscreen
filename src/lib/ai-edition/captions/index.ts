@@ -17,6 +17,8 @@ export type {
 	CaptionStyleId,
 } from "./settings";
 export {
+	CAPTION_FONT_SIZE_MAX,
+	CAPTION_FONT_SIZE_MIN,
 	CAPTION_INSET_X_MAX,
 	CAPTION_INSET_Y_MAX,
 	CAPTION_PLATE_OPACITY_MAX,

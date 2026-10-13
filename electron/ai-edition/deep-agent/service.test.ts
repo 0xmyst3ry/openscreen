@@ -92,6 +92,17 @@ const ARGS: Record<string, unknown> = {
 	removeClip: { clipId: "clip_1" },
 	setAspectRatio: { aspectRatio: "16:9" },
 	setEditorSettings: { padding: 30 },
+	getCaptions: {},
+	setCaptionSettings: { enabled: true, style: "bold" },
+	getCaptionTranslationUnits: { language: "fr" },
+	putCaptionTranslation: {
+		language: "fr",
+		assetId: "asset_1",
+		units: [{ id: "u:seg_1", text: "Bonjour" }],
+	},
+	// The fixture has no translation layer, so this one is refused.
+	removeCaptionTranslation: { language: "fr" },
+	setVocabulary: { vocabulary: "OpenScreen, Whisper" },
 };
 
 /** ponytail: the fixture starts from a FIXED instant. `createEmptyDocument` reads
@@ -378,6 +389,8 @@ describe("one description of the tools, not two", () => {
 			"getTranscript",
 			"getTranscriptWords",
 			"getCursorTrack",
+			"getCaptions",
+			"getCaptionTranslationUnits",
 		]);
 	});
 });
