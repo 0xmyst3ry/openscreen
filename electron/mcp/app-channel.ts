@@ -52,6 +52,7 @@ const CONNECT_TIMEOUT_MS = 3_000;
 // Above the editor's own 30 s for a snapshot plus 30 s for an apply.
 const CALL_TIMEOUT_MS = 90_000;
 const MAX_TOKEN_LINE_BYTES = 256;
+const MAX_ANSWER_BYTES = 256 * 1024 * 1024;
 
 const LOST_MESSAGE =
 	"OpenScreen stopped answering during this call, so whether it took effect is unknown. Call getCurrentDocument with the same projectId to check before retrying.";
@@ -242,7 +243,9 @@ export async function connectToApp(
 			CONNECT_TIMEOUT_MS,
 		);
 		socket.write(`${found.token}\n`);
-		await client.connect(new StdioServerTransport(socket, socket), { timeout: CONNECT_TIMEOUT_MS });
+		// Answers carry whole documents: well above the SDK's 10 MiB default.
+		const transport = new StdioServerTransport(socket, socket, { maxBufferSize: MAX_ANSWER_BYTES });
+		await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
 		const { tools } = await client.listTools(undefined, { timeout: CONNECT_TIMEOUT_MS });
 		for (const tool of tools) connection.tools.add(tool.name);
 		return connection;
