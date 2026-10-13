@@ -682,13 +682,20 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		}
 		const whisper = deps.transcribe;
 		if (!whisper) return textResult("Transcription is not available here.", true);
-		const started = whisperQueue.then(() =>
-			whisper({
-				sourcePath: asset.originalPath,
+		const started = whisperQueue.then(async () => {
+			// Read again once it is this call's turn: a vocabulary set while it waited counts.
+			const current = await deps.projects
+				.getProjectForUpdate(targetId)
+				.then((read) => read.document)
+				.catch(() => document);
+			const media = current.assets.find((a) => a.id === asset.id);
+			if (!media) throw new Error(`Asset ${asset.id} was removed from the project.`);
+			return whisper({
+				sourcePath: media.originalPath,
 				language: language === "auto" ? undefined : language,
-				prompt: document.project.vocabulary,
-			}),
-		);
+				prompt: current.project.vocabulary,
+			});
+		});
 		whisperQueue = started.catch(() => undefined);
 		let response: SttTranscribeResponse;
 		try {
