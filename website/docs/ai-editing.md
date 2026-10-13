@@ -67,7 +67,7 @@ If you already use an AI coding agent such as Claude Code or Codex, it can drive
 2. Copy the **Claude Code** or **Codex** command shown there and run it in a terminal. The Claude Code command carries the access token. Codex reads it from the `OPENSCREEN_MCP_TOKEN` environment variable instead: set that in the shell you start Codex from.
 3. Ask your agent for the edit, on the project open in the OpenScreen editor or on any other project in your list.
 
-The tools are the ones the built-in agent uses. They act on the project open in the editor unless the client names another one: it can list every project and read or edit any of them. MCP clients can only **read** until you also turn on **MCP edits** in the MCP server section; this switch is separate from the built-in agent's **Agent edits**, and it starts off. Once on, each edit is saved as it lands:
+The tools are the ones the built-in agent uses, plus the ones that record, export and look at a video ([below](#letting-an-agent-make-the-whole-video)). They act on the project open in the editor unless the client names another one: it can list every project and read or edit any of them. MCP clients can only **read** until you also turn on **MCP edits** in the MCP server section: until then every edit, recording and export they try is refused. This switch is separate from the built-in agent's **Agent edits**, and it starts off. Once on, each edit is saved as it lands:
 
 - **On the project open in the editor**, an edit is undone with `Ctrl/Cmd + Z`. Clients are told to save a checkpoint before a series of edits, so you can ask them to put the project back as it was in a single step, which `Ctrl/Cmd + Z` can itself undo.
 - **On any other project**, an edit is saved to its file, where `Ctrl/Cmd + Z` cannot reach it. A client must save a checkpoint of that project before its first edit, and putting the project back from it is the only undo.
@@ -76,9 +76,11 @@ Checkpoints are kept in OpenScreen's memory: they are lost when it quits or when
 
 ## Letting an agent make the whole video
 
-The server above edits projects. To have an agent make a whole video on its own, from the recording to the export, add OpenScreen to it as a stdio server instead: the agent starts the app's own executable with `mcp`. It gets the same editing tools, plus `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` and `getFrames`.
+An agent can make a whole video on its own, from the recording to the export. Besides the editing tools, both ways of adding OpenScreen to it give it `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` and `getFrames`.
 
-The quickest way is to paste this into Claude Code:
+**Through the server above**, a take is recorded by OpenScreen itself, as with its Record button: the editor closes, the recording bar counts down and records, and the take opens in the editor as a new project, where you watch each edit land. It needs **MCP edits** on, and the recording bar gets your own settings back once the take ends.
+
+**As a stdio server**, it needs no setting at all: the agent starts the app's own executable with `mcp`. The quickest way is to paste this into Claude Code:
 
 ```text
 Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen --skill openscreen-demo -a claude-code`, then follow it to make a demo video of this feature.

@@ -9,10 +9,11 @@ The same tools are served over two transports, by two different processes:
 | Process | The running app (the GUI) | A process of its own, started by the client: the app's executable with `mcp` |
 | Setup | **AI settings → MCP server**: turn it on, copy the `claude mcp add` / `codex mcp add` command (it carries the token) | `claude mcp add openscreen -- <executable> mcp` ([executables](../../website/docs/cli.md#running-the-cli)) |
 | Auth | Bearer token, `127.0.0.1` only, Host/Origin check | None: the client launched the process with the user's rights |
-| Edits | Off until the user turns on **MCP edits** | Always allowed |
+| Edits, recording, export | Off until the user turns on **MCP edits** | Always allowed |
 | Project open in the editor | Edited live through the editor, one undo step per call | The same while the app runs: the call is forwarded to it. With no app answering, refused ([the marker](#the-open-in-editor-marker)) |
 | Other projects | Read from and saved to their file, a checkpoint first | Same |
-| Tools | `listProjects`, the agent's tools, the checkpoint tools | The same, plus the media tools: `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo`, `getFrames` |
+| Tools | `listProjects`, the agent's tools, the checkpoint tools, and the media tools: `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo`, `getFrames` | The same |
+| A take | Recorded by the app's recording bar, as its Record button records; the editor opens it ([below](#the-media-tools)) | Recorded by a hidden runner of its own process, and made a project there |
 | Checkpoints | In the app's memory, shared with forwarded `openscreen mcp` calls, lost when the app quits | In the app's while it runs; otherwise in this process's, lost when it exits, which it does when the client disconnects |
 
 **When the app runs, it is the authority**: `openscreen mcp` forwards its document calls to it ([below](#openscreen-mcp-and-the-running-app)), so one process writes the projects. Only when no app answers do two processes write the same project folder; the [open-in-editor marker](#the-open-in-editor-marker) and the byte compare of `saveProjectIfUnchanged` are then what keep them from overwriting each other's work.
@@ -20,8 +21,9 @@ The same tools are served over two transports, by two different processes:
 | File | Role |
 |---|---|
 | [`electron/mcp/openscreen-mcp-server.ts`](../../electron/mcp/openscreen-mcp-server.ts) | The tools both transports serve, the tool runner (routing, refusals, checkpoints), the texts per transport (`mcpInstructions`), and the local HTTP guard. |
-| [`electron/mcp/stdio-server.ts`](../../electron/mcp/stdio-server.ts) | `openscreen mcp`: the same server and runner on stdin/stdout, with the media tools. |
-| [`electron/mcp/media-tools.ts`](../../electron/mcp/media-tools.ts) | The media tools and their capability block (`MEDIA_PREAMBLE`). |
+| [`electron/mcp/stdio-server.ts`](../../electron/mcp/stdio-server.ts) | `openscreen mcp`: the same server, runner and media tools on stdin/stdout. |
+| [`electron/mcp/media-tools.ts`](../../electron/mcp/media-tools.ts) | The media tools both servers serve (`createMediaTools`), their capability block per transport (`mediaPreamble`), and `openscreen mcp`'s recorder. |
+| [`electron/mcp/app-recorder.ts`](../../electron/mcp/app-recorder.ts) | The in-app server's recorder: a take through the app's recording bar, opened by its editor. |
 | [`electron/mcp/editor-document-host.ts`](../../electron/mcp/editor-document-host.ts) | Main-process side of the live document: asks the editor window for a snapshot and hands edits back. |
 | [`electron/mcp/app-channel.ts`](../../electron/mcp/app-channel.ts) | The local channel `openscreen mcp` forwards its document calls through to the running app. See [`openscreen mcp` and the running app](#openscreen-mcp-and-the-running-app). |
 | [`electron/mcp/mcp-controller.ts`](../../electron/mcp/mcp-controller.ts) | In-app server lifecycle: start when enabled, restart on a port or token change, status for the settings UI. |
@@ -33,7 +35,7 @@ The same tools are served over two transports, by two different processes:
 
 Nothing about the tools is reimplemented. The server registers `TOOL_ARG_SCHEMAS` (names and zod schemas) and `TOOL_DESCRIPTIONS`, and builds its `instructions` around `buildSystemPrompt`, all exported from [`deep-agent/service.ts`](../../electron/ai-edition/deep-agent/service.ts), where `buildTools` builds the in-app agent from the same table. Every call goes through `runDocumentTool`, the function the in-app agent's `documentTool` also calls: the cursor-telemetry read the zoom tools need, then `executeAgentTool`.
 
-So a tool added to the agent appears over MCP with no further work, and the MCP test asserts the listed tools equal `listProjects`, then `OPENSCREEN_TOOL_NAMES`, then the two checkpoint tools below. What the server adds:
+So a tool added to the agent appears over MCP with no further work, and the MCP test asserts the listed tools equal `listProjects`, then `OPENSCREEN_TOOL_NAMES`, then the two checkpoint tools, then the [media tools](#the-media-tools). What the server adds:
 
 - **`listProjects`**, a tool of its own: every project's id, title, `updatedAt`, asset count, and `open` for the one in an editor (this process's, or the app's seen through the marker).
 - **An optional `projectId` on every agent tool and both checkpoint tools**, added to its schema with `.extend()` at registration and stripped again before the call reaches the executor, which never sees it. See [Which project a call acts on](#which-project-a-call-acts-on).
@@ -44,14 +46,16 @@ So a tool added to the agent appears over MCP with no further work, and the MCP 
 
 Every text a client reads must be true on the server that serves it, so the texts are composed rather than shared verbatim. `McpToolDeps.transport` (`"http"` or `"stdio"`) selects them:
 
-- **Instructions** (`mcpInstructions`): the media tools' capability block when they are registered, then the projects-and-checkpoints rules of the transport, then how long checkpoints live there, then `buildSystemPrompt`. The checkpoint rule is in both. Over HTTP the rules speak of the editor and its undo stack and add "Nothing here records, exports or imports media"; over stdio they say that calls go through the app while it runs (the open project live, with `Ctrl/Cmd+Z`), and to the files when it does not.
-- **`buildSystemPrompt`** takes the transport's facts as options: `editsSetting` names the switch its consent block points to (the MCP server's **MCP edits**, not the in-app agent's **Agent edits**), and `canExport` drops "exporting" from its examples of a request with no tool when `exportVideo` is served.
-- **Tool descriptions**: `projectId` is "omit it for the open project" over HTTP and "omit it only for the open project, while the app runs" over stdio; `restoreCheckpoint` mentions the pointer track only where `setPointerTrack` is served.
+- **Instructions** (`mcpInstructions`): the media tools' capability block (`mediaPreamble`), then the projects-and-checkpoints rules of the transport, then how long checkpoints live there, then `buildSystemPrompt`. The checkpoint rule is in both. Over HTTP the media block says a take goes through the app's recording bar and opens in the editor, and the rules speak of the editor and its undo stack; while **MCP edits** is off, a line says `startRecording` and `exportVideo` are refused too. Over stdio the media block says the takes land in the app's project list, and the rules say that calls go through the app while it runs (the open project live, with `Ctrl/Cmd+Z`), and to the files when it does not.
+- **`buildSystemPrompt`** takes the transport's facts as options: `editsSetting` names the switch its consent block points to (the MCP server's **MCP edits**, not the in-app agent's **Agent edits**), and `canExport` drops "exporting" from its examples of a request with no tool, since both serve `exportVideo`.
+- **Tool descriptions**: `projectId` is "omit it for the open project" over HTTP and "omit it only for the open project, while the app runs" over stdio. `startRecording` and `stopRecording` say how each server makes a take ([below](#the-media-tools)), and the paths of `exportVideo` and `getFrames` must be absolute over HTTP: the app has no working directory of the client's.
 - **Messages**: no project to fall back on, a checkpoint required, an unknown checkpoint, edits turned off. Each has a version per transport, or exists only on the one that can produce it. The stdio versions are only met with no app answering, and say so.
 
-The in-app chat agent keeps `buildSystemPrompt`'s defaults: its own switch, no export.
+The in-app chat agent keeps `buildSystemPrompt`'s defaults: its own switch, no export. The app's channel for `openscreen mcp` registers no media tools, so its instructions have no media block: no agent reads them.
 
-**Writes on the in-app server are a second opt-in.** MCP clients have their own **MCP edits** switch, `allowEdits` in `mcp-server.json`, **off by default** and independent of the in-app agent's **Agent edits** (`allowAgentEdits`). Turning the server on therefore grants read access only. The value is read on every call; while it is off every mutating tool and `setPointerTrack` are refused with the executor's `consent_required` payload naming **MCP edits**, `restoreCheckpoint` with its own refusal text naming it too, and the consent block of the system prompt is in the instructions. It is independent because `allowAgentEdits` defaults to allowed and lives in the provider form, so a user with no provider configured could never have turned MCP writes off. Toggling it does not restart the server. `openscreen mcp` has no such switch: the client started it itself, and there is no other caller to keep out. Its calls forwarded to the app keep that: the runner takes `editsAllowed` per call.
+**Writes on the in-app server are a second opt-in.** MCP clients have their own **MCP edits** switch, `allowEdits` in `mcp-server.json`, **off by default** and independent of the in-app agent's **Agent edits** (`allowAgentEdits`). Turning the server on therefore grants read access only. The value is read on every call; while it is off every mutating tool and `setPointerTrack` are refused with the executor's `consent_required` payload naming **MCP edits**, `restoreCheckpoint` with its own refusal text naming it too, `startRecording` and `exportVideo` with theirs, and the consent block of the system prompt is in the instructions. It is independent because `allowAgentEdits` defaults to allowed and lives in the provider form, so a user with no provider configured could never have turned MCP writes off. Toggling it does not restart the server. `openscreen mcp` has no such switch: the client started it itself, and there is no other caller to keep out. Its calls forwarded to the app keep that: the runner takes `editsAllowed` per call.
+
+**Recording and export wait for the same switch, with no setting of their own.** The settings model has two steps: the server on is read access, **MCP edits** on is a client changing things. A take captures the screen and creates a project; an export writes a file wherever the client says, over one already there. Both change things, more than an edit does, so both wait for **MCP edits**, whose label says so: *Allow MCP clients to edit your projects, record and export*. A third switch would split one decision, whether this client may act for the user, in two. `stopRecording` is not gated, so a take started before the switch went off can still end. `listSources` and `getFrames` only read, so the server being on is enough.
 
 ## Which project a call acts on
 
@@ -112,13 +116,25 @@ A client chains several edits in one turn, and each is its own undo step, so rev
 - It discards every edit since the checkpoint, the user's included. The tool description says so.
 - **Lifetime.** Checkpoints live in the runner's memory, the 20 most recent. In the app that is one runner (`createToolRunner`, built in `registerIpcHandlers`), shared by the in-app server and every forwarded `openscreen mcp` call; a restart of the in-app server keeps them, and they are lost when the app quits. An `openscreen mcp` with no app answering keeps its own, lost when the process exits, which it does when the client disconnects. The unknown-checkpoint message says which. The in-app agent does not need them: its whole turn is a single apply.
 
-## The media tools (stdio)
+## The media tools
 
-`registerMediaTools` adds the tools that make a video around the edits. They share the runner the document tools use, the routed one of `stdio-server.ts`, so their document calls go to the app while it runs:
+`createMediaTools` builds the tools that make a video around the edits, once per server, and `createOpenScreenMcpServer` registers them. Both servers serve the same six, from the same code. Their state (the take running, the export running, each take's start time, each project's last export) lives in what `createMediaTools` returns, so the in-app server, which builds a fresh `McpServer` per request, keeps it across requests and across a restart of its port. They share the runner the document tools use: the app's one runner in the app, the routed one of `stdio-server.ts` over stdio, so their document calls go to the app while it runs.
 
-- `stopRecording` turns the take into a project and creates its checkpoint through the runner. The new project itself is written by the CLI process: a fresh id no editor can hold.
-- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. `pointerTrackEdit` computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result. A sidecar write that fails after the save is reported as a partial edit: the project was saved, the pointer track was not. A `RunnerEdit` is a closure and cannot be forwarded, so the call carries what the edit needs (`events`, and `takes`, each take's start time by video): the app's channel serves `setPointerTrack` with those args and runs `pointerTrackEdit` in its own runner.
-- `exportVideo` and `getFrames` read projects; they write none.
+What differs between the two servers is who records, handed in as a `TakeRecorder`:
+
+| | In-app server | `openscreen mcp` |
+|---|---|---|
+| Recorder | `createAppRecorder` (app-recorder.ts) | `runnerRecorder` (media-tools.ts) |
+| `startRecording` | Points the recording bar at the request, as the editor's Record mode does before it hands over: the source, picked from the list `listSources` shows (`pickRecordingSource`, as `openscreen record`), and the microphone, system audio and editable cursor in the recording prefs. Then hands over as the editor's Record button does (`start-new-recording`): the editor closes, the HUD starts the take with its countdown and its camera setting. Returns once `set-recording-state` says it records. Refused while the editor has unsaved changes, since the editor closes. Where the system's picker owns the choice (the Linux portal, Apple's picker on macOS 15.2+), the request picks nothing: that picker asks the user. | A hidden `cli-record` runner of its own process, as `openscreen record`. |
+| `stopRecording` | Presses the HUD's Stop, as the tray does. The HUD saves the take and hands it to the editor (`set-current-recording-session`), which imports it as for any take: one clip, measured, and the zooms on its clicks when Record mode's *Auto-zoom after recording* is on. The recorder waits for the editor's document to hold the take with its real length, then for its revision to hold still for 1.5 s, and returns that project, open in the editor. A `title` is applied through the editor. | Stops the runner and makes the project here (`createProjectFromVideo`): a fresh id no editor can hold, the zooms planned from the clicks. |
+| The user's settings | The source, microphone, system audio and cursor mode the user had come back once the take is captured. | Untouched: the runner never saves them. |
+
+Then both servers carry on alike:
+
+- `stopRecording` creates the take's checkpoint through the runner, and records when the take started, by its video, for `setPointerTrack`.
+- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. `pointerTrackEdit` computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result. A sidecar write that fails after the save is reported as a partial edit: the project was saved, the pointer track was not. A `RunnerEdit` is a closure and cannot be forwarded, so the call carries what the edit needs (`events`, and `takes`, each take's start time by video): the app's channel serves `setPointerTrack` with those args and runs `pointerTrackEdit` in its own runner. That is the channel's own registration, not the in-app server's tool: the takes of `openscreen mcp` are known to it alone.
+- `exportVideo` renders in a hidden `cli-export` runner, the same in both processes: in the app, `listSources` and `exportVideo` run the CLI's runners (`createRunnerHost` with `createRunnerWindow`), whose IPC the app registers on first use. The runner reads the project by id (`CliExportRequest.projectId`, the editor's own `aiEdition.get`), not by path: opening a file by path moves the main process's current project and recording-session slot, which in the app is the hand-off from the recorder to the editor.
+- `exportVideo` and `getFrames` read projects; they write none. Over HTTP their paths must be absolute.
 
 ## `openscreen mcp` and the running app
 
@@ -135,7 +151,7 @@ The stdio server (`openscreen mcp`, [`stdio-server.ts`](../../electron/mcp/stdio
 
 **In-app server (HTTP)**
 
-- Streamable HTTP, **stateless**: a fresh `McpServer` + transport per request, the SDK's documented shape for a server that keeps no session state. The runner, and so the checkpoints, live as long as the running server.
+- Streamable HTTP, **stateless**: a fresh `McpServer` + transport per request, the SDK's documented shape for a server that keeps no session state. The runner, and so the checkpoints, and the media tools' state live as long as the app.
 - Bound to `127.0.0.1` only, endpoint `/mcp`, default port 47821 (configurable, 1024–65535).
 - Every request needs `Authorization: Bearer <token>`, compared in constant time. The token is 32 random bytes, stored with `safeStorage`, and read only once the server is enabled, so users who never enable it never meet a Keychain prompt for it. Regenerating it restarts the server, so the old one stops working at once.
 - The `Host` must be `127.0.0.1:<port>` or `localhost:<port>`, and a request carrying any other `Origin` is refused — this blocks a web page from reaching the server through DNS rebinding.
@@ -147,7 +163,7 @@ The stdio server (`openscreen mcp`, [`stdio-server.ts`](../../electron/mcp/stdio
 
 ## Lifecycle
 
-`registerIpcHandlers` builds the `McpController` (it is where the agent's own dependencies — the cursor reader, the LLM config — live) and returns it; **`main.ts` starts it**. The headless CLI shares `registerIpcHandlers` and must never bind the port a running app is listening on, and a bench run has no use for it, so neither calls `startIfEnabled`. `main.ts` also opens the channel for `openscreen mcp` (`serveAppChannel`), always, and closes it on `will-quit`. `openscreen mcp` reuses the same dependencies (`mcpToolDeps`) with `transport: "stdio"` and edits always allowed.
+`registerIpcHandlers` builds the `McpController` and the in-app media tools with their recorder (it is where the agent's own dependencies — the cursor reader, the LLM config — live, and the recording handlers the recorder listens to) and returns it; **`main.ts` starts it**, and hands `registerIpcHandlers` the editor's unsaved-changes flag that `startRecording` checks. The headless CLI shares `registerIpcHandlers` and must never bind the port a running app is listening on, and a bench run has no use for it, so neither calls `startIfEnabled`. `main.ts` also opens the channel for `openscreen mcp` (`serveAppChannel`), always, and closes it on `will-quit`. `openscreen mcp` reuses the same dependencies (`mcpToolDeps`) with `transport: "stdio"` and edits always allowed.
 
 ## Connecting a client
 
@@ -169,7 +185,8 @@ codex mcp add openscreen -- "<executable>" mcp
 
 ## Known gaps
 
-- **The in-app server cannot record or export.** `openscreen mcp` now covers the whole loop, editing the open project through the app; the in-app server gets the media tools later in #1174.
+- **`openscreen mcp` records in its own process, app or no app.** Only its document calls are forwarded; its takes, exports and frames stay in the CLI process, and its take lands in the project list rather than in the editor. The in-app server is the way to record through the app's recording bar.
+- **An in-app take is ready by a quiet period.** The editor lays a take out in several saves and says none of them is the last: the recorder waits for its revision to hold for 1.5 s. A save later than that (a slow auto-zoom pass) lands after the checkpoint, so `restoreCheckpoint` takes it back with the client's edits.
 - **No Ctrl+Z for edits to closed projects.** Their undo is the checkpoint the write requires, which lives in memory: it is gone once its server goes away or 20 newer ones push it out, and the edits stay.
 - **An editor that stops answering looks closed.** A snapshot unanswered for 30 s reads as "no project open", so an edit naming the project that editor holds would go to its file, and the editor's next save would drop it. It takes a renderer hung for 30 s.
-- **No project management.** Projects can be listed, read and edited, and `openscreen mcp` creates one per take; none can be renamed or deleted, and nothing imports media.
+- **No project management.** Projects can be listed, read and edited, and each take makes one; only a take's `title` names it, none can be renamed or deleted afterwards, and nothing imports media.

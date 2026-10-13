@@ -12,7 +12,7 @@ You produce a short MP4 that shows one feature, zooms on the action and carries 
 
 ## 1. Set up OpenScreen
 
-You need the tools `startRecording`, `stopRecording`, `exportVideo` and `getFrames`. If you have them, go to step 2. Otherwise set OpenScreen up, once per machine, doing only what is missing.
+You need the tools `startRecording`, `stopRecording`, `exportVideo` and `getFrames`. Both of OpenScreen's MCP servers have them: the one the app serves (*AI settings* → *MCP server*), and `openscreen mcp`, set up below. If you have them, go to step 2. Otherwise set OpenScreen up, once per machine, doing only what is missing.
 
 **The app.** Its executable is the MCP server:
 
@@ -60,7 +60,7 @@ Write a storyboard and show it to the user in a few lines, then carry on unless 
 
 ## 4. Record
 
-1. `startRecording` with `window`. It returns once capture has started.
+1. `startRecording` with `window`. It returns once capture has started. Connected to the server in the app, the take goes through OpenScreen's recording bar: the editor closes, the bar counts down, and `stopRecording` opens the take in the editor.
 2. Play the storyboard. Move deliberately, and pause about one second after each result appears.
 3. `stopRecording` with a `title`. Keep what it returns: `projectId`, `checkpointId`, `videoPath`, `recordingStartedAt`.
 
@@ -89,7 +89,7 @@ Keep the rest as it is: the background, padding, shadow and cursor style are cho
 
 ## 7. Export and review
 
-1. `exportVideo` with the `projectId` and a path such as `demo/demo.mp4`. For a pull request video, pass `quality: "medium"` (720p) to keep the file small.
+1. `exportVideo` with the `projectId` and the absolute path of, say, `demo/demo.mp4` in the working directory: the server in the app takes only absolute paths. For a pull request video, pass `quality: "medium"` (720p) to keep the file small.
 2. `getFrames` with the `projectId`, at the ruler seconds of your beats.
 3. Check every frame:
    - Is each callout readable and clear of the action?
@@ -129,6 +129,7 @@ Only to a pull request the user asked for a video on, or one you open for them i
 ## When it goes wrong
 
 - **`The recording did not start`:** the window title did not match, or capture is not permitted. Check `listSources` and the permissions in step 1.
+- **Recording, exporting or an edit refused, naming *MCP edits*:** you are connected to the server in the app, which records, exports and edits only once the user allows it. Ask them to turn on *MCP edits* under *AI settings* → *MCP server*.
 - **No cursor in the video:** the app was driven by a script. See step 4.
 - **No zoom on an early click:** the first 2.5 s stay wide on purpose. Start the first action after that.
 - **`unknown flag: --attach`:** `gh` is older than 2.99.0. See step 8.
