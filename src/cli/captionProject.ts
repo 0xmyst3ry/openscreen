@@ -33,7 +33,10 @@ export async function captionProject(
 	if (!transcriptHasSpeech(transcript)) {
 		throw new Error("No speech detected in the project's audio");
 	}
-	const transcribed = existing ? document : applyTranscriptionResult(document, transcript).document;
+	// A transcript only in the legacy `transcript` mirror is copied into `transcripts`, which the
+	// captions read.
+	const stored = document.transcripts.some((t) => t.assetId === assetId);
+	const transcribed = stored ? document : applyTranscriptionResult(document, transcript).document;
 	// The v1 caption annotations this command used to write: the Captions pane offers to
 	// clear them, and next to real captions they would show every line twice.
 	const cleared: AxcutDocument = {
