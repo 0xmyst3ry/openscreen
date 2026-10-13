@@ -329,11 +329,14 @@ export function editorSettingsSnapshot(
 	};
 }
 
-/** `"auto"`, a preset, or one of the timeline's own shapes: what the format picker offers. */
+/** What the format picker offers: auto (while the timeline holds one composition), a preset, or
+ *  one of the timeline's own shapes. The current value always passes, so a read written back
+ *  as is never fails on it. */
 function aspectRatioError(document: AxcutDocument, value: string): string | null {
 	const original = collectNativeFormats(document).map((f) => f.token);
-	const allowed = ["auto", ...ASPECT_RATIO_PRESETS, ...original];
-	return allowed.includes(value)
+	const auto = isAutoFormatAvailable(document) ? ["auto"] : [];
+	const allowed = [...auto, ...ASPECT_RATIO_PRESETS, ...original];
+	return allowed.includes(value) || value === getEditorSettings(document).aspectRatio
 		? null
 		: `aspectRatio ${JSON.stringify(value)} is not offered for this project. Use one of: ${allowed.join(", ")}.`;
 }
