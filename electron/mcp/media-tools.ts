@@ -969,6 +969,8 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						deps,
 						videoPath,
 						title || path.parse(videoPath).name,
+						// A video from elsewhere: no webcam recorded beside it here.
+						null,
 					);
 				} catch (error) {
 					return text(
