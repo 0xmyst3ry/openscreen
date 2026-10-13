@@ -594,6 +594,16 @@ describe("getFrames on a project", () => {
 		);
 	});
 
+	it("still shows the last export of a project deleted since", async () => {
+		const { projectId } = await recordTake();
+		runners.results.export = { success: true, outputPath: path.join(dir, "demo.mp4") };
+		await call("exportVideo", { projectId, path: path.join(dir, "demo.mp4") });
+		await documents.deleteProject(projectId);
+		const frames = await call("getFrames", { projectId, atSec: [1] });
+		expect(frames.isError).toBeFalsy();
+		expect(frames.content.filter((part) => part.type === "image")).toHaveLength(1);
+	});
+
 	it("takes a project or a file, not both", async () => {
 		expect((await call("getFrames", {})).isError).toBe(true);
 		expect((await call("getFrames", { projectId: "p", path: "x.mp4" })).isError).toBe(true);
