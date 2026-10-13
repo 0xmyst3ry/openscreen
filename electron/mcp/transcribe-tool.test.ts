@@ -169,6 +169,28 @@ describe("transcribe, on a project's file", () => {
 		expect((await pending).isError).toBeUndefined();
 	});
 
+	it("primes a waiting transcription with the vocabulary set while it waited", async () => {
+		await projects.saveProject(fixtureDocument("proj_1"));
+		const running: Array<(response: SttTranscribeResponse) => void> = [];
+		const { run, transcribe } = runnerWith(
+			() =>
+				new Promise((resolve) => {
+					running.push(resolve);
+				}),
+		);
+		const first = run(TRANSCRIBE_TOOL, { projectId: "proj_1" });
+		await vi.waitFor(() => expect(running).toHaveLength(1));
+		const second = run(TRANSCRIBE_TOOL, { projectId: "proj_1", language: "fr" });
+		await run("createCheckpoint", { projectId: "proj_1" });
+		await run("setVocabulary", { projectId: "proj_1", vocabulary: "Vulkan" });
+		running.shift()?.(SPEECH);
+		await first;
+		await vi.waitFor(() => expect(running).toHaveLength(1));
+		expect(transcribe).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: "Vulkan" }));
+		running.shift()?.(SPEECH);
+		await second;
+	});
+
 	it("survives a restore to a checkpoint made before it", async () => {
 		await projects.saveProject(fixtureDocument("proj_1"));
 		const { run } = runnerWith(async () => SPEECH);
