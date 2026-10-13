@@ -67,7 +67,7 @@ Wenn du bereits einen KI-Coding-Agenten wie Claude Code oder Codex nutzt, kann e
 2. Kopiere den dort angezeigten Befehl für **Claude Code** oder **Codex** und führe ihn in einem Terminal aus. Der Befehl für Claude Code enthält das Zugriffstoken. Codex liest es stattdessen aus der Umgebungsvariable `OPENSCREEN_MCP_TOKEN`: Setze sie in der Shell, aus der du Codex startest.
 3. Bitte deinen Agenten um die Änderung, am im OpenScreen-Editor geöffneten Projekt oder an einem beliebigen anderen Projekt deiner Liste.
 
-Die Werkzeuge sind die, die der eingebaute Agent nutzt. Sie wirken auf das im Editor geöffnete Projekt, es sei denn, der Client nennt ein anderes: Er kann alle Projekte auflisten und jedes davon lesen oder bearbeiten. MCP-Clients können nur **lesen**, bis du im Abschnitt MCP-Server auch **MCP-Änderungen** einschaltest; dieser Schalter ist von **Agenten-Änderungen**, dem des eingebauten Agenten, getrennt und steht anfangs auf aus. Ist er an, wird jede Änderung gespeichert, sobald sie ankommt:
+Die Werkzeuge sind die, die der eingebaute Agent nutzt, dazu die, die ein Video aufnehmen, exportieren und ansehen ([unten](#letting-an-agent-make-the-whole-video)). Sie wirken auf das im Editor geöffnete Projekt, es sei denn, der Client nennt ein anderes: Er kann alle Projekte auflisten und jedes davon lesen oder bearbeiten. MCP-Clients können nur **lesen**, bis du im Abschnitt MCP-Server auch **MCP-Änderungen** einschaltest: Bis dahin wird jede Bearbeitung, Aufnahme oder jeder Export, den sie versuchen, abgelehnt. Dieser Schalter ist von **Agenten-Änderungen**, dem des eingebauten Agenten, getrennt und steht anfangs auf aus. Ist er an, wird jede Änderung gespeichert, sobald sie ankommt:
 
 - **Am im Editor geöffneten Projekt** wird eine Änderung mit `Ctrl/Cmd + Z` rückgängig gemacht. Clients werden angewiesen, vor einer Reihe von Änderungen einen Wiederherstellungspunkt zu speichern. So kannst du sie bitten, das Projekt in einem einzigen Schritt wiederherzustellen, wie es war, und auch diesen Schritt kann `Ctrl/Cmd + Z` rückgängig machen.
 - **An jedem anderen Projekt** wird eine Änderung in seiner Datei gespeichert, wo `Ctrl/Cmd + Z` sie nicht erreicht. Ein Client muss vor der ersten Änderung einen Wiederherstellungspunkt dieses Projekts speichern, und dorthin zurückzukehren ist der einzige Weg, sie rückgängig zu machen.
@@ -76,7 +76,11 @@ Wiederherstellungspunkte liegen im Speicher von OpenScreen: Sie gehen verloren, 
 
 ## Einen Agenten das ganze Video erstellen lassen {#letting-an-agent-make-the-whole-video}
 
-Der Server oben bearbeitet Projekte. Soll ein Agent ein ganzes Video selbstständig erstellen, von der Aufnahme bis zum Export, füge OpenScreen stattdessen als stdio-Server zum Agenten hinzu: Der Agent startet die eigene ausführbare Datei der App mit `mcp`. Er bekommt dieselben Bearbeitungswerkzeuge, dazu `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` und `getFrames`.
+Ein Agent kann ein ganzes Video selbstständig erstellen, von der Aufnahme bis zum Export. Neben den Bearbeitungswerkzeugen geben ihm beide Wege, OpenScreen hinzuzufügen, `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` und `getFrames`.
+
+**Über den Server oben** nimmt OpenScreen eine Aufnahme selbst auf, wie mit seinem Aufnahme-Button: Der Editor schließt sich, die Aufnahmeleiste zählt herunter und nimmt auf, und die Aufnahme öffnet sich im Editor als neues Projekt, wo du jede Änderung ankommen siehst. Dafür muss **MCP-Änderungen** an sein, und die Aufnahmeleiste bekommt am Ende der Aufnahme deine eigenen Einstellungen zurück.
+
+**Als stdio-Server** braucht es gar keine Einstellung: Der Agent startet die eigene ausführbare Datei der App mit `mcp`.
 
 Am schnellsten fügst du Folgendes in Claude Code ein:
 

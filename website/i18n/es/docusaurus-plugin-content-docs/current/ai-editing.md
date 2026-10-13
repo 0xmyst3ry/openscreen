@@ -67,7 +67,7 @@ Si ya usas un agente de código con IA como Claude Code o Codex, puede manejar l
 2. Copia el comando de **Claude Code** o de **Codex** que aparece ahí y ejecútalo en una terminal. El comando de Claude Code lleva el token de acceso. Codex, en cambio, lo lee de la variable de entorno `OPENSCREEN_MCP_TOKEN`: defínela en el shell desde el que inicias Codex.
 3. Pídele la edición a tu agente, sobre el proyecto abierto en el editor de OpenScreen o sobre cualquier otro proyecto de tu lista.
 
-Las herramientas son las que usa el agente integrado. Actúan sobre el proyecto abierto en el editor, salvo que el cliente indique otro: puede listar todos los proyectos y leer o editar cualquiera de ellos. Los clientes MCP solo pueden **leer** hasta que también actives **Ediciones por MCP** en la sección Servidor MCP; este interruptor es independiente de **Ediciones del agente**, el del agente integrado, y empieza desactivado. Una vez activado, cada edición se guarda en cuanto se aplica:
+Las herramientas son las que usa el agente integrado, además de las que graban, exportan y miran un video ([más abajo](#letting-an-agent-make-the-whole-video)). Actúan sobre el proyecto abierto en el editor, salvo que el cliente indique otro: puede listar todos los proyectos y leer o editar cualquiera de ellos. Los clientes MCP solo pueden **leer** hasta que también actives **Ediciones por MCP** en la sección Servidor MCP: hasta entonces se rechaza cada edición, grabación o exportación que intenten. Este interruptor es independiente de **Ediciones del agente**, el del agente integrado, y empieza desactivado. Una vez activado, cada edición se guarda en cuanto se aplica:
 
 - **En el proyecto abierto en el editor**, una edición se deshace con `Ctrl/Cmd + Z`. A los clientes se les indica que guarden un punto de restauración antes de una serie de ediciones, así que puedes pedirles que dejen el proyecto como estaba en un solo paso, que el propio `Ctrl/Cmd + Z` puede deshacer.
 - **En cualquier otro proyecto**, una edición se guarda en su archivo, fuera del alcance de `Ctrl/Cmd + Z`. Un cliente debe guardar un punto de restauración de ese proyecto antes de su primera edición, y volver a él es la única forma de deshacerla.
@@ -76,7 +76,11 @@ Los puntos de restauración se guardan en la memoria de OpenScreen: se pierden c
 
 ## Dejar que un agente haga todo el video {#letting-an-agent-make-the-whole-video}
 
-El servidor de arriba edita proyectos. Para que un agente haga un video completo por sí solo, desde la grabación hasta la exportación, agrega en cambio OpenScreen al agente como servidor stdio: el agente inicia el propio ejecutable de la app con `mcp`. Obtiene las mismas herramientas de edición, además de `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` y `getFrames`.
+Un agente puede hacer un video completo por sí solo, desde la grabación hasta la exportación. Además de las herramientas de edición, las dos formas de agregar OpenScreen al agente le dan `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo` y `getFrames`.
+
+**Con el servidor de arriba**, la toma la graba el propio OpenScreen, como con su botón Grabar: el editor se cierra, la barra de grabación hace su cuenta regresiva y graba, y la toma se abre en el editor como un proyecto nuevo, donde ves llegar cada edición. Necesita **Ediciones por MCP** activado, y la barra de grabación recupera tus propios ajustes al terminar la toma.
+
+**Como servidor stdio**, no necesita ningún ajuste: el agente inicia el propio ejecutable de la app con `mcp`.
 
 La forma más rápida es pegar esto en Claude Code:
 
