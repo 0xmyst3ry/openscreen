@@ -108,9 +108,20 @@ describe("parseCliArgs", () => {
 			windowTitle: null,
 			mic: false,
 			systemAudio: false,
+			camera: false,
+			cameraDevice: null,
 			cursorMode: "editable-overlay",
 			durationMs: null,
 		});
+	});
+
+	it("parses the camera: --camera for the default one, --camera-device for one by name", () => {
+		expect(parse(["record", "--camera"])).toMatchObject({ camera: true, cameraDevice: null });
+		expect(parse(["record", "--camera-device", "BRIO"])).toMatchObject({
+			camera: true,
+			cameraDevice: "BRIO",
+		});
+		expect(parse(["record", "--camera-device"])).toMatchObject({ kind: "error" });
 	});
 
 	it("parses record options", () => {
@@ -141,6 +152,20 @@ describe("parseCliArgs", () => {
 		expect(parse(["record", "--duration", "0"])).toMatchObject({ kind: "error" });
 		expect(parse(["record", "--cursor", "off"])).toMatchObject({ kind: "error" });
 		expect(parse(["record", "--project", "demo.json"])).toMatchObject({ kind: "error" });
+	});
+
+	it("parses the Export dialog's frame rates, GIF sizes and GIF loop", () => {
+		expect(parse(["export", "a.openscreen"])).toMatchObject({ mp4FrameRate: 60, gifLoop: null });
+		expect(parse(["export", "a.openscreen", "--fps", "24"])).toMatchObject({ mp4FrameRate: 24 });
+		expect(parse(["export", "a.openscreen", "--fps", "25"])).toMatchObject({ kind: "error" });
+		expect(parse(["export", "a.openscreen", "--gif-size", "small"])).toMatchObject({
+			gifSizePreset: "small",
+		});
+		expect(parse(["export", "a.openscreen", "--gif-size", "toString"])).toMatchObject({
+			kind: "error",
+		});
+		expect(parse(["export", "a.openscreen", "--no-gif-loop"])).toMatchObject({ gifLoop: false });
+		expect(parse(["export", "a.openscreen", "--gif-loop"])).toMatchObject({ gifLoop: true });
 	});
 
 	it("parses --auto-zoom", () => {

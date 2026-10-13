@@ -7,6 +7,11 @@ import {
 	CAPTION_WORDS_PER_LINE_MIN,
 } from "../../src/lib/ai-edition/captions/wordsPerLine";
 import type { CliExportRequest, CliRecordRequest, CliRequest } from "../../src/lib/cliContracts";
+import {
+	GIF_SIZE_PRESETS,
+	type GifSizePreset,
+	MP4_FRAME_RATES,
+} from "../../src/lib/exporter/types";
 
 export interface CliInfoCommand {
 	kind: "info";
@@ -77,7 +82,7 @@ export const CLI_USAGE = `OpenScreen CLI
 Usage:
   openscreen export <project.openscreen> [options]   Render a project to MP4/GIF
   openscreen record [options]                        Record the screen headlessly
-  openscreen sources [--json] [-o <file>]            List displays, windows and microphones
+  openscreen sources [--json] [-o <file>]            List displays, windows, microphones and cameras
   openscreen pack <project.openscreen> --out <dir>   Copy project + media into one portable folder
   openscreen captions <project.openscreen>           Add auto-captions (on-device Whisper) to a project
                      [--min-words <1-12>] [--max-words <1-12>]
@@ -90,9 +95,11 @@ Export options:
   --format <mp4|gif>        Override the format stored in the project
   --quality <medium|good|source>
                             MP4 quality (default: from project)
+  --fps <24|30|60>          MP4 frame rate (default 60)
   --gif-fps <15|20|25|30>   GIF frame rate (default: from project)
-  --gif-size <medium|large|original>
+  --gif-size <small|medium|large|original>
                             GIF size preset (default: from project)
+  --gif-loop, --no-gif-loop GIF loops forever, or plays once (default: from project)
   --auto-zoom               Add automatic zooms from cursor telemetry (editor's magic wand)
   --audio <file>            Mix a voiceover audio file into the MP4 (mp3/wav/m4a)
   --audio-mode <mix|replace>
@@ -106,6 +113,8 @@ Record options (recording is saved into the app's recordings directory):
   --mic                     Capture the default microphone
   --mic-device <name>       Microphone device name (implies --mic)
   --system-audio            Capture system audio
+  --camera                  Record the default webcam beside the screen
+  --camera-device <name>    Camera device name (implies --camera)
   --cursor <editable-overlay|system>
                             Cursor capture mode (default editable-overlay)
   --duration <seconds>      Stop automatically after this long
@@ -190,8 +199,10 @@ function parseExport(args: string[], cwd: string): CliCommand {
 		outPath: null,
 		format: null,
 		quality: null,
+		mp4FrameRate: 60,
 		gifFrameRate: null,
 		gifSizePreset: null,
+		gifLoop: null,
 		autoZoom: false,
 		audioPath: null,
 		audioMode: "mix",
@@ -226,6 +237,16 @@ function parseExport(args: string[], cwd: string): CliCommand {
 				i = next;
 				break;
 			}
+			case "--fps": {
+				const [value, next] = takeValue(args, i, arg);
+				const fps = MP4_FRAME_RATES.find((rate) => rate === Number(value));
+				if (fps === undefined) {
+					throw new Error(`--fps must be ${MP4_FRAME_RATES.join(", ")}, got "${value}"`);
+				}
+				request.mp4FrameRate = fps;
+				i = next;
+				break;
+			}
 			case "--gif-fps": {
 				const [value, next] = takeValue(args, i, arg);
 				const fps = Number(value);
@@ -238,13 +259,18 @@ function parseExport(args: string[], cwd: string): CliCommand {
 			}
 			case "--gif-size": {
 				const [value, next] = takeValue(args, i, arg);
-				if (value !== "medium" && value !== "large" && value !== "original") {
-					throw new Error(`--gif-size must be medium, large or original, got "${value}"`);
+				const size = (Object.keys(GIF_SIZE_PRESETS) as GifSizePreset[]).find((s) => s === value);
+				if (size === undefined) {
+					throw new Error(`--gif-size must be small, medium, large or original, got "${value}"`);
 				}
-				request.gifSizePreset = value;
+				request.gifSizePreset = size;
 				i = next;
 				break;
 			}
+			case "--gif-loop":
+			case "--no-gif-loop":
+				request.gifLoop = arg === "--gif-loop";
+				break;
 			case "--auto-zoom":
 				request.autoZoom = true;
 				break;
@@ -312,6 +338,8 @@ function parseRecord(args: string[], cwd: string): CliCommand {
 		mic: false,
 		micDevice: null,
 		systemAudio: false,
+		camera: false,
+		cameraDevice: null,
 		cursorMode: "editable-overlay",
 		durationMs: null,
 		projectOut: null,
@@ -349,6 +377,16 @@ function parseRecord(args: string[], cwd: string): CliCommand {
 			case "--system-audio":
 				request.systemAudio = true;
 				break;
+			case "--camera":
+				request.camera = true;
+				break;
+			case "--camera-device": {
+				const [value, next] = takeValue(args, i, arg);
+				request.camera = true;
+				request.cameraDevice = value;
+				i = next;
+				break;
+			}
 			case "--cursor": {
 				const [value, next] = takeValue(args, i, arg);
 				if (value !== "editable-overlay" && value !== "system") {

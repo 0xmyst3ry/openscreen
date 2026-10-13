@@ -8,7 +8,13 @@ import {
 	createEmptyDocument,
 	documentSchema,
 } from "../../src/lib/ai-edition/schema";
-import { type AppRecorderDeps, createAppRecorder } from "./app-recorder";
+import {
+	type AppRecorderDeps,
+	createAppRecorder,
+	pickTakePrefs,
+	type TakePrefs,
+	takePrefs,
+} from "./app-recorder";
 import type { McpApplyResult } from "./openscreen-mcp-server";
 
 const VIDEO = path.resolve("recordings", "take.webm");
@@ -19,6 +25,9 @@ const REQUEST = {
 	mic: false,
 	micDevice: null,
 	systemAudio: false,
+	camera: false,
+	cameraDevice: null,
+	cursorMode: "editable-overlay" as const,
 };
 
 /** The editor's project for the take: `clipEndSec` 60 is the placeholder it starts with. */
@@ -184,5 +193,55 @@ describe("an MCP take in the app", () => {
 		await expect(take.stop(undefined)).rejects.toThrow("The recording failed");
 		// Released: the next take may start.
 		await expect(started(recorder, calls)).resolves.toBeDefined();
+	});
+});
+
+describe("the recording bar's settings for a client's take", () => {
+	const listed = {
+		displays: [],
+		windows: [],
+		microphones: [{ label: "USB Mic", deviceId: "mic-1" }],
+		microphoneLabelsUnavailable: false,
+		cameras: [{ label: "Logitech BRIO", deviceId: "cam-1" }],
+		cameraLabelsUnavailable: false,
+	};
+
+	it("records the camera and the cursor mode asked for, a named device by its id and name", () => {
+		expect(
+			takePrefs(
+				{ ...REQUEST, mic: true, camera: true, cameraDevice: "brio", cursorMode: "system" },
+				listed,
+			),
+		).toEqual({
+			micEnabled: true,
+			micDeviceId: null,
+			micDeviceName: null,
+			camEnabled: true,
+			camDeviceId: "cam-1",
+			camDeviceName: "Logitech BRIO",
+			systemAudioEnabled: false,
+			cursorCaptureMode: "system",
+		});
+	});
+
+	it("turns off what the request leaves out, the user's camera included", () => {
+		expect(takePrefs(REQUEST, null)).toMatchObject({ micEnabled: false, camEnabled: false });
+	});
+
+	it("refuses a device no listed name contains", () => {
+		expect(() => takePrefs({ ...REQUEST, camera: true, cameraDevice: "Facetime" }, listed)).toThrow(
+			`No camera's name contains "Facetime"`,
+		);
+		expect(() => takePrefs({ ...REQUEST, mic: true, micDevice: "Yeti" }, null)).toThrow(
+			"No microphone's name",
+		);
+	});
+
+	it("puts back exactly the settings a take changes", () => {
+		const user: TakePrefs & { hideDesktopIcons: boolean } = {
+			...takePrefs({ ...REQUEST, camera: true }, null),
+			hideDesktopIcons: true,
+		};
+		expect(pickTakePrefs(user)).toEqual(takePrefs({ ...REQUEST, camera: true }, null));
 	});
 });

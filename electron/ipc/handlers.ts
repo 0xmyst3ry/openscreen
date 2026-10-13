@@ -24,6 +24,7 @@ import {
 	isAxcutDocumentFile,
 	parseDocumentFile,
 } from "../../src/lib/ai-edition/schema";
+import type { CliSourcesResult } from "../../src/lib/cliContracts";
 import { pickRecordingSource } from "../../src/lib/cliSourcePick";
 import {
 	type NativeLinuxRecordingRequest,
@@ -79,7 +80,7 @@ import {
 	RECORDINGS_DIR,
 	setRecordingsDir,
 } from "../main";
-import { createAppRecorder } from "../mcp/app-recorder";
+import { createAppRecorder, pickTakePrefs, takePrefs } from "../mcp/app-recorder";
 import { EditorDocumentHost } from "../mcp/editor-document-host";
 import { openVideoInHiddenWindow } from "../mcp/hidden-video";
 import { McpController } from "../mcp/mcp-controller";
@@ -5090,26 +5091,14 @@ export function registerIpcHandlers(
 	 * user's own source and settings are what their next take starts from.
 	 */
 	async function pointHudAtTake(request: RecordRequest): Promise<() => void> {
-		// The microphone first: finding it changes nothing, so a miss leaves all as it was.
-		let microphone: Pick<RecordingPrefs, "micDeviceId" | "micDeviceName"> = {
-			micDeviceId: null,
-			micDeviceName: null,
-		};
-		if (request.mic && request.micDevice) {
-			// Its id as well as its name, both of which the HUD records with: a renderer's to read.
+		// The devices first: finding them changes nothing, so a miss leaves all as it was.
+		let listed: CliSourcesResult | null = null;
+		if ((request.mic && request.micDevice) || (request.camera && request.cameraDevice)) {
+			// Their ids as well as their names, both of which the HUD records with: a renderer's to read.
 			const run = mcpRunners.start({ kind: "sources" });
-			const listed = await run.done.finally(() => run.close());
-			const needle = request.micDevice.toLowerCase();
-			const match = listed.sources?.microphones.find((mic) =>
-				mic.label.toLowerCase().includes(needle),
-			);
-			if (!match) {
-				throw new Error(
-					`No microphone's name contains "${request.micDevice}". Call listSources for their names.`,
-				);
-			}
-			microphone = { micDeviceId: match.deviceId ?? null, micDeviceName: match.label };
+			listed = (await run.done.finally(() => run.close())).sources ?? null;
 		}
+		const next = takePrefs(request, listed);
 
 		const before = { source: selectedSource, live: selectedDesktopSource };
 		const restoreSource = () => {
@@ -5142,24 +5131,13 @@ export function registerIpcHandlers(
 			}
 		}
 
-		const prefs = recordingPrefs.get();
-		recordingPrefs.set({
-			micEnabled: request.mic,
-			...microphone,
-			systemAudioEnabled: request.systemAudio,
-			cursorCaptureMode: "editable-overlay",
-		});
+		const userPrefs = pickTakePrefs(recordingPrefs.get());
+		recordingPrefs.set(next);
 		// The prefs are saved to disk: a quit mid-take must not leave the client's for the next
 		// launch. ponytail: a crash still does; keep them in memory only if that bites.
 		const restore = () => {
 			app.off("will-quit", restore);
-			recordingPrefs.set({
-				micEnabled: prefs.micEnabled,
-				micDeviceId: prefs.micDeviceId,
-				micDeviceName: prefs.micDeviceName,
-				systemAudioEnabled: prefs.systemAudioEnabled,
-				cursorCaptureMode: prefs.cursorCaptureMode,
-			});
+			recordingPrefs.set(userPrefs);
 			restoreSource();
 		};
 		app.once("will-quit", restore);

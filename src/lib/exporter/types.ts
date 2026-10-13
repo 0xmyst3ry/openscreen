@@ -30,6 +30,10 @@ export interface VideoFrameData {
 
 export type ExportQuality = "medium" | "good" | "source";
 
+/** The MP4 frame rates the Export dialog offers. */
+export const MP4_FRAME_RATES = [24, 30, 60] as const;
+export type Mp4FrameRate = (typeof MP4_FRAME_RATES)[number];
+
 // GIF Export Types
 export type ExportFormat = "mp4" | "gif";
 
