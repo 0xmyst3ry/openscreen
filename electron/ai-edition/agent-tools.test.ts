@@ -3607,6 +3607,18 @@ describe("clip structure (#1180)", () => {
 		expect(run(twoTakes(), "duplicateClip", { clipId: "clip_x" }).ok).toBe(false);
 	});
 
+	it("duplicateClip names the copy even when the clips before it fold together", () => {
+		// clip_1 and clip_2 already meet, so the pass after the copy makes them one clip and
+		// the copy is no longer at the original's index + 1.
+		const result = run(fixtureDocument(), "duplicateClip", { clipId: "clip_2" });
+		const { clipId } = JSON.parse(result.resultJson);
+		expect(result.ok).toBe(true);
+		expect((result.document as AxcutDocument).timeline.clips.map((c) => c.id)).toEqual([
+			"clip_1",
+			clipId,
+		]);
+	});
+
 	it("setClipRange crops a clip without touching its range, and the snapshot reads it back", () => {
 		const crop = { x: 0.1, y: 0.2, width: 0.5, height: 0.6 };
 		const result = run(twoTakes(), "setClipRange", { clipId: "clip_1", cropRegion: crop });

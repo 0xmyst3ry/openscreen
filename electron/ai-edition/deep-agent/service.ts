@@ -375,10 +375,11 @@ async function planAutoZooms(
 	if (!cursor) return undefined;
 	const telemetry: AutoZoomPlan["telemetry"] = {};
 	const suggestions = await collectAutoZoomSuggestionsForDocument(document, async (videoPath) => {
-		const asset = document.assets.find((a) => a.originalPath === videoPath);
-		if (!asset) return [];
-		const load = await readCursor(cursor, asset.id, videoPath);
-		telemetry[asset.id] = load.status;
+		// The plan asks by path; every asset on that file gets the verdict of its one read.
+		const assets = document.assets.filter((a) => a.originalPath === videoPath);
+		if (assets.length === 0) return [];
+		const load = await readCursor(cursor, assets[0].id, videoPath);
+		for (const asset of assets) telemetry[asset.id] = load.status;
 		// The sidecar's samples, read as the renderer's `getTelemetry` reads them.
 		return load.status === "ok" ? (load.samples as CursorTelemetryPoint[]) : [];
 	});

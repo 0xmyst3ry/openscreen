@@ -2474,12 +2474,17 @@ export function executeAgentTool(
 			const parsed = duplicateClipArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
 			const { clipId } = parsed.data;
-			const index = document.timeline.clips.findIndex((c) => c.id === clipId);
-			if (index < 0) return failure(`Unknown clip: ${clipId}. ${clipRoster(document)}`);
+			if (!document.timeline.clips.some((c) => c.id === clipId)) {
+				return failure(`Unknown clip: ${clipId}. ${clipRoster(document)}`);
+			}
 			// The editor's Duplicate: the copy right after the original, with its own copy of
 			// the original's cuts and anchored effects.
 			const next = duplicateClip(document, clipId, "agent", "");
-			const copy = next.timeline.clips[index + 1];
+			// By id, not position: the pass every clip edit ends with can fold clips that
+			// already met, which moves the positions.
+			const before = new Set(document.timeline.clips.map((c) => c.id));
+			const copy = next.timeline.clips.find((c) => !before.has(c.id));
+			if (!copy) return failure(`Clip ${clipId} could not be copied. Nothing was modified.`);
 			return {
 				ok: true,
 				document: next,
