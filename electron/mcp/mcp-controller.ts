@@ -9,6 +9,7 @@ import type { McpSettingsStore } from "./mcp-settings-store";
 import {
 	MCP_ENDPOINT_PATH,
 	type McpToolDeps,
+	type McpToolRunner,
 	type RunningMcpServer,
 	startMcpHttpServer,
 } from "./openscreen-mcp-server";
@@ -22,6 +23,8 @@ export class McpController {
 	constructor(
 		private readonly store: McpSettingsStore,
 		private readonly deps: McpToolDeps,
+		/** The app's shared runner, so checkpoints outlive a restart and `openscreen mcp` sees them. */
+		private readonly runTool?: McpToolRunner,
 	) {}
 
 	private serially<T>(task: () => Promise<T>): Promise<T> {
@@ -44,7 +47,12 @@ export class McpController {
 		if (!enabled) return;
 		try {
 			const token = await this.store.getToken();
-			this.running = await startMcpHttpServer({ port, token, deps: this.deps });
+			this.running = await startMcpHttpServer({
+				port,
+				token,
+				deps: this.deps,
+				runTool: this.runTool,
+			});
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException | null)?.code;
 			this.error =

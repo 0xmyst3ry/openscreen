@@ -222,7 +222,7 @@ describe("the MCP tool surface", () => {
 			"Without a projectId they act on the project open in the editor",
 		);
 		expect(instructions).toContain("Nothing here records, exports or imports media.");
-		expect(instructions).toContain("OpenScreen quits or its MCP server restarts");
+		expect(instructions).toContain("all of them are lost when OpenScreen quits.");
 		expect(instructions).toContain("turn on 'MCP edits' under MCP server in AI settings");
 		expect(instructions).not.toContain("Agent edits");
 		const { tools } = await mcp.listTools();
@@ -242,11 +242,12 @@ describe("the instructions, composed per transport", () => {
 			expect(instructions).toContain("Before a series of edits, call createCheckpoint");
 			expect(instructions).toContain("Time-bases (do not mix them up)");
 		}
-		// Only the in-app server has an editor, its undo stack, and no export.
-		expect(stdio).not.toMatch(/project open in the editor|undo step|Nothing here records/);
+		// stdio reaches the editor only through the app, and exports.
+		expect(stdio).not.toMatch(/Without a projectId they act|Nothing here records/);
+		expect(stdio).toContain("While the OpenScreen app runs, this server hands each call to it");
 		expect(stdio).not.toContain("exporting)");
 		expect(http).toContain("exporting)");
-		expect(stdio).toContain("lost when it exits");
+		expect(stdio).toContain("in OpenScreen's memory while the app runs");
 	});
 });
 
@@ -418,7 +419,7 @@ describe("checkpoints", () => {
 			arguments: { checkpointId: "cp_nope" },
 		});
 		expect(result.isError).toBe(true);
-		expect(resultText(result)).toContain("its port or token changed");
+		expect(resultText(result)).toContain("lost when OpenScreen quits");
 		expect(editor.applied).toHaveLength(0);
 	});
 
@@ -690,8 +691,9 @@ describe("projects other than the open one", () => {
 	});
 });
 
-// `openscreen mcp` beside the app (#1138): this server's own editor holds nothing,
-// the app's editor holds proj_2, and only the marker the app leaves says so.
+// `openscreen mcp` beside an app that does not answer it (#1138; forwarding to one that
+// does is app-channel.test.ts): this server's own editor holds nothing, the app's editor
+// holds proj_2, and only the marker the app leaves says so.
 describe("a project open in another process's editor", () => {
 	const addTrimArgs = { assetId: "asset_1", startSec: 5, endSec: 6, projectId: "proj_2" };
 
@@ -725,7 +727,7 @@ describe("a project open in another process's editor", () => {
 		const result = await mcp.callTool({ name: "addTrim", arguments: addTrimArgs });
 		expect(result.isError).toBe(true);
 		expect(resultText(result)).toContain("open in the OpenScreen editor");
-		expect(resultText(result)).toContain("MCP server");
+		expect(resultText(result)).toContain("close the project in OpenScreen");
 		expect((await projects.getProject("proj_2")).timeline.trimRanges).toHaveLength(0);
 	});
 

@@ -60,6 +60,7 @@ import {
 } from "./ipc/handlers";
 import { isOnlyLingeringOverlay } from "./lingeringOverlay";
 import { installMainProcessErrorGuards } from "./main-process-errors";
+import { serveAppChannel } from "./mcp/app-channel";
 import { showMessageBoxOver } from "./messageBox";
 import {
 	registerPermissionsIpc,
@@ -1388,7 +1389,7 @@ appReady?.then(async () => {
 		showMainWindow();
 	}
 
-	const { mcpController } = registerIpcHandlers(
+	const { mcpController, mcpAppChannel } = registerIpcHandlers(
 		createEditorWindowWrapper,
 		createSourceSelectorWindowWrapper,
 		createCountdownOverlayWindowWrapper,
@@ -1436,6 +1437,12 @@ appReady?.then(async () => {
 	// Off unless the user turned it on in Settings → AI. Started here rather than
 	// in registerIpcHandlers so neither the headless CLI nor a bench run binds it.
 	void mcpController.startIfEnabled();
+	// Always on, unlike the in-app server: `openscreen mcp` forwards its document calls here
+	// so the app stays the one writer of its projects (app-channel.ts). Without it, that
+	// server works on the files and refuses the project the editor holds.
+	serveAppChannel({ userDataDir: app.getPath("userData"), ...mcpAppChannel })
+		.then((channel) => app.once("will-quit", () => channel.close()))
+		.catch((error) => console.warn("[mcp] could not open the channel for openscreen mcp:", error));
 	void showPermissionsWindowIfNeeded().catch((error) =>
 		console.warn("[permissions] could not read the permissions at launch:", error),
 	);

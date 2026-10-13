@@ -95,6 +95,6 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 
 - **不需要連接埠、權杖或設定。** 代理會以你的權限自行啟動程序，就像它執行 `openscreen record` 一樣。因此，它不需要**MCP 編輯**開關，就能錄製你的螢幕並進行剪輯。
 - **每段錄影都會成為一個新專案**，出現在你的專案清單中，並和在應用程式中錄製的影片一樣，在錄下的點擊處加上縮放：時間與位置都相近的點擊共用一個縮放，開頭幾秒與結尾保持全螢幕。代理的每項編輯都會儲存到專案檔案中。要復原，就靠代理建立的檢查點，檢查點在代理的工作階段結束前都有效。只會保留最近的 20 個檢查點，因此較早的檢查點可能會提早失效。
-- **在 OpenScreen 編輯器中開啟的專案無法編輯。** 代理可以讀取它，但在你於編輯器中關閉該專案之前，它的編輯都會被拒絕，因為編輯器會用自己的副本覆寫這些編輯。
+- **OpenScreen 執行時，代理會透過應用程式進行編輯。** 對編輯器中開啟的專案所做的編輯會立即顯示在那裡，並可用 `Ctrl/Cmd + Z` 復原。此時代理的檢查點會保留到 OpenScreen 結束為止。如果應用程式沒有回應，對該專案的編輯會被拒絕，因為編輯器會用自己的副本覆寫這些編輯。
 - **由腳本驅動的錄影**（例如 Playwright）永遠不會移動螢幕上的指標。代理會用 `setPointerTrack` 把它自己的操作記錄交給 OpenScreen，影片照樣會有游標與其縮放。
 - **`openscreen-demo` 技能**會教代理完成整個工作，從分鏡腳本到完成的影片。之後，它會把影片附加到拉取請求中，讓審閱者直接在那裡看到變更；或者草擬一則 X 貼文，而且只有在你同意之後，它才會發布這則貼文。使用 `npx skills add getopenscreen/openscreen --skill openscreen-demo` 加入它。完整步驟請見 [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md)。

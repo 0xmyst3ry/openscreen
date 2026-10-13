@@ -71,11 +71,15 @@ export class DocumentNotFoundError extends Error {
 	}
 }
 
-/** A write refused because the project is open in an editor, which would save over it. */
+/**
+ * A file write refused because an editor holds the project and would save over it. Edits
+ * to it go through that editor, `openscreen mcp`'s through the app (#1174), so this is
+ * only met when the editor or the app does not answer, or the app predates forwarding.
+ */
 export class ProjectOpenInEditorError extends Error {
 	constructor(public readonly projectId: string) {
 		super(
-			"The edit was NOT applied: this project is open in the OpenScreen editor, which would overwrite it with its own copy on its next save. Ask the user to close the project in OpenScreen and retry, or to turn on the MCP server in OpenScreen's AI settings and connect to that one, which edits the open project through the editor.",
+			"The edit was NOT applied: this project is open in the OpenScreen editor, and the editor could not be reached to apply it there (a file edit would be overwritten by its next save). Retry in a moment. If it is refused again, ask the user to close the project in OpenScreen, or to restart or update OpenScreen.",
 		);
 		this.name = "ProjectOpenInEditorError";
 	}

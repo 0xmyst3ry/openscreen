@@ -142,6 +142,68 @@ export const MEDIA_PREAMBLE = [
 	"These projects are in the OpenScreen app's project list, so the user can open one in its editor.",
 ].join("\n");
 
+export const POINTER_TRACK_TOOL = "setPointerTrack";
+
+const POINTER_EVENTS = z
+	.array(
+		z.object({
+			at: z.number().describe("Epoch milliseconds, from Date.now()."),
+			x: z.number().min(0).max(1),
+			y: z.number().min(0).max(1),
+			click: z.boolean().optional().describe("The action clicked here."),
+		}),
+	)
+	.min(1);
+
+/** setPointerTrack as `openscreen mcp` forwards it to the app: with its takes' start times. */
+export const FORWARDED_POINTER_TRACK_SCHEMA = z.object({
+	projectId: z.string(),
+	events: POINTER_EVENTS,
+	/** When each take of the session started, by its video path. */
+	takes: z.record(z.string(), z.number()),
+});
+
+/**
+ * setPointerTrack's change: the new sidecar, and the zooms planned on its clicks. Computed
+ * by the runner's process (the app's, when it runs), and written by that runner.
+ */
+export async function pointerTrackEdit(
+	document: AxcutDocument,
+	events: PointerEvent[],
+	takes: Readonly<Record<string, number>>,
+): ReturnType<RunnerEdit> {
+	const asset = document.assets.find((a) => a.id === document.project.primaryAssetId);
+	const startedAt = asset ? takes[asset.originalPath] : undefined;
+	if (!asset || startedAt === undefined || !asset.durationSec) {
+		return {
+			ok: false,
+			resultJson:
+				"This project's take was not recorded by this server, so its start time is unknown. setPointerTrack only works on a take from stopRecording.",
+		};
+	}
+	const samples = pointerSamples(events, startedAt, asset.durationSec * 1000);
+	const sidecar: CursorRecordingData = { version: 2, provider: "native", samples, assets: [] };
+	// Planned from the new track before it is on disk, as readCursor would read it back.
+	const suggestions = await collectAutoZoomSuggestionsForDocument(
+		document,
+		async () =>
+			samples.map(({ timeMs, cx, cy, visible, interactionType }) => ({
+				timeMs,
+				cx,
+				cy,
+				visible,
+				interactionType,
+			})),
+		(candidate) => candidate.id === asset.id,
+	);
+	return {
+		ok: true,
+		resultJson: JSON.stringify({ samples: samples.length, autoZoomsAdded: suggestions.length }),
+		document: appendAutoZoomSuggestions(document, suggestions),
+		sidecars: [{ path: `${asset.originalPath}.cursor.json`, content: JSON.stringify(sidecar) }],
+	};
+}
+
 export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void {
 	const now = deps.now ?? Date.now;
 	/** The take being recorded, then saved: held until it is a project. */
@@ -380,66 +442,22 @@ export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void
 				"For a take driven by a script (Playwright, CDP, a browser extension) rather than the real mouse: the screen pointer never moved, so the video has no cursor and no zoom. Give the pointer's path here and OpenScreen draws it, gliding between your actions, and zooms on its clicks as for a real mouse. It replaces the pointer recorded with the take, then plans zooms on the new clicks as stopRecording does, clear of the zooms already there; autoZoomsAdded says how many. Only for a take recorded by this server. Like any edit it needs a checkpoint of the project (stopRecording made one), and restoreCheckpoint undoes it, the pointer track included.",
 				"events, one per action: `at` is Date.now() when your script did it (log it as it runs; the take's recordingStartedAt is on the same clock). `x` and `y` are fractions (0 to 1) of the recorded window. For a point (clientX, clientY) of a page shown in that window, from inside the page: border = (outerWidth - innerWidth) / 2; x = (border + clientX) / outerWidth; y = (outerHeight - innerHeight - border + clientY) / outerHeight.",
 			].join("\n"),
-			inputSchema: z.object({
-				projectId: z.string(),
-				events: z
-					.array(
-						z.object({
-							at: z.number().describe("Epoch milliseconds, from Date.now()."),
-							x: z.number().min(0).max(1),
-							y: z.number().min(0).max(1),
-							click: z.boolean().optional().describe("The action clicked here."),
-						}),
-					)
-					.min(1),
-			}),
+			inputSchema: z.object({ projectId: z.string(), events: POINTER_EVENTS }),
 			annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
 		},
 		// Through the document tools' runner, like any edit: the same queue, the same refusals
 		// (a project open in the app's editor, one with no checkpoint) before anything is
 		// written, and the sidecar kept by the checkpoints so restoreCheckpoint puts it back.
-		(args) =>
-			deps.runTool("setPointerTrack", { projectId: args.projectId }, (document) =>
-				pointerTrackEdit(document, args.events),
-			),
+		// The args carry what the edit needs, so a running app can compute it (app-channel.ts).
+		(args) => {
+			const takes = Object.fromEntries(startedAtByVideo);
+			return deps.runTool(
+				POINTER_TRACK_TOOL,
+				{ projectId: args.projectId, events: args.events, takes },
+				{ edit: (document) => pointerTrackEdit(document, args.events, takes) },
+			);
+		},
 	);
-
-	/** The new sidecar, and the zooms planned on its clicks: computed here, written by the runner. */
-	async function pointerTrackEdit(
-		document: AxcutDocument,
-		events: PointerEvent[],
-	): ReturnType<RunnerEdit> {
-		const asset = document.assets.find((a) => a.id === document.project.primaryAssetId);
-		const startedAt = asset ? startedAtByVideo.get(asset.originalPath) : undefined;
-		if (!asset || startedAt === undefined || !asset.durationSec) {
-			return {
-				ok: false,
-				resultJson:
-					"This project's take was not recorded by this server, so its start time is unknown. setPointerTrack only works on a take from stopRecording.",
-			};
-		}
-		const samples = pointerSamples(events, startedAt, asset.durationSec * 1000);
-		const sidecar: CursorRecordingData = { version: 2, provider: "native", samples, assets: [] };
-		// Planned from the new track before it is on disk, as readCursor would read it back.
-		const suggestions = await collectAutoZoomSuggestionsForDocument(
-			document,
-			async () =>
-				samples.map(({ timeMs, cx, cy, visible, interactionType }) => ({
-					timeMs,
-					cx,
-					cy,
-					visible,
-					interactionType,
-				})),
-			(candidate) => candidate.id === asset.id,
-		);
-		return {
-			ok: true,
-			resultJson: JSON.stringify({ samples: samples.length, autoZoomsAdded: suggestions.length }),
-			document: appendAutoZoomSuggestions(document, suggestions),
-			sidecars: [{ path: `${asset.originalPath}.cursor.json`, content: JSON.stringify(sidecar) }],
-		};
-	}
 
 	server.registerTool(
 		"exportVideo",
