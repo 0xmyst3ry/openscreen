@@ -149,6 +149,75 @@ function isSupportedAudioPath(filePath: string): boolean {
 	return SUPPORTED_AUDIO_EXTENSIONS.has(ext);
 }
 
+/** Why `input` cannot be filed as its kind of asset, or `null` when it can. */
+export function unsupportedAssetPath(input: Pick<AddAssetInput, "path" | "kind">): string | null {
+	if (!input.path) return "Asset path is required.";
+	if ((input.kind ?? "video") === "audio") {
+		return isSupportedAudioPath(input.path)
+			? null
+			: `Unsupported audio extension: ${path.extname(input.path)} (supported: ${[...SUPPORTED_AUDIO_EXTENSIONS].join(", ")})`;
+	}
+	return isSupportedVideoPath(input.path)
+		? null
+		: `Unsupported video extension: ${path.extname(input.path)} (supported: ${[...SUPPORTED_VIDEO_EXTENSIONS].join(", ")})`;
+}
+
+/** The kind a media file is imported as, from its extension: audio only when it cannot be a video. */
+export function assetKindForPath(filePath: string): "video" | "audio" {
+	return !isSupportedVideoPath(filePath) && isSupportedAudioPath(filePath) ? "audio" : "video";
+}
+
+/** `doc` with `asset` added to its media, as an import adds it. */
+export function documentWithAsset(doc: AxcutDocument, asset: AxcutAsset): AxcutDocument {
+	// An audio import is an overlay, never the thing the timeline is built
+	// around, so it must not claim the empty primaryAssetId slot — otherwise the
+	// first file dropped into a fresh project (a BGM track) would become its
+	// primary asset and the editor would try to lay out clips from a file with
+	// no video.
+	const claimsPrimary = asset.kind !== "audio" && !doc.project.primaryAssetId;
+	return {
+		...doc,
+		assets: [...doc.assets, asset],
+		project: {
+			...doc.project,
+			...(claimsPrimary ? { primaryAssetId: asset.id } : {}),
+			updatedAt: new Date().toISOString(),
+		},
+	};
+}
+
+/** `doc` without the asset, its clips, trims and audio tracks. */
+export function documentWithoutAsset(doc: AxcutDocument, assetId: string): AxcutDocument {
+	const assets = doc.assets.filter((a) => a.id !== assetId);
+	// Primary is the thing the timeline is built around, so it must fall to the
+	// next VIDEO asset — never an audio overlay (issue #350), which can't be
+	// primary (see addAsset). Falling back to `assets[0]` would hand primary to
+	// an audio asset when the removed one was the last video.
+	const primaryAssetId =
+		doc.project.primaryAssetId === assetId
+			? (assets.find((a) => a.kind !== "audio")?.id ?? undefined)
+			: doc.project.primaryAssetId;
+	const withoutAssetClips = doc.timeline.clips
+		.filter((clip) => clip.assetId === assetId)
+		.reduce((current, clip) => removeClip(current, clip.id), doc);
+	return {
+		...withoutAssetClips,
+		assets,
+		// Drop imported audio tracks that referenced the removed asset — they
+		// would otherwise dangle, pointing at an asset the document no longer has.
+		audioTracks: withoutAssetClips.audioTracks.filter((t) => t.assetId !== assetId),
+		timeline: {
+			...withoutAssetClips.timeline,
+			trimRanges: withoutAssetClips.timeline.trimRanges.filter((r) => r.assetId !== assetId),
+		},
+		project: {
+			...withoutAssetClips.project,
+			primaryAssetId,
+			updatedAt: new Date().toISOString(),
+		},
+	};
+}
+
 function safeProjectId(raw: string): string {
 	// ponytail: project ids are uuid-prefixed strings (e.g. "proj_<uuid>"). Reject
 	// anything that smells like path traversal before we ever touch the disk.
@@ -532,23 +601,8 @@ export class DocumentService {
 
 	async addAsset(projectId: string, input: AddAssetInput): Promise<AxcutDocument> {
 		const doc = await this.getProject(projectId);
-		if (!input.path) {
-			throw new ProjectFileError("Asset path is required.", projectId);
-		}
-		const kind = input.kind ?? "video";
-		if (kind === "audio") {
-			if (!isSupportedAudioPath(input.path)) {
-				throw new ProjectFileError(
-					`Unsupported audio extension: ${path.extname(input.path)} (supported: ${[...SUPPORTED_AUDIO_EXTENSIONS].join(", ")})`,
-					projectId,
-				);
-			}
-		} else if (!isSupportedVideoPath(input.path)) {
-			throw new ProjectFileError(
-				`Unsupported video extension: ${path.extname(input.path)} (supported: ${[...SUPPORTED_VIDEO_EXTENSIONS].join(", ")})`,
-				projectId,
-			);
-		}
+		const unsupported = unsupportedAssetPath(input);
+		if (unsupported) throw new ProjectFileError(unsupported, projectId);
 		const absolutePath = path.isAbsolute(input.path) ? input.path : path.resolve(input.path);
 		// P3.1 — capture the file size at import. Non-fatal: a stat failure
 		// (network drive, permissions) just leaves sizeBytes undefined.
@@ -560,28 +614,13 @@ export class DocumentService {
 		}
 		const asset: AxcutAsset = {
 			id: createId("asset"),
-			kind,
+			kind: input.kind ?? "video",
 			label: input.label?.trim() || path.basename(absolutePath),
 			originalPath: absolutePath,
 			sizeBytes,
 			cameraTrack: null,
 		};
-		// An audio import is an overlay, never the thing the timeline is built
-		// around, so it must not claim the empty primaryAssetId slot — otherwise the
-		// first file dropped into a fresh project (a BGM track) would become its
-		// primary asset and the editor would try to lay out clips from a file with
-		// no video.
-		const claimsPrimary = kind !== "audio" && !doc.project.primaryAssetId;
-		const next: AxcutDocument = {
-			...doc,
-			assets: [...doc.assets, asset],
-			project: {
-				...doc.project,
-				...(claimsPrimary ? { primaryAssetId: asset.id } : {}),
-				updatedAt: new Date().toISOString(),
-			},
-		};
-		return this.saveProject(next);
+		return this.saveProject(documentWithAsset(doc, asset));
 	}
 
 	async removeAsset(projectId: string, assetId: string): Promise<AxcutDocument> {
@@ -589,35 +628,7 @@ export class DocumentService {
 		if (!doc.assets.some((a) => a.id === assetId)) {
 			throw new ProjectFileError(`Asset ${assetId} not found in project ${projectId}.`, projectId);
 		}
-		const assets = doc.assets.filter((a) => a.id !== assetId);
-		// Primary is the thing the timeline is built around, so it must fall to the
-		// next VIDEO asset — never an audio overlay (issue #350), which can't be
-		// primary (see addAsset). Falling back to `assets[0]` would hand primary to
-		// an audio asset when the removed one was the last video.
-		const primaryAssetId =
-			doc.project.primaryAssetId === assetId
-				? (assets.find((a) => a.kind !== "audio")?.id ?? undefined)
-				: doc.project.primaryAssetId;
-		const withoutAssetClips = doc.timeline.clips
-			.filter((clip) => clip.assetId === assetId)
-			.reduce((current, clip) => removeClip(current, clip.id), doc);
-		const next: AxcutDocument = {
-			...withoutAssetClips,
-			assets,
-			// Drop imported audio tracks that referenced the removed asset — they
-			// would otherwise dangle, pointing at an asset the document no longer has.
-			audioTracks: withoutAssetClips.audioTracks.filter((t) => t.assetId !== assetId),
-			timeline: {
-				...withoutAssetClips.timeline,
-				trimRanges: withoutAssetClips.timeline.trimRanges.filter((r) => r.assetId !== assetId),
-			},
-			project: {
-				...withoutAssetClips.project,
-				primaryAssetId,
-				updatedAt: new Date().toISOString(),
-			},
-		};
-		return this.saveProject(next);
+		return this.saveProject(documentWithoutAsset(doc, assetId));
 	}
 
 	/**

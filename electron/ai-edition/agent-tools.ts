@@ -1242,7 +1242,7 @@ export function documentSnapshotForModel(
 		timeBaseNote:
 			"clips and trims are in source-time seconds; zooms, speedRegions, annotations, cameraFullscreenRegions and audioTracks are in virtual (edited-timeline) seconds: the editor's ruler, where a trim leaves a hole instead of shortening it and a speed region stretches nothing. The exported video's clock skips those holes and plays sped-up spans faster, so it differs from the ruler once there are any.",
 		audioNote:
-			"audioTracks are imported voiceover / music files laid over the recording. They are clip-anchored like every other region, so they travel with their clip through reorder and trim, and they play at 1x whatever a speed region does to the picture under them. addAudio places an EXISTING asset of kind 'audio'; nothing here can import a file from disk or record one, so if the project has no audio asset, say so rather than inventing an id.",
+			"audioTracks are imported voiceover / music files laid over the recording. They are clip-anchored like every other region, so they travel with their clip through reorder and trim, and they play at 1x whatever a speed region does to the picture under them. addAudio places an EXISTING asset of kind 'audio': if the project has none, a file has to be imported first (importMedia, where it is offered), so never invent an id.",
 		zoomNote:
 			`renderedScale is what the viewer sees (depth is an ordinal, not a factor: ${ZOOM_DEPTH_LEGEND}). ` +
 			"When a zoom carries customScale it wins over depth and depthIsOverridden is true — " +
@@ -2975,7 +2975,7 @@ export function executeAgentTool(
 					`Unknown asset: ${assetId}.` +
 						(available.length
 							? ` Imported audio in this project: ${available.map((a) => `${a.id} (${a.label})`).join(", ")}.`
-							: " This project has no imported audio; a file can only be imported or recorded from the editor, not from here."),
+							: " This project has no imported audio: a file has to be imported into it first (importMedia, where it is offered)."),
 				);
 			}
 			if (asset.kind !== "audio") {
