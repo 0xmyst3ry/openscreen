@@ -126,6 +126,10 @@ export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
 	maxWordsPerLine: 7,
 };
 
+/** The font sizes the Captions pane offers, in px at a 1080-high frame. */
+export const CAPTION_FONT_SIZE_MIN = 16;
+export const CAPTION_FONT_SIZE_MAX = 140;
+
 /**
  * Plate opacity bounds. The on/off state belongs to the plate choice alone: an opacity
  * that reached 0 was a second way to switch the plate off, and one past 90% hid the plate's

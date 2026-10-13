@@ -20,6 +20,8 @@ import type {
 	CaptionStyleId,
 } from "@/lib/ai-edition/captions";
 import {
+	CAPTION_FONT_SIZE_MAX,
+	CAPTION_FONT_SIZE_MIN,
 	CAPTION_INSET_X_MAX,
 	CAPTION_INSET_Y_MAX,
 	CAPTION_PLATE_OPACITY_MAX,
@@ -526,8 +528,8 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 						<SliderCell
 							label={t("captions.fontSize")}
 							value={settings.fontSize}
-							min={16}
-							max={140}
+							min={CAPTION_FONT_SIZE_MIN}
+							max={CAPTION_FONT_SIZE_MAX}
 							defaultValue={DEFAULT_CAPTION_SETTINGS.fontSize}
 							suffix="px"
 							disabled={disabled}

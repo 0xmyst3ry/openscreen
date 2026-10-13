@@ -216,6 +216,10 @@ describe("the mutating-tool table", () => {
 				"setTrim",
 				"setWordText",
 				"setZoom",
+				"setCaptionSettings",
+				"putCaptionTranslation",
+				"removeCaptionTranslation",
+				"setVocabulary",
 			].sort(),
 		);
 		expect(isMutatingTool("getCurrentDocument")).toBe(false);

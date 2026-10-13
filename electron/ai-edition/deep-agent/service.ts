@@ -20,7 +20,20 @@
 import { anthropicPromptCachingMiddleware, createAgent, tool } from "langchain";
 import { z } from "zod";
 import type { CursorTelemetryPoint } from "../../../src/components/video-editor/types";
+import {
+	CAPTION_FONT_SIZE_MAX,
+	CAPTION_FONT_SIZE_MIN,
+	CAPTION_INSET_X_MAX,
+	CAPTION_INSET_Y_MAX,
+	CAPTION_PLATE_OPACITY_MAX,
+	CAPTION_PLATE_OPACITY_MIN,
+} from "../../../src/lib/ai-edition/captions";
+import {
+	CAPTION_WORDS_PER_LINE_MAX,
+	CAPTION_WORDS_PER_LINE_MIN,
+} from "../../../src/lib/ai-edition/captions/wordsPerLine";
 import { AUDIO_FADE_MAX_MS } from "../../../src/lib/ai-edition/document/audioTracks";
+import { VOCABULARY_MAX_CHARS } from "../../../src/lib/ai-edition/document/transcript";
 import type { AxcutDocument } from "../../../src/lib/ai-edition/schema";
 import { collectAutoZoomSuggestionsForDocument } from "../../../src/lib/ai-edition/timeline/apply-auto-zooms";
 // ponytail: the legend is DERIVED from the depth→scale table, not retyped. Both
@@ -72,6 +85,14 @@ import {
 	setWordTextArgs,
 	setZoomArgs,
 } from "../agent-tools";
+import {
+	getCaptionsArgs,
+	getCaptionTranslationUnitsArgs,
+	putCaptionTranslationArgs,
+	removeCaptionTranslationArgs,
+	setCaptionSettingsArgs,
+	setVocabularyArgs,
+} from "../caption-tools";
 import { setEditorSettingsArgs } from "../editor-settings-tool";
 import {
 	createOpenScreenChatModel,
@@ -113,7 +134,7 @@ const consentPromptBlock = (setting: string) =>
 		"",
 		"PROJECT EDITS ARE CURRENTLY DISABLED by the user, who asked to be consulted before the timeline changes.",
 		"- Read freely: getCurrentDocument and getTranscript work as usual.",
-		"- Do NOT call any tool that writes (removeWords, addTrim, setTrim, setClipRange, moveClip, replaceTimeline, add*/set* effects, remove*). Every one of them will be refused, so calling them wastes the turn and tells the user nothing.",
+		"- Do NOT call any tool that writes (removeWords, addTrim, setTrim, setClipRange, moveClip, replaceTimeline, add*/set* effects and settings, putCaptionTranslation, remove*). Every one of them will be refused, so calling them wastes the turn and tells the user nothing.",
 		"- Instead: say precisely what you would change — which tool, which times, which ids — and ask the user to confirm. Be specific enough that they can say yes to it.",
 		`- Never state or imply that an edit was applied. If the user confirms and you are still refused, tell them to turn on ${setting} first.`,
 	].join("\n");
@@ -145,6 +166,7 @@ const BASE_SYSTEM_PROMPT = [
 	"- A zoom animates in just before its span and out just after it (zoomInFromSec, zoomOutUntilSec in getCurrentDocument). Leave those windows untrimmed, or the export jumps at the cut.",
 	"- addAudio lays an imported voiceover or music file over a span. It plays an asset the project already has (kind 'audio'); importing or recording one is the editor's job, not a tool you have — so when the project has none, say so rather than naming an id that does not exist.",
 	"- moveClip changes the order of placed clips, one call per clip that moves, preserving ids, source ranges, trims and anchored effects. replaceTimeline rebuilds the timeline from kept intervals and sorts them, so it cannot reorder anything.",
+	"- Captions are the transcript drawn on the video, never typed in: setCaptionSettings turns them on, styles and places them, getCaptions reads them back. To caption in another language, read the phrases with getCaptionTranslationUnits, translate them yourself, store them with putCaptionTranslation, then show that language with setCaptionSettings. A translation never rewrites the transcript. For text the speaker did not say, use addAnnotation.",
 	"- Deleting is a first-class action, not a workaround: removeTrim, removeModifier, removeClip. Never fake a deletion by re-adding an element or zeroing it out (span 0, speed 1×) — that leaves it in the document and misreports what you did.",
 	"If nothing in the list does what was asked, say so; do not approximate it with a bigger tool.",
 	"",
@@ -244,6 +266,16 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 		"Delete a modifier (zoom / speed / annotation / camera-fullscreen / audio) by id; the kind is resolved from the id. Touching rows with the same styling render as one pill and are deleted together, so read removedIds in the result for the complete set that disappeared. This is how you 'remove'/'delete' one — never neutralise it (span 0, speed 1×), which leaves it in the document. For a trim use removeTrim; for a clip use removeClip.",
 	removeClip:
 		"Delete a placed clip by id; remaining clips close the gap and effects anchored to it are dropped. Use only when the user asks to remove a clip — to shorten one, use setClipRange.",
+	getCaptions:
+		"Read the captions: whether they show (enabled), how they look (font, weight, size, colour, plate and its opacity), where they sit (anchorV/insetY, anchorH/insetX), how many words show at once, the lane they read (resolvedLane: the recording's speech, or the voiceover tracks'), and the language they show (null: the transcript's own words). captionedAssets lists the transcripts they are drawn from, and `warning` says when they are on with nothing to show. translations lists each language layer with its coverage per asset (translated of total phrase units). choices lists what setCaptionSettings accepts for style, fontFamily and plate.",
+	setCaptionSettings: `Turn the captions on or off, and set how they look and where they sit, as the editor's Captions pane does. Only the fields you pass change. \`style\` applies a named look first (font, weight, size, colour and plate together); \`plate\` then picks what is behind the text (none, dark, light) and recolours text that would vanish on it; any other field you pass wins over both. fontSize is px at a 1080-high frame (${CAPTION_FONT_SIZE_MIN}–${CAPTION_FONT_SIZE_MAX}), color a #rrggbb hex, plateOpacity ${CAPTION_PLATE_OPACITY_MIN}–${CAPTION_PLATE_OPACITY_MAX}. anchorV pins the caption block to the bottom or top edge, and insetY is its distance from that edge in % of the frame height (0–${CAPTION_INSET_Y_MAX}); anchorH pins it left, centre or right, and insetX (0–${CAPTION_INSET_X_MAX} % of the frame width) is ignored when it is centred. minWordsPerLine and maxWordsPerLine (${CAPTION_WORDS_PER_LINE_MIN}–${CAPTION_WORDS_PER_LINE_MAX}) bound how many words show at once. lane picks whose speech is captioned: the recording's, or the voiceover tracks' (it falls back to the recording when there is none, and resolvedLane says so). language shows a translation layer written with putCaptionTranslation; null shows the transcript's own words. Captions are drawn from the transcript, so they need one; enabled captions are burnt into the export.`,
+	getCaptionTranslationUnits:
+		"Read what to translate for one caption language: per asset the captions read (or the one assetId names), the transcript grouped into phrase units, each with its id, its span in the asset's source seconds and its text. A unit is a sentence or a run of speech between pauses, never a single word, so translate each one as a whole. By default only the units with no text yet in that language, so a translation sent in batches resumes where it stopped; includeTranslated returns the done ones too, with their translation. Translate them yourself, then store them with putCaptionTranslation.",
+	putCaptionTranslation:
+		"Store your translation of caption units for one asset in a language layer: `units` lists each unit as { id, text }: its id from getCaptionTranslationUnits and your translation of it. It merges into the layer, which the first call creates, so send long transcripts in batches. language is the layer's code (fr, pt-BR); label is the name the editor's language picker shows, such as Français (default: the code). Unknown unit ids refuse the whole call. The transcript is never changed: this is a separate layer the captions can show. It does not switch the captions to it: setCaptionSettings with this language does.",
+	removeCaptionTranslation:
+		"Delete one caption language layer. The transcript is untouched, and captions that showed this language go back to the transcript's own.",
+	setVocabulary: `Set the project's vocabulary: the names and technical terms Whisper is primed with on every transcription of this project, so it spells them right (at most ${VOCABULARY_MAX_CHARS} characters, read as a plain list such as "OpenScreen, Vulkan, whisper.cpp"). An empty string clears it. It changes no existing transcript: transcribe the asset again for that. getCurrentDocument reports it as vocabulary.`,
 };
 
 // ponytail: mutable document holder so a write-tool that updates the snapshot
@@ -479,6 +511,12 @@ export const TOOL_ARG_SCHEMAS: ReadonlyArray<readonly [string, z.ZodObject]> = [
 	["removeClip", removeClipArgs],
 	["setAspectRatio", setAspectRatioArgs],
 	["setEditorSettings", setEditorSettingsArgs],
+	["getCaptions", getCaptionsArgs],
+	["setCaptionSettings", setCaptionSettingsArgs],
+	["getCaptionTranslationUnits", getCaptionTranslationUnitsArgs],
+	["putCaptionTranslation", putCaptionTranslationArgs],
+	["removeCaptionTranslation", removeCaptionTranslationArgs],
+	["setVocabulary", setVocabularyArgs],
 ];
 
 /**

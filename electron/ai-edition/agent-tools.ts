@@ -87,6 +87,7 @@ import { SETTING_BOUNDS } from "../../src/lib/projectDefaults";
 import type { SegmentationSupport } from "../../src/native/contracts";
 import { annotationFootageRect, zoomScaleLimit } from "../../src/native/sceneDescription";
 import { ASPECT_RATIO_PRESETS } from "../../src/utils/aspectRatioUtils";
+import { CAPTION_TOOL_NAMES, executeCaptionTool, MUTATING_CAPTION_TOOLS } from "./caption-tools";
 import { editorSettingsSnapshot, executeSetEditorSettings } from "./editor-settings-tool";
 import { measureTextInShippedFonts } from "./text-measure";
 
@@ -1068,6 +1069,7 @@ export const OPENSCREEN_TOOL_NAMES = [
 	"removeClip",
 	"setAspectRatio",
 	"setEditorSettings",
+	...CAPTION_TOOL_NAMES,
 ] as const;
 
 /**
@@ -1145,6 +1147,7 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"removeClip",
 	"setAspectRatio",
 	"setEditorSettings",
+	...MUTATING_CAPTION_TOOLS,
 ]);
 
 export function isMutatingTool(name: string): boolean {
@@ -1323,6 +1326,17 @@ export function documentSnapshotForModel(
 			// probe threw. Defaulting that to `false` would put our failure back in
 			// the answer as their fact, one layer lower down.
 			hasCursorTelemetry: availability?.[a.id] ?? null,
+			// Whether getTranscriptWords can read it; transcribe makes one when it is false.
+			hasTranscript: document.transcripts.some((t) => t.assetId === a.id),
+			// A verdict a past run left on the media ("no-audio", "unsupported-audio").
+			...(a.transcriptionFailure
+				? {
+						transcriptionFailure: {
+							kind: a.transcriptionFailure.kind,
+							message: a.transcriptionFailure.message,
+						},
+					}
+				: {}),
 		})),
 		// ponytail: `index`, `reason` and `origin` are here because without them a
 		// clip cannot be DESIGNATED. "Put the demo first" is unanswerable when the
@@ -1413,6 +1427,8 @@ export function documentSnapshotForModel(
 			fadeOutMs: t.fadeOutMs,
 		})),
 		hasTranscript: document.transcripts.length > 0 || document.transcript !== null,
+		// The names and terms Whisper is primed with on every transcription (setVocabulary).
+		vocabulary: document.project.vocabulary ?? null,
 	};
 }
 
@@ -1783,6 +1799,14 @@ export function executeAgentTool(
 	}
 
 	switch (name) {
+		case "getCaptions":
+		case "setCaptionSettings":
+		case "getCaptionTranslationUnits":
+		case "putCaptionTranslation":
+		case "removeCaptionTranslation":
+		case "setVocabulary":
+			return executeCaptionTool(document, name, args);
+
 		case "setAspectRatio": {
 			// The format alone, kept for clients that know it: setEditorSettings does the work.
 			const parsed = setAspectRatioArgs.safeParse(args);
