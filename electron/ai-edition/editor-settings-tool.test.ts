@@ -184,6 +184,19 @@ describe("setEditorSettings", () => {
 		expect(set(document, { webcamCropRegion: { x: 0, y: 0, width: 0.5, height: 0.6 } }).ok).toBe(
 			false,
 		);
+		// A rect and a pan that disagree are refused; at full size any pan agrees.
+		expect(
+			set(framed, {
+				webcamCropRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+				webcamCropPan: { x: 1, y: 0 },
+			}).ok,
+		).toBe(false);
+		expect(
+			set(framed, {
+				webcamCropRegion: { x: 0, y: 0, width: 1, height: 1 },
+				webcamCropPan: { x: 1, y: 0 },
+			}).ok,
+		).toBe(true);
 	});
 
 	it("says which of the settings it wrote change nothing in the current state", () => {

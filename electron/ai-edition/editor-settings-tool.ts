@@ -388,6 +388,18 @@ function editorPatch(document: AxcutDocument, args: SetEditorSettingsArgs): Edit
 	return patch;
 }
 
+/** A rect and a pan sent together that place the window in two different spots. At full size
+ *  there is no room to place it in, so any pan agrees with the rect there. */
+function cropFramingConflict(args: SetEditorSettingsArgs): string | null {
+	const { webcamCropRegion: region, webcamCropPan: pan } = args;
+	if (!region || !pan) return null;
+	const agrees = (offset: number, size: number, share: number) =>
+		Math.abs(offset - share * (1 - size)) < 1e-6;
+	return agrees(region.x, region.width, pan.x) && agrees(region.y, region.height, pan.y)
+		? null
+		: "webcamCropRegion and webcamCropPan place the framing in two different spots: send one of them, or both as getCurrentDocument returns them.";
+}
+
 /** Every key a patch sets, `cursor.*` for the cursor's: what the result reports as applied. */
 function patchKeys(patch: EditorSettingsPatch): string[] {
 	const { cursor, ...rest } = patch;
@@ -406,6 +418,8 @@ export function executeSetEditorSettings(
 	if (!parsed.success) {
 		return { ok: false, resultJson: JSON.stringify({ error: parsed.error.message }) };
 	}
+	const conflict = cropFramingConflict(parsed.data);
+	if (conflict) return { ok: false, resultJson: JSON.stringify({ error: conflict }) };
 	const patch = editorPatch(document, parsed.data);
 	const keys = patchKeys(patch);
 	if (keys.length === 0) {
