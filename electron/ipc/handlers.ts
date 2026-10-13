@@ -5081,25 +5081,7 @@ export function registerIpcHandlers(
 	 * user's own source and settings are what their next take starts from.
 	 */
 	async function pointHudAtTake(request: RecordRequest): Promise<() => void> {
-		const before = { source: selectedSource, live: selectedDesktopSource };
-		if (process.platform === "linux" && findPipeWireCursorHelperPath()) {
-			// The portal asks the user once the take starts: nothing here to select.
-		} else if (macPickerOwnsSources()) {
-			// Apple's picker asks for this take: an earlier pick must not stand in for it.
-			selectedSource = null;
-			selectedDesktopSource = null;
-			broadcastSelectedSource(null);
-		} else {
-			// The list listSources shows, in its order: its display indexes are this list's.
-			const sources = await getSourcesForPickers({
-				types: ["screen", "window"],
-				thumbnailSize: { width: 0, height: 0 },
-			});
-			const picked = pickRecordingSource(sources, request);
-			if (!(await selectSource(picked, { persist: false }))) {
-				throw new Error(`"${picked.name}" can no longer be recorded. Call listSources again.`);
-			}
-		}
+		// The microphone first: finding it changes nothing, so a miss leaves all as it was.
 		let microphone: Pick<RecordingPrefs, "micDeviceId" | "micDeviceName"> = {
 			micDeviceId: null,
 			micDeviceName: null,
@@ -5119,6 +5101,38 @@ export function registerIpcHandlers(
 			}
 			microphone = { micDeviceId: match.deviceId ?? null, micDeviceName: match.label };
 		}
+
+		const before = { source: selectedSource, live: selectedDesktopSource };
+		const restoreSource = () => {
+			selectedSource = before.source;
+			selectedDesktopSource = before.live;
+			broadcastSelectedSource(before.source);
+		};
+		if (process.platform === "linux" && findPipeWireCursorHelperPath()) {
+			// The portal asks the user once the take starts: nothing here to select.
+		} else if (macPickerOwnsSources()) {
+			// Apple's picker asks for this take: an earlier pick must not stand in for it.
+			selectedSource = null;
+			selectedDesktopSource = null;
+			broadcastSelectedSource(null);
+		} else {
+			try {
+				// The list listSources shows, in its order: its display indexes are this list's.
+				const sources = await getSourcesForPickers({
+					types: ["screen", "window"],
+					thumbnailSize: { width: 0, height: 0 },
+				});
+				const picked = pickRecordingSource(sources, request);
+				if (!(await selectSource(picked, { persist: false }))) {
+					throw new Error(`"${picked.name}" can no longer be recorded. Call listSources again.`);
+				}
+			} catch (error) {
+				// A failed pick may have cleared the selection: the user's comes back.
+				restoreSource();
+				throw error;
+			}
+		}
+
 		const prefs = recordingPrefs.get();
 		recordingPrefs.set({
 			micEnabled: request.mic,
@@ -5126,7 +5140,10 @@ export function registerIpcHandlers(
 			systemAudioEnabled: request.systemAudio,
 			cursorCaptureMode: "editable-overlay",
 		});
-		return () => {
+		// The prefs are saved to disk: a quit mid-take must not leave the client's for the next
+		// launch. ponytail: a crash still does; keep them in memory only if that bites.
+		const restore = () => {
+			app.off("will-quit", restore);
 			recordingPrefs.set({
 				micEnabled: prefs.micEnabled,
 				micDeviceId: prefs.micDeviceId,
@@ -5134,10 +5151,10 @@ export function registerIpcHandlers(
 				systemAudioEnabled: prefs.systemAudioEnabled,
 				cursorCaptureMode: prefs.cursorCaptureMode,
 			});
-			selectedSource = before.source;
-			selectedDesktopSource = before.live;
-			broadcastSelectedSource(before.source);
+			restoreSource();
 		};
+		app.once("will-quit", restore);
+		return restore;
 	}
 
 	const mcpAppRecorder = createAppRecorder({

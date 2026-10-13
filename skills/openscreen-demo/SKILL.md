@@ -89,7 +89,7 @@ Keep the rest as it is: the background, padding, shadow and cursor style are cho
 
 ## 7. Export and review
 
-1. `exportVideo` with the `projectId` and the absolute path of, say, `demo/demo.mp4` in the working directory: the server in the app takes only absolute paths. For a pull request video, pass `quality: "medium"` (720p) to keep the file small.
+1. `exportVideo` with the `projectId` and an absolute path: resolve, say, `demo/demo.mp4` against your working directory first, since the server in the app refuses a relative path. For a pull request video, pass `quality: "medium"` (720p) to keep the file small.
 2. `getFrames` with the `projectId`, at the ruler seconds of your beats.
 3. Check every frame:
    - Is each callout readable and clear of the action?

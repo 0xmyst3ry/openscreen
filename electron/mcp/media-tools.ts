@@ -749,8 +749,9 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 					videoPath = exported.path;
 					toVideoSec = (sec) => programmeSecOf(rendered, sec);
 					rulerEndSec = Math.max(0, ...rendered.timeline.clips.map((clip) => clip.timelineEndSec));
-					const current = await deps.documents.getProject(args.projectId);
-					if (Date.parse(current.project.updatedAt) > exported.at.getTime()) {
+					// A project deleted since still left its export on disk: show it, unflagged.
+					const current = await deps.documents.getProject(args.projectId).catch(() => null);
+					if (current && Date.parse(current.project.updatedAt) > exported.at.getTime()) {
 						note = " The project changed after this export: export it again to see the changes.";
 					}
 				} else {
