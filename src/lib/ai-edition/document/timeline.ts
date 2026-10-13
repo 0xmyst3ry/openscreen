@@ -4,7 +4,13 @@
 // or a new document with updated clips.
 
 import { clampToBound } from "../../projectDefaults";
-import type { AxcutClip, AxcutDocument, AxcutTranscript, AxcutTrimRange } from "../schema";
+import type {
+	AxcutClip,
+	AxcutClipCropRegion,
+	AxcutDocument,
+	AxcutTranscript,
+	AxcutTrimRange,
+} from "../schema";
 
 /**
  * What `resolvePlaybackSegments` returns: a clip-shaped slice of playable film.
@@ -992,8 +998,7 @@ export function moveClip(
 	return withClipsChanged(document, reordered);
 }
 
-// ponytail: duplicate a clip (preserves the original). Used for "split this
-// clip into two" or "make a copy". Mirrors axcut's
+// ponytail: duplicate a clip (preserves the original): "make a copy". Mirrors axcut's
 // apps/server/src/lib/timeline.ts#duplicateClip.
 //
 // The copy takes its own COPY of the original's trims, re-anchored to the new clip id.
@@ -1050,6 +1055,49 @@ export function duplicateClip(
 			},
 		},
 		next,
+	);
+}
+
+/**
+ * The single mutator for "place a clip of this asset at this position": the media panel's drop
+ * onto the timeline and the agent's `insertClip`. `index` counts the clips before it (0 first,
+ * `clips.length` last) and is clamped. The new clip goes through `withClipsChanged` like every
+ * other clip edit, so one whose media meets a neighbour's is folded into it. Pure.
+ */
+export function insertAssetClip(
+	document: AxcutDocument,
+	index: number,
+	clip: Pick<AxcutClip, "id" | "assetId" | "sourceStartSec" | "origin" | "reason"> & {
+		sourceEndSec: number;
+	},
+): AxcutDocument {
+	const length = clip.sourceEndSec - clip.sourceStartSec;
+	const clips = [...document.timeline.clips];
+	clips.splice(Math.max(0, Math.min(clips.length, index)), 0, {
+		...clip,
+		timelineStartSec: 0,
+		timelineEndSec: length,
+		wordRefs: [],
+	});
+	return withClipsChanged(document, clips);
+}
+
+/**
+ * The single mutator for a clip's crop: the clip's Edit modal and the agent's `setClipRange`.
+ * `null` clears it back to the full frame rather than storing the identity region. Through
+ * `withClipsChanged`, since crop is the one property that keeps two meeting clips apart. An
+ * unknown `clipId` is a no-op. Pure.
+ */
+export function setClipCrop(
+	document: AxcutDocument,
+	clipId: string,
+	cropRegion: AxcutClipCropRegion | null,
+): AxcutDocument {
+	return withClipsChanged(
+		document,
+		document.timeline.clips.map((c) =>
+			c.id === clipId ? { ...c, cropRegion: cropRegion ?? undefined } : c,
+		),
 	);
 }
 

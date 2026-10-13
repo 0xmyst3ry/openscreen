@@ -9,6 +9,7 @@ import { audioLanePills } from "./audioTracks";
 import {
 	buildTimelineFromIntervals,
 	duplicateClip,
+	insertAssetClip,
 	invertIntervals,
 	moveClip,
 	normalizeIntervals,
@@ -23,6 +24,7 @@ import {
 	resequenceClips,
 	resolvePlaybackSegments,
 	restoreFullTimeline,
+	setClipCrop,
 	setClipSourceRange,
 	subtractInterval,
 	timelineIntervals,
@@ -2258,5 +2260,72 @@ describe("readSpeedRegions", () => {
 		expect(read([{ id: "a", startMs: 0, endMs: 1000, speed: "fast" }])).toEqual([]);
 		expect(read(undefined)).toEqual([]);
 		expect(readSpeedRegions({ legacyEditor: null })).toEqual([]);
+	});
+});
+
+describe("insertAssetClip", () => {
+	const doc = () =>
+		makeDoc({
+			timeline: {
+				...makeDoc().timeline,
+				clips: [makeClip({ id: "clip_a", sourceStartSec: 0, sourceEndSec: 5 })],
+			},
+		});
+	const clip = (sourceStartSec: number, sourceEndSec: number) => ({
+		id: "clip_new",
+		assetId: "asset_1",
+		sourceStartSec,
+		sourceEndSec,
+		origin: "user" as const,
+		reason: "",
+	});
+
+	it("places the clip at the index, lays the timeline back to back", () => {
+		const next = insertAssetClip(doc(), 0, clip(20, 23));
+		expect(next.timeline.clips.map((c) => [c.id, c.timelineStartSec, c.timelineEndSec])).toEqual([
+			["clip_new", 0, 3],
+			["clip_a", 3, 8],
+		]);
+	});
+
+	it("clamps the index and folds media that continues its neighbour into it", () => {
+		const next = insertAssetClip(doc(), 99, clip(5, 9));
+		expect(next.timeline.clips).toMatchObject([
+			{ id: "clip_a", sourceStartSec: 0, sourceEndSec: 9 },
+		]);
+	});
+});
+
+describe("setClipCrop", () => {
+	const crop = { x: 0, y: 0, width: 0.5, height: 0.5 };
+
+	it("sets and clears a clip's crop", () => {
+		const doc = makeDoc({
+			timeline: { ...makeDoc().timeline, clips: [makeClip()] },
+		});
+		const cropped = setClipCrop(doc, "clip_a", crop);
+		expect(cropped.timeline.clips[0].cropRegion).toEqual(crop);
+		expect(setClipCrop(cropped, "clip_a", null).timeline.clips[0].cropRegion).toBeUndefined();
+	});
+
+	it("makes one clip of two meeting neighbours once their crops match", () => {
+		const doc = makeDoc({
+			timeline: {
+				...makeDoc().timeline,
+				clips: [
+					makeClip({ id: "clip_a", cropRegion: crop }),
+					makeClip({
+						id: "clip_b",
+						sourceStartSec: 5,
+						sourceEndSec: 9,
+						timelineStartSec: 5,
+						timelineEndSec: 9,
+					}),
+				],
+			},
+		});
+		expect(setClipCrop(doc, "clip_b", crop).timeline.clips).toMatchObject([
+			{ id: "clip_a", sourceStartSec: 0, sourceEndSec: 9, cropRegion: crop },
+		]);
 	});
 });
