@@ -330,6 +330,13 @@ export function patchAudioTrack(
 }
 
 /**
+ * Longest fade a track is given, by the inspector and the agent alike. Past a few seconds a fade
+ * stops reading as a fade and starts reading as a level change, and the track's own span caps it
+ * anyway (`resolveFadeSecs` reduces one that does not fit).
+ */
+export const AUDIO_FADE_MAX_MS = 5000;
+
+/**
  * Fade lengths in seconds, reduced to fit inside `spanSec`.
  *
  * Fades that do not fit share the span in proportion rather than being clamped

@@ -57,7 +57,11 @@ import {
 } from "@/components/video-editor/types";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
 import { resolveCaptionLane } from "@/lib/ai-edition/captions/settings";
-import { collapseTracksToPills, trackGroupId } from "@/lib/ai-edition/document/audioTracks";
+import {
+	AUDIO_FADE_MAX_MS,
+	collapseTracksToPills,
+	trackGroupId,
+} from "@/lib/ai-edition/document/audioTracks";
 import {
 	collectNativeFormats,
 	formatFillAvailability,
@@ -3482,11 +3486,6 @@ type TimelineApi = ReturnType<typeof useTimeline>;
 // with the file name, then the volume (a local live value during the drag,
 // committed as one undo step on release), then a delete button styled like the
 // region panes' (position and mute are edited on the lane itself).
-// Longest fade the inspector offers. Past a few seconds a fade stops reading as
-// a fade and starts reading as a level change, and the track's own span caps it
-// anyway (`resolveFadeSecs` reduces one that does not fit).
-const FADE_MAX_MS = 5000;
-
 /**
  * Per-track controls for the selected imported audio track (issue #350). Shown by
  * the inspector in place of the facet when an audio track is selected (see
@@ -3582,7 +3581,7 @@ export function AudioTrackPane({ tl, onClose }: { tl: TimelineApi; onClose?: () 
 					label={ts("audioTrack.fadeIn")}
 					value={liveFadeIn ?? track.fadeInMs}
 					min={0}
-					max={FADE_MAX_MS}
+					max={AUDIO_FADE_MAX_MS}
 					step={50}
 					decimals={0}
 					suffix=" ms"
@@ -3602,7 +3601,7 @@ export function AudioTrackPane({ tl, onClose }: { tl: TimelineApi; onClose?: () 
 					label={ts("audioTrack.fadeOut")}
 					value={liveFadeOut ?? track.fadeOutMs}
 					min={0}
-					max={FADE_MAX_MS}
+					max={AUDIO_FADE_MAX_MS}
 					step={50}
 					decimals={0}
 					suffix=" ms"

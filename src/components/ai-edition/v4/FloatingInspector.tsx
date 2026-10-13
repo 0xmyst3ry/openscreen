@@ -61,6 +61,7 @@ import { useEditorSettings } from "@/lib/ai-edition/store/useEditorSettings";
 import type { useTimeline } from "@/lib/ai-edition/store/useTimeline";
 import { formatSeconds } from "@/lib/ai-edition/timeline/format";
 import { coalescedTrimGroups } from "@/lib/ai-edition/timeline/trim-mapping";
+import { zoomLevelFor } from "@/lib/ai-edition/timeline/zoom-scale";
 import { clampToBound } from "@/lib/projectDefaults";
 import { annotationFootageRect, zoomScaleLimit } from "@/native/sceneDescription";
 import { ColorField } from "../ColorField";
@@ -414,8 +415,6 @@ const BLUR_DEFAULTS = {
 	blockSize: 12,
 } as const;
 
-const ZOOM_DEPTHS: readonly ZoomDepth[] = [1, 2, 3, 4, 5, 6];
-
 // The row: the default and one step either side, plus a strong close-up. The two ends of the
 // table (1.25×, 5×) and every level between are one entry in the free field below, which is
 // why the row stays short. Labels read the table, not a formula: a formula once announced
@@ -488,11 +487,11 @@ export function ZoomLevelControl({
 		setRequested(scale);
 		const gen = ++genRef.current;
 		pendingRef.current.add(gen);
-		const depth = ZOOM_DEPTHS.find((d) => ZOOM_DEPTH_SCALES[d] === scale);
+		const level = zoomLevelFor(scale);
 		const write =
-			depth === undefined
-				? tl.updateZoomCustomScale(region.id, scale)
-				: tl.updateZoomDepth(region.id, depth);
+			"depth" in level
+				? tl.updateZoomDepth(region.id, level.depth)
+				: tl.updateZoomCustomScale(region.id, level.customScale);
 		// A refused write hands the level back to the document, so the same one can be retried.
 		const settle = (ok: boolean) => {
 			pendingRef.current.delete(gen);

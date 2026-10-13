@@ -18,6 +18,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { describe, expect, it } from "vitest";
+import { AUDIO_FADE_MAX_MS } from "../../../src/lib/ai-edition/document/audioTracks";
 import {
 	type AxcutDocument,
 	createEmptyDocument,
@@ -386,6 +387,17 @@ describe("what the descriptions say about zoom strength", () => {
 		expect(SYSTEM_PROMPT).toContain(ZOOM_DEPTH_LEGEND);
 		// Derived, not retyped: editing the table must move the prompt with it.
 		expect(ZOOM_DEPTH_LEGEND).toContain(`3=${ZOOM_DEPTH_SCALES[3].toFixed(2)}×`);
+	});
+
+	it("offers the blur as the way to hide a private detail, and says images are not here (#1180)", () => {
+		expect(TOOL_DESCRIPTIONS.addAnnotation).toMatch(/'blur'.*email/);
+		expect(TOOL_DESCRIPTIONS.addAnnotation).toMatch(/Image annotations are not available/);
+		expect(SYSTEM_PROMPT).toMatch(/privacy blur/);
+		for (const name of ["addZoom", "setZoom"]) {
+			expect(TOOL_DESCRIPTIONS[name]).toMatch(/hideCursor/);
+			expect(TOOL_DESCRIPTIONS[name]).toMatch(/customScale/);
+		}
+		expect(TOOL_DESCRIPTIONS.setAudio).toContain(`${AUDIO_FADE_MAX_MS} ms`);
 	});
 
 	it("tells the model a full-camera region needs a linked webcam", () => {
