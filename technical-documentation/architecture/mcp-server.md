@@ -10,12 +10,12 @@ The same tools are served over two transports, by two different processes:
 | Setup | **AI settings → MCP server**: turn it on, copy the `claude mcp add` / `codex mcp add` command (it carries the token) | `claude mcp add openscreen -- <executable> mcp` ([executables](../../website/docs/cli.md#running-the-cli)) |
 | Auth | Bearer token, `127.0.0.1` only, Host/Origin check | None: the client launched the process with the user's rights |
 | Edits | Off until the user turns on **MCP edits** | Always allowed |
-| Project open in the editor | Edited live through the editor, one undo step per call | Read only: an edit to it is refused ([the marker](#the-open-in-editor-marker)) |
+| Project open in the editor | Edited live through the editor, one undo step per call | The same while the app runs: the call is forwarded to it. With no app answering, refused ([the marker](#the-open-in-editor-marker)) |
 | Other projects | Read from and saved to their file, a checkpoint first | Same |
 | Tools | `listProjects`, the agent's tools, the checkpoint tools | The same, plus the media tools: `listSources`, `startRecording`, `stopRecording`, `setPointerTrack`, `exportVideo`, `getFrames` |
-| Checkpoints | In memory, lost when the app quits or the server restarts | In memory, lost when the process exits, which it does when the client disconnects |
+| Checkpoints | In the app's memory, shared with forwarded `openscreen mcp` calls, lost when the app quits | In the app's while it runs; otherwise in this process's, lost when it exits, which it does when the client disconnects |
 
-Neither server knows about the other. Two processes may therefore write the same project folder; the [open-in-editor marker](#the-open-in-editor-marker) and the byte compare of `saveProjectIfUnchanged` are what keep them from overwriting each other's work.
+**When the app runs, it is the authority**: `openscreen mcp` forwards its document calls to it ([below](#openscreen-mcp-and-the-running-app)), so one process writes the projects. Only when no app answers do two processes write the same project folder; the [open-in-editor marker](#the-open-in-editor-marker) and the byte compare of `saveProjectIfUnchanged` are then what keep them from overwriting each other's work.
 
 | File | Role |
 |---|---|
@@ -23,6 +23,7 @@ Neither server knows about the other. Two processes may therefore write the same
 | [`electron/mcp/stdio-server.ts`](../../electron/mcp/stdio-server.ts) | `openscreen mcp`: the same server and runner on stdin/stdout, with the media tools. |
 | [`electron/mcp/media-tools.ts`](../../electron/mcp/media-tools.ts) | The media tools and their capability block (`MEDIA_PREAMBLE`). |
 | [`electron/mcp/editor-document-host.ts`](../../electron/mcp/editor-document-host.ts) | Main-process side of the live document: asks the editor window for a snapshot and hands edits back. |
+| [`electron/mcp/app-channel.ts`](../../electron/mcp/app-channel.ts) | The local channel `openscreen mcp` forwards its document calls through to the running app. See [`openscreen mcp` and the running app](#openscreen-mcp-and-the-running-app). |
 | [`electron/mcp/mcp-controller.ts`](../../electron/mcp/mcp-controller.ts) | In-app server lifecycle: start when enabled, restart on a port or token change, status for the settings UI. |
 | [`electron/mcp/mcp-settings-store.ts`](../../electron/mcp/mcp-settings-store.ts) | `mcp-server.json` (enabled, port, allowEdits) and `mcp-token.enc` (bearer token, `safeStorage`). |
 | [`src/lib/ai-edition/store/mcpDocumentHost.ts`](../../src/lib/ai-edition/store/mcpDocumentHost.ts) | Renderer side: answers snapshot / apply requests from the project store. Mounted by `NewEditorShell`. |
@@ -43,21 +44,21 @@ So a tool added to the agent appears over MCP with no further work, and the MCP 
 
 Every text a client reads must be true on the server that serves it, so the texts are composed rather than shared verbatim. `McpToolDeps.transport` (`"http"` or `"stdio"`) selects them:
 
-- **Instructions** (`mcpInstructions`): the media tools' capability block when they are registered, then the projects-and-checkpoints rules of the transport, then how long checkpoints live there, then `buildSystemPrompt`. The checkpoint rule is in both. Over HTTP the rules speak of the editor and its undo stack and add "Nothing here records, exports or imports media"; over stdio they say a `projectId` is needed on every call, that `Ctrl/Cmd+Z` cannot undo an edit, and that a project open in the app is refused.
+- **Instructions** (`mcpInstructions`): the media tools' capability block when they are registered, then the projects-and-checkpoints rules of the transport, then how long checkpoints live there, then `buildSystemPrompt`. The checkpoint rule is in both. Over HTTP the rules speak of the editor and its undo stack and add "Nothing here records, exports or imports media"; over stdio they say that calls go through the app while it runs (the open project live, with `Ctrl/Cmd+Z`), and to the files when it does not.
 - **`buildSystemPrompt`** takes the transport's facts as options: `editsSetting` names the switch its consent block points to (the MCP server's **MCP edits**, not the in-app agent's **Agent edits**), and `canExport` drops "exporting" from its examples of a request with no tool when `exportVideo` is served.
-- **Tool descriptions**: `projectId` is "omit it for the open project" over HTTP and "pass it on every call" over stdio; `restoreCheckpoint` mentions the undo step only over HTTP, and the pointer track only where `setPointerTrack` is served.
-- **Messages**: no project to fall back on, a checkpoint required, an unknown checkpoint, edits turned off. Each has a version per transport, or exists only on the one that can produce it.
+- **Tool descriptions**: `projectId` is "omit it for the open project" over HTTP and "omit it only for the open project, while the app runs" over stdio; `restoreCheckpoint` mentions the pointer track only where `setPointerTrack` is served.
+- **Messages**: no project to fall back on, a checkpoint required, an unknown checkpoint, edits turned off. Each has a version per transport, or exists only on the one that can produce it. The stdio versions are only met with no app answering, and say so.
 
 The in-app chat agent keeps `buildSystemPrompt`'s defaults: its own switch, no export.
 
-**Writes on the in-app server are a second opt-in.** MCP clients have their own **MCP edits** switch, `allowEdits` in `mcp-server.json`, **off by default** and independent of the in-app agent's **Agent edits** (`allowAgentEdits`). Turning the server on therefore grants read access only. The value is read on every call; while it is off every mutating tool and `setPointerTrack` are refused with the executor's `consent_required` payload naming **MCP edits**, `restoreCheckpoint` with its own refusal text naming it too, and the consent block of the system prompt is in the instructions. It is independent because `allowAgentEdits` defaults to allowed and lives in the provider form, so a user with no provider configured could never have turned MCP writes off. Toggling it does not restart the server. `openscreen mcp` has no such switch: the client started it itself, and there is no other caller to keep out.
+**Writes on the in-app server are a second opt-in.** MCP clients have their own **MCP edits** switch, `allowEdits` in `mcp-server.json`, **off by default** and independent of the in-app agent's **Agent edits** (`allowAgentEdits`). Turning the server on therefore grants read access only. The value is read on every call; while it is off every mutating tool and `setPointerTrack` are refused with the executor's `consent_required` payload naming **MCP edits**, `restoreCheckpoint` with its own refusal text naming it too, and the consent block of the system prompt is in the instructions. It is independent because `allowAgentEdits` defaults to allowed and lives in the provider form, so a user with no provider configured could never have turned MCP writes off. Toggling it does not restart the server. `openscreen mcp` has no such switch: the client started it itself, and there is no other caller to keep out. Its calls forwarded to the app keep that: the runner takes `editsAllowed` per call.
 
 ## Which project a call acts on
 
 | `projectId` | In-app server | `openscreen mcp` |
 |---|---|---|
-| omitted | The project open in the editor, through the editor. With none open the call fails and points at `listProjects`. | Fails: there is no editor to fall back on. The message asks for a `projectId`. |
-| the id of the project open in this process's editor | The same: through the editor, never its file. The file is read first all the same (see below). | Cannot happen: this process has no editor. |
+| omitted | The project open in the editor, through the editor. With none open the call fails and points at `listProjects`. | While the app runs, forwarded: the same as the in-app server. Otherwise fails, asking for a `projectId`. |
+| the id of the project open in the app's editor | The same: through the editor, never its file. The file is read first all the same (see below). | While the app runs, forwarded: the same. Otherwise refused ([the marker](#the-open-in-editor-marker)). |
 | any other id | That project's file, through the process's one `DocumentService` (`getProjectForUpdate` → tool → `saveProjectIfUnchanged`). Works with no editor window at all. A write needs a checkpoint of that project first, and is refused while another process's editor holds it. | Same. |
 
 The open project is never written to disk from here because the editor holds it in memory and saves it as a whole: a file edit under it would be overwritten by the editor's next save, and the editor would never show it.
@@ -76,7 +77,7 @@ A user edit that lands between 1 and 3 moves the revision and the apply is refus
 
 Only the webContents that registered on `ai-edition.mcp-host` is asked, and only its replies count. An editor that unmounts or is destroyed stops being asked. A request unanswered for 30 s resolves to "no project" (reads) or `timeout` (writes, reported as "did not confirm", not as a failure, since the save may have landed).
 
-`openscreen mcp` builds the same `EditorDocumentHost`, but no editor window ever exists in that process, so its snapshot is always `null`.
+`openscreen mcp` builds the same `EditorDocumentHost`, but no editor window ever exists in that process, so its snapshot is always `null`: it reaches the app's editor by forwarding the call to the app.
 
 ### Any other project
 
@@ -96,9 +97,9 @@ The check runs inside the project's queue, so nothing in the process reads or sa
 
 ### The open-in-editor marker
 
-`openscreen mcp` cannot ask the app's editor anything, so the app says which project its editor holds: the editor sends the project id on `AI_EDITION_OPEN_PROJECT_CHANNEL`, and `DocumentService.markOpenInEditor` writes `.open-in-editor.json` (`{pid, projectId}`, temp file then rename) in the projects folder. Only the window that set it clears it, on closing the project or on being destroyed. `projectOpenInEditor()` reads it back and ignores a marker whose `pid` is no longer running, so an app that crashed blocks nothing. The runner checks it just before any write to a file; `listProjects` reports the project as `open`.
+When no app answers its channel, `openscreen mcp` cannot ask the app's editor anything, so the app says which project its editor holds: the editor sends the project id on `AI_EDITION_OPEN_PROJECT_CHANNEL`, and `DocumentService.markOpenInEditor` writes `.open-in-editor.json` (`{pid, projectId}`, temp file then rename) in the projects folder. Only the window that set it clears it, on closing the project or on being destroyed. `projectOpenInEditor()` reads it back and ignores a marker whose `pid` is no longer running, so an app that crashed blocks nothing. The runner checks it just before any write to a file; `listProjects` reports the project as `open`.
 
-An edit refused this way is answered with `ProjectOpenInEditorError`'s message: close the project in the app, or connect to the in-app server, which edits the open project through the editor.
+An edit refused this way is answered with `ProjectOpenInEditorError`'s message: the editor could not be reached, so retry, and if it is refused again, close the project in the app, or restart or update it. It takes an app that is alive but not answering, or one that predates forwarding.
 
 ## Checkpoints
 
@@ -109,15 +110,25 @@ A client chains several edits in one turn, and each is its own undo step, so rev
 - **They cover the cursor sidecar.** `setPointerTrack` rewrites `<video>.cursor.json`. Before the runner writes a sidecar, it keeps the file's previous content (or its absence) in every checkpoint of that project that has none for it yet; a restore writes those back, and deletes a sidecar the take never had. A restore is itself such a write, so each checkpoint gets back its own state whatever order they are restored in.
 - A restore is a write: refused while **MCP edits** is off, and refused when the checkpoint belongs to another project than the one the call acts on. That message names the checkpoint's `projectId`: restoring a closed project's checkpoint takes it explicitly.
 - It discards every edit since the checkpoint, the user's included. The tool description says so.
-- **Lifetime.** Checkpoints live in the runner's memory, the 20 most recent. On the in-app server they are lost when the app quits or the server restarts: turned off and on, its port changed, or its token regenerated, since each of those starts a new server with a new runner. Over stdio they are lost when the process exits, which it does when the client disconnects. The unknown-checkpoint message says which. The in-app agent does not need them: its whole turn is a single apply.
+- **Lifetime.** Checkpoints live in the runner's memory, the 20 most recent. In the app that is one runner (`createToolRunner`, built in `registerIpcHandlers`), shared by the in-app server and every forwarded `openscreen mcp` call; a restart of the in-app server keeps them, and they are lost when the app quits. An `openscreen mcp` with no app answering keeps its own, lost when the process exits, which it does when the client disconnects. The unknown-checkpoint message says which. The in-app agent does not need them: its whole turn is a single apply.
 
 ## The media tools (stdio)
 
-`registerMediaTools` adds the tools that make a video around the edits. They share the runner the document tools use (`createToolRunner` in `stdio-server.ts`):
+`registerMediaTools` adds the tools that make a video around the edits. They share the runner the document tools use, the routed one of `stdio-server.ts`, so their document calls go to the app while it runs:
 
-- `stopRecording` turns the take into a project and creates its checkpoint through the runner.
-- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. It computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result. A sidecar write that fails after the save is reported as a partial edit: the project was saved, the pointer track was not.
+- `stopRecording` turns the take into a project and creates its checkpoint through the runner. The new project itself is written by the CLI process: a fresh id no editor can hold.
+- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. `pointerTrackEdit` computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result. A sidecar write that fails after the save is reported as a partial edit: the project was saved, the pointer track was not. A `RunnerEdit` is a closure and cannot be forwarded, so the call carries what the edit needs (`events`, and `takes`, each take's start time by video): the app's channel serves `setPointerTrack` with those args and runs `pointerTrackEdit` in its own runner.
 - `exportVideo` and `getFrames` read projects; they write none.
+
+## `openscreen mcp` and the running app
+
+The stdio server (`openscreen mcp`, [`stdio-server.ts`](../../electron/mcp/stdio-server.ts)) is a process apart from the app. **When the app runs, it is the authority** (#1174): `listProjects`, every document tool, both checkpoint tools and `setPointerTrack` are forwarded to it, and the app runs them through the same runner as the in-app server. The project open in the editor is then edited through the editor, live and one undo step per call, and checkpoints live in one place. The other media tools (record, export, `getFrames`, `listSources`) stay in the CLI process.
+
+- **Channel.** MCP itself, over a Windows named pipe (a fresh random name per launch) or a Unix socket (`<userData>/mcp.sock`, mode 0600). The app serves `createOpenScreenMcpServer` on it, `openscreen mcp` is its client and forwards each `tools/call` unchanged. The handshake lists the app's tools, so a tool an older app lacks runs locally.
+- **Discovery.** Once listening, the app writes `<userData>/mcp-app.json` (`{ pid, endpoint, token }`, mode 0600) and removes it as it quits. `openscreen mcp` shares that userData and reads the file on each call it is not connected for: the app starting or quitting mid-session is picked up on the next call. A file whose pid is dead, or whose endpoint does not answer within 3 s, is a crashed app's and is ignored.
+- **Trust.** Every connection must first send the token from that file, or it is dropped. Node cannot set a named pipe's DACL, and the default one lets any user open it read-only; the token, in a file inside the user's profile, is what limits the channel to the current user. Any process of that user can connect, which grants nothing new: it could run `openscreen mcp` itself. So calls over the channel edit as `openscreen mcp` always did, whatever the in-app server's **MCP server** and **MCP edits** switches say: those guard the HTTP port, a door a web page or another tool could knock on.
+- **Fallback.** With no app, or one that does not answer, the calls run in the CLI process on the files, as before. The project a live app's editor holds is then still refused (#1138): the app's `.open-in-editor.json` marker says so, and the refusal asks to retry, close the project, or restart or update OpenScreen.
+- **Never twice.** A call the app received but did not answer within 90 s, or whose connection dropped, is not run again locally unless it is a read: the client is told the outcome is unknown and to re-read. The connection is dropped, so a hung app does not hold later calls.
 
 ## Transport and security
 
@@ -131,11 +142,11 @@ A client chains several edits in one turn, and each is its own undo step, so rev
 **`openscreen mcp` (stdio)**
 
 - One `McpServer` on the process's stdin/stdout for the whole session. It exits when stdin ends, closes or errors, whichever the client's pipe reports.
-- No port and no token: only the client that launched the process can talk to it, with the user's rights, as it would run `openscreen record` or `openscreen export`.
+- No port and no token: only the client that launched the process can talk to it, with the user's rights, as it would run `openscreen record` or `openscreen export`. Its own channel to the app is described [above](#openscreen-mcp-and-the-running-app).
 
 ## Lifecycle
 
-`registerIpcHandlers` builds the `McpController` (it is where the agent's own dependencies — the cursor reader, the LLM config — live) and returns it; **`main.ts` starts it**. The headless CLI shares `registerIpcHandlers` and must never bind the port a running app is listening on, and a bench run has no use for it, so neither calls `startIfEnabled`. `openscreen mcp` reuses the same dependencies (`mcpToolDeps`) with `transport: "stdio"` and edits always allowed.
+`registerIpcHandlers` builds the `McpController` (it is where the agent's own dependencies — the cursor reader, the LLM config — live) and returns it; **`main.ts` starts it**. The headless CLI shares `registerIpcHandlers` and must never bind the port a running app is listening on, and a bench run has no use for it, so neither calls `startIfEnabled`. `main.ts` also opens the channel for `openscreen mcp` (`serveAppChannel`), always, and closes it on `will-quit`. `openscreen mcp` reuses the same dependencies (`mcpToolDeps`) with `transport: "stdio"` and edits always allowed.
 
 ## Connecting a client
 
@@ -157,7 +168,7 @@ codex mcp add openscreen -- "<executable>" mcp
 
 ## Known gaps
 
-- **Two servers that ignore each other.** No connection gives an agent the whole loop: the in-app server edits the open project live but cannot record or export; `openscreen mcp` records and exports but refuses the project open in the app. Checkpoints are per process and never shared. Tracked in #1174.
+- **The in-app server cannot record or export.** `openscreen mcp` now covers the whole loop, editing the open project through the app; the in-app server gets the media tools later in #1174.
 - **No Ctrl+Z for edits to closed projects.** Their undo is the checkpoint the write requires, which lives in memory: it is gone once its server goes away or 20 newer ones push it out, and the edits stay.
 - **An editor that stops answering looks closed.** A snapshot unanswered for 30 s reads as "no project open", so an edit naming the project that editor holds would go to its file, and the editor's next save would drop it. It takes a renderer hung for 30 s.
 - **No project management.** Projects can be listed, read and edited, and `openscreen mcp` creates one per take; none can be renamed or deleted, and nothing imports media.

@@ -80,7 +80,7 @@ import {
 import { EditorDocumentHost } from "../mcp/editor-document-host";
 import { McpController } from "../mcp/mcp-controller";
 import { McpSettingsStore } from "../mcp/mcp-settings-store";
-import type { McpToolDeps } from "../mcp/openscreen-mcp-server";
+import { createToolRunner, type McpToolDeps } from "../mcp/openscreen-mcp-server";
 import { type AudioPeaksResult, getAudioPeaks } from "../media/audioPeaks";
 import {
 	readCursorRecordingFile as readCursorRecordingFileFrom,
@@ -5040,7 +5040,10 @@ export function registerIpcHandlers(
 		cursor: agentCursorTelemetryReader,
 		version: app.getVersion(),
 	};
-	const mcpController = new McpController(mcpSettings, mcpToolDeps);
+	// One runner, so one queue and one checkpoint store, for the in-app server and every
+	// `openscreen mcp` the app answers through its channel (app-channel.ts, started by main.ts).
+	const mcpRunTool = createToolRunner(mcpToolDeps);
+	const mcpController = new McpController(mcpSettings, mcpToolDeps, mcpRunTool);
 
 	// The editor says which project it holds, so `openscreen mcp`, a process of its own
 	// that cannot ask it, refuses to edit that project behind its back (#1138).
@@ -5123,6 +5126,7 @@ export function registerIpcHandlers(
 	// `openscreen mcp` serves the same tools on stdio, from the CLI process.
 	return {
 		mcpController,
+		mcpAppChannel: { deps: mcpToolDeps, runTool: mcpRunTool },
 		agentServices: {
 			mcpToolDeps,
 			documents: aiEditionDocuments,

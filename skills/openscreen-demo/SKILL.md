@@ -83,7 +83,7 @@ Use the document tools, always with the `projectId`. Read the project first with
 - **Zoom on the action:** clicks close in time and on screen share one zoom, and the first 2.5 s stay wide. Check them, then add or move zooms with `addZooms` and `setZoom` where a result deserves its own. Hold a zoom at least 1.5 s.
 - **Callouts:** one `addAnnotation` per beat, short, placed clear of the action. Text sits on the output frame and stays put when the picture zooms. Use its look for hierarchy: a large title with `animation: "typewriter"`, step callouts with `animation: "pop"`. `setAnnotation` moves or restyles one.
 - **Undo:** `restoreCheckpoint` with the `checkpointId` takes the project back to the raw take in one step. It also puts back the take's own pointer track, undoing any `setPointerTrack` made since.
-- **Open in the app:** while the user has this project open in the OpenScreen editor, every edit is refused, since the editor would save its own copy over yours. Reads still work. Ask them to close the project there, then retry.
+- **Open in the app:** while OpenScreen is running, your edits go through it, so a project the user has open in its editor changes there live and they can undo each edit. If an edit is refused as "open in the OpenScreen editor", the app did not answer: retry once, then ask the user to close the project there or restart OpenScreen.
 
 Keep the rest as it is: the background, padding, shadow and cursor style are chosen to look good.
 

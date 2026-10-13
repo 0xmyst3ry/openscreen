@@ -29,7 +29,8 @@
 // `openscreen mcp` over stdio (`stdio-server.ts`, which adds the media tools). The
 // runner and the tools are the same; the texts a client reads are composed per
 // transport (`mcpInstructions`, the `*_MESSAGES` tables), so each says what is true
-// on the server that serves it. A media tool that edits a project
+// on the server that serves it. While the app runs, `openscreen mcp` forwards its document
+// calls to it (`app-channel.ts`), so the app's one runner serves both. A media tool that edits a project
 // (setPointerTrack) hands its change to the runner too, so it meets the same
 // refusals and checkpoints, sidecar included.
 //
@@ -136,18 +137,19 @@ export const LIST_PROJECTS_TOOL = "listProjects";
 const MCP_EDITS_SETTING = "'MCP edits' under MCP server in AI settings";
 
 const LIST_PROJECTS_DESCRIPTION =
-	"List every OpenScreen project: id, title, last update, asset count, and whether it is the one open in the editor. Pass a project's id as `projectId` to any other tool to read or edit that project.";
+	"List every OpenScreen project: id, title, last update, asset count, and `open`: whether the OpenScreen editor has it open, in which case an edit to it goes through the editor, shows there live and the user can undo it with Ctrl/Cmd+Z. Pass a project's id as `projectId` to any other tool to read or edit that project.";
 
 const PROJECT_ID_DESCRIPTIONS: Record<McpTransport, string> = {
 	http: "The project to act on, from listProjects. Omit it for the project open in the editor.",
 	stdio:
-		"The project to act on, from listProjects. Pass it on every call: this server has no editor, so there is no open project to fall back on.",
+		"The project to act on, from listProjects. Omit it only for the project open in the OpenScreen editor, which works only while the app runs.",
 };
 
+// stdio's are only met on its own, with no app to forward to (app-channel.ts).
 const NO_PROJECT_MESSAGES: Record<McpTransport, string> = {
 	http: "No project is open in the OpenScreen editor. Call listProjects and pass a projectId, or ask the user to open one in OpenScreen.",
 	stdio:
-		"Pass a projectId: this server has no editor, so there is no open project to act on. Call listProjects for the ids.",
+		"Pass a projectId: OpenScreen is not running (or not answering), so there is no project open in its editor to act on. Call listProjects for the ids.",
 };
 
 // The editor would overwrite a file edit with its own copy on its next save, so a
@@ -158,16 +160,17 @@ const PROJECT_CHANGED_MESSAGE =
 const CHECKPOINT_REQUIRED_MESSAGES: Record<McpTransport, string> = {
 	http: "The edit was NOT applied: this project is not open in the editor, so the user cannot undo an edit to it with Ctrl/Cmd+Z. Call createCheckpoint with this projectId first, so restoreCheckpoint can take your edits back in one step, then retry.",
 	stdio:
-		"The edit was NOT applied: this server saves each edit straight to the project's file, where Ctrl/Cmd+Z cannot reach it. Call createCheckpoint with this projectId first, so restoreCheckpoint can take your edits back in one step, then retry.",
+		"The edit was NOT applied: OpenScreen is not running (or not answering), so this server saves each edit straight to the project's file, where Ctrl/Cmd+Z cannot reach it. Call createCheckpoint with this projectId first, so restoreCheckpoint can take your edits back in one step, then retry.",
 };
 
-// ponytail: kept in memory, last 20 only; persist them per project if agents need
+// ponytail: kept in memory, last 20 only. In the app one store serves the in-app server
+// and every `openscreen mcp` session it answers; persist them per project if agents need
 // them across sessions.
 const MAX_CHECKPOINTS = 20;
 
 const CHECKPOINT_LIFETIMES: Record<McpTransport, string> = {
-	http: `Checkpoints live in OpenScreen's memory: only the ${MAX_CHECKPOINTS} most recent are kept, and all of them are lost when OpenScreen quits or its MCP server restarts (turned off and on, or its port or token changed).`,
-	stdio: `Checkpoints live in this server's memory: only the ${MAX_CHECKPOINTS} most recent are kept, and all of them are lost when it exits, which it does when the client disconnects.`,
+	http: `Checkpoints live in OpenScreen's memory: only the ${MAX_CHECKPOINTS} most recent are kept, and all of them are lost when OpenScreen quits.`,
+	stdio: `Checkpoints live in OpenScreen's memory while the app runs, and in this server's when it does not: only the ${MAX_CHECKPOINTS} most recent are kept, they are lost when the one holding them exits (OpenScreen quitting, or this server when the client disconnects), and neither knows the other's.`,
 };
 
 const APPLY_FAILURE_MESSAGES: Record<Exclude<McpApplyResult, "applied">, string> = {
@@ -196,8 +199,8 @@ const CORE_PREAMBLES: Record<McpTransport, readonly string[]> = {
 		"Before a series of edits, call createCheckpoint with the same projectId. Undo is one step per call, so if the result is not what the user wanted, restoreCheckpoint takes the project back in one step instead of many. A project that is not open in the editor cannot be edited until it has a checkpoint, since restoreCheckpoint is its only undo.",
 	],
 	stdio: [
-		"These tools act on the user's OpenScreen projects, read from and saved to their files: call listProjects for their ids, and pass one as projectId on every call. Every edit is saved straight away, and Ctrl/Cmd+Z cannot undo it. An edit to a project the user has open in the OpenScreen app is refused, since its editor would save over it: ask them to close it there.",
-		"Before a series of edits, call createCheckpoint with the same projectId: restoreCheckpoint then takes the project back in one step, and it is the only way back. A project cannot be edited until it has a checkpoint.",
+		"These tools act on the user's OpenScreen projects: call listProjects for their ids, and pass one as projectId. Every edit is saved straight away. While the OpenScreen app runs, this server hands each call to it: an edit to the project open in its editor appears there, where the user can undo it with Ctrl/Cmd+Z, and any other project is saved to its file. When the app is not running, every project is read from and saved to its file, and Ctrl/Cmd+Z cannot reach the edit.",
+		"Before a series of edits, call createCheckpoint with the same projectId. Undo is one step per call, so if the result is not what the user wanted, restoreCheckpoint takes the project back in one step instead of many. A project that is not open in the editor cannot be edited until it has a checkpoint, since restoreCheckpoint is its only undo.",
 	],
 };
 
@@ -228,15 +231,12 @@ export function mcpInstructions(options: {
 	);
 }
 
-function checkpointTools(transport: McpTransport, media: boolean) {
+function checkpointTools(media: boolean) {
 	const restore = [
 		"Put the project back exactly as it was when createCheckpoint returned this checkpointId, discarding every edit made since, including the user's. Pass the same projectId as to createCheckpoint.",
 		...(media ? ["It also puts back the pointer track setPointerTrack replaced."] : []),
-		...(transport === "http"
-			? [
-					"On the project open in the editor it lands as one undo step, so the user can undo the restore itself.",
-				]
-			: []),
+		// Over stdio too: while the app runs, the restore goes through its editor.
+		"On the project open in the editor it lands as one undo step, so the user can undo the restore itself.",
 	].join(" ");
 	return [
 		{
@@ -275,7 +275,21 @@ export type RunnerEdit = (
 	document: AxcutDocument,
 ) => Promise<AgentToolExecution & { sidecars?: SidecarWrite[] }>;
 
-export type McpToolRunner = ReturnType<typeof createToolRunner>;
+export interface CallOptions {
+	/** Computes the call's change in place of the executor. */
+	edit?: RunnerEdit;
+	editsAllowed: boolean;
+}
+
+/**
+ * Runs one tool call. `editsAllowed` overrides `deps.editsAllowed()` for this call: the
+ * app's channel for `openscreen mcp` edits whatever the in-app server's switch says.
+ */
+export type McpToolRunner = (
+	name: string,
+	args: unknown,
+	options?: Partial<CallOptions>,
+) => Promise<CallToolResult>;
 
 async function readSidecar(file: string): Promise<string | null> {
 	try {
@@ -305,9 +319,10 @@ function splitProjectId(rawArgs: unknown): { projectId: string | undefined; args
 /**
  * Runs tool calls one at a time. Each call is snapshot → execute → apply, and
  * two of those interleaving would make the second apply against a revision the
- * first just moved — a spurious conflict at best.
+ * first just moved — a spurious conflict at best. The app builds one and shares
+ * it, queue and checkpoints, between the in-app server and `openscreen mcp`.
  */
-export function createToolRunner(deps: McpToolDeps) {
+export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 	let queue: Promise<unknown> = Promise.resolve();
 	/**
 	 * Each checkpoint's document, and what each sidecar an edit rewrote since held before
@@ -334,8 +349,9 @@ export function createToolRunner(deps: McpToolDeps) {
 	function restoreCheckpoint(
 		document: AxcutDocument,
 		args: unknown,
+		editsAllowed: boolean,
 	): AgentToolExecution & { sidecars?: SidecarWrite[] } {
-		if (!deps.editsAllowed()) {
+		if (!editsAllowed) {
 			return {
 				ok: false,
 				resultJson: `Edits by MCP clients are turned off in OpenScreen, so the checkpoint was NOT restored. Ask the user to turn on ${MCP_EDITS_SETTING}, or to undo the edits themselves.`,
@@ -417,13 +433,13 @@ export function createToolRunner(deps: McpToolDeps) {
 		snapshot: McpDocumentSnapshot,
 		name: string,
 		args: unknown,
-		edit: RunnerEdit | undefined,
+		call: CallOptions,
 	): Promise<CallToolResult> {
 		const parsed = documentSchema.safeParse(snapshot.document);
 		if (!parsed.success) {
 			return textResult("The project open in the editor could not be read.", true);
 		}
-		const execution = await execute(parsed.data, name, args, edit);
+		const execution = await execute(parsed.data, name, args, call);
 		if (execution.document) {
 			const applied = await deps.host.apply(execution.document, snapshot.revision);
 			if (applied !== "applied") return textResult(APPLY_FAILURE_MESSAGES[applied], true);
@@ -439,9 +455,9 @@ export function createToolRunner(deps: McpToolDeps) {
 		read: ProjectRead,
 		name: string,
 		args: unknown,
-		edit: RunnerEdit | undefined,
+		call: CallOptions,
 	): Promise<CallToolResult> {
-		const execution = await execute(read.document, name, args, edit);
+		const execution = await execute(read.document, name, args, call);
 		if (execution.document) {
 			// An editor this server cannot reach (the app, beside `openscreen mcp`) holds
 			// it and would save over this edit. Checked again just before the write.
@@ -469,29 +485,29 @@ export function createToolRunner(deps: McpToolDeps) {
 		document: AxcutDocument,
 		name: string,
 		args: unknown,
-		edit: RunnerEdit | undefined,
+		{ edit, editsAllowed }: CallOptions,
 	): Promise<AgentToolExecution & { sidecars?: SidecarWrite[] }> {
 		if (name === "createCheckpoint") return createCheckpoint(document);
-		if (name === "restoreCheckpoint") return restoreCheckpoint(document, args);
+		if (name === "restoreCheckpoint") return restoreCheckpoint(document, args, editsAllowed);
 		// This server's own switch, so the refusal names it rather than the in-app agent's.
-		if ((edit || isMutatingTool(name)) && !deps.editsAllowed()) {
+		if ((edit || isMutatingTool(name)) && !editsAllowed) {
 			return consentRequired(name, args, MCP_EDITS_SETTING);
 		}
 		if (edit) return edit(document);
 		const availableByAssetId = await probeCursorTelemetry(document, deps.cursor);
-		return runDocumentTool(document, name, args, deps.editsAllowed(), {
+		return runDocumentTool(document, name, args, editsAllowed, {
 			cursor: deps.cursor,
 			availableByAssetId,
 		});
 	}
 
-	async function run(name: string, rawArgs: unknown, edit?: RunnerEdit): Promise<CallToolResult> {
+	async function run(name: string, rawArgs: unknown, call: CallOptions): Promise<CallToolResult> {
 		if (name === LIST_PROJECTS_TOOL) return listProjects();
 		const { projectId, args } = splitProjectId(rawArgs);
 		if (projectId === undefined) {
 			const snapshot = await deps.host.snapshot();
 			return snapshot
-				? runOnEditor(snapshot, name, args, edit)
+				? runOnEditor(snapshot, name, args, call)
 				: textResult(NO_PROJECT_MESSAGES[deps.transport], true);
 		}
 		// The file first, the editor second. Reads of a project queue behind each other,
@@ -504,7 +520,7 @@ export function createToolRunner(deps: McpToolDeps) {
 		});
 		const snapshot = await deps.host.snapshot();
 		if (snapshot && openProjectId(snapshot) === projectId) {
-			return runOnEditor(snapshot, name, args, edit);
+			return runOnEditor(snapshot, name, args, call);
 		}
 		if (!read) {
 			return textResult(
@@ -512,15 +528,17 @@ export function createToolRunner(deps: McpToolDeps) {
 				true,
 			);
 		}
-		return runOnFile(projectId, read, name, args, edit);
+		return runOnFile(projectId, read, name, args, call);
 	}
 
-	/** Runs one call; `edit`, when given, computes the call's change in place of the executor. */
-	return (name: string, args: unknown, edit?: RunnerEdit): Promise<CallToolResult> => {
-		const next = queue.then(
-			() => run(name, args, edit),
-			() => run(name, args, edit),
-		);
+	return (name, args, options = {}) => {
+		// The setting is read when the call's turn comes: it may change while it waits.
+		const runNow = () =>
+			run(name, args, {
+				edit: options.edit,
+				editsAllowed: options.editsAllowed ?? deps.editsAllowed(),
+			});
+		const next = queue.then(runNow, runNow);
 		queue = next.catch(() => undefined);
 		return next.catch((error) => textResult(`Tool failed: ${errorMessage(error)}`, true));
 	};
@@ -568,7 +586,7 @@ export function createOpenScreenMcpServer(
 			(args: unknown) => runTool(name, args),
 		);
 	}
-	for (const tool of checkpointTools(deps.transport, media !== undefined)) {
+	for (const tool of checkpointTools(media !== undefined)) {
 		server.registerTool(
 			tool.name,
 			{
@@ -617,9 +635,13 @@ export async function startMcpHttpServer(options: {
 	port: number;
 	token: string;
 	deps: McpToolDeps;
+	/** The app's shared runner (see createToolRunner); a fresh one when omitted. */
+	runTool?: McpToolRunner;
 }): Promise<RunningMcpServer> {
 	const { token, deps } = options;
-	const runTool = createToolRunner(deps);
+	const shared = options.runTool ?? createToolRunner(deps);
+	// This server obeys its own switch: never pass an override through.
+	const runTool = (name: string, args: unknown) => shared(name, args);
 	let boundPort = options.port;
 
 	const handle = async (req: IncomingMessage, res: ServerResponse) => {

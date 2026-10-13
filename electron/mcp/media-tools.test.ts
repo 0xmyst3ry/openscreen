@@ -181,7 +181,7 @@ describe("what `openscreen mcp` tells its client", () => {
 		const instructions = client.getInstructions() ?? "";
 		expect(instructions.startsWith(MEDIA_PREAMBLE)).toBe(true);
 		expect(instructions).toContain("Before a series of edits, call createCheckpoint");
-		expect(instructions).toContain("lost when it exits");
+		expect(instructions).toContain("in OpenScreen's memory while the app runs");
 		expect(instructions).not.toMatch(
 			/project open in the editor|Project edits|Agent edits|Nothing here records|undo step|exporting\)/,
 		);
@@ -193,15 +193,16 @@ describe("what `openscreen mcp` tells its client", () => {
 		const projectId = byName.get("addTrim")?.inputSchema.properties?.projectId as {
 			description?: string;
 		};
-		expect(projectId.description).toContain("Pass it on every call");
+		expect(projectId.description).toContain("only while the app runs");
 		const restore = byName.get("restoreCheckpoint")?.description ?? "";
 		expect(restore).toContain("pointer track");
-		expect(restore).not.toContain("undo step");
+		// Through the app's editor while it runs (app-channel.ts).
+		expect(restore).toContain("one undo step");
 	});
 
-	it("answers in its own terms: no editor to fall back on, no Ctrl/Cmd+Z, its own lifetime", async () => {
+	it("answers in its own terms when no app answers: no editor, no Ctrl/Cmd+Z, its own lifetime", async () => {
 		const noProject = await call("getCurrentDocument");
-		expect(textOf(noProject)).toContain("this server has no editor");
+		expect(textOf(noProject)).toContain("OpenScreen is not running");
 		expect(textOf(noProject)).not.toContain("No project is open");
 
 		const other = await documents.createProject("Other");
@@ -215,7 +216,7 @@ describe("what `openscreen mcp` tells its client", () => {
 			projectId: other.project.id,
 			checkpointId: "cp_nope",
 		});
-		expect(textOf(unknown)).toContain("lost when it exits");
+		expect(textOf(unknown)).toContain("this server when the client disconnects");
 	});
 });
 

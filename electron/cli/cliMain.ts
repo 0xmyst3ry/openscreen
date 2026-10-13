@@ -410,6 +410,7 @@ export function runCli(command: CliCommand): void {
 			if (command.kind === "mcp") {
 				await serveMcpOverStdio({
 					...agentServices,
+					userDataDir,
 					runners,
 					openVideo: openVideoInHiddenWindow,
 					onClose: () => app.exit(0),
