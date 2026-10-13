@@ -129,8 +129,9 @@ export async function serveAppChannel(options: {
 			input.write(head.subarray(end + 1));
 			socket.pipe(input);
 			const session = createOpenScreenMcpServer(deps, runTool);
-			// Only here until the in-app server offers the media tools: the edit is computed in
-			// this process from what `openscreen mcp` knows of its takes, then run like any edit.
+			// Not the media tools' own setPointerTrack: `openscreen mcp` records its takes itself,
+			// so the call carries their start times. The edit is computed in this process from
+			// them, then run like any edit.
 			session.registerTool(
 				POINTER_TRACK_TOOL,
 				{ inputSchema: FORWARDED_POINTER_TRACK_SCHEMA },

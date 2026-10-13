@@ -1,10 +1,16 @@
 // What an agent needs around the editing DSL to make a video on its own: record a
 // take, have it become a project, export the project, and look at the result.
-// Served by `openscreen mcp` next to the document tools, so every edit between the
-// recording and the export goes through the DSL like any other client's.
+// Served next to the document tools by both servers, the in-app one and `openscreen
+// mcp`, so every edit between the recording and the export goes through the DSL like
+// any other client's.
 //
-// No `electron` import: the runners, the decoder and the documents are handed in,
-// so the tools run under plain vitest with stand-ins.
+// One implementation, two recorders. `openscreen mcp` records in a hidden runner of its
+// own process and lays the take out as a project here (`runnerRecorder`). The app
+// records through its recording bar, as its own Record button does, and its editor opens
+// the take (`app-recorder.ts`): the app never runs a second recorder beside its own.
+//
+// No `electron` import: the runners, the recorder, the decoder and the documents are
+// handed in, so the tools run under plain vitest with stand-ins.
 
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,16 +26,56 @@ import {
 	appendAutoZoomSuggestions,
 	collectAutoZoomSuggestionsForDocument,
 } from "../../src/lib/ai-edition/timeline/apply-auto-zooms";
-import type { CliDoneResult, CliRequest } from "../../src/lib/cliContracts";
+import type { CliDoneResult, CliRecordRequest, CliRequest } from "../../src/lib/cliContracts";
 import { HIDDEN_WINDOWS_NOTE } from "../../src/lib/cliSourcePick";
 import type { CursorRecordingData, CursorRecordingSample } from "../../src/native/contracts";
 import { runDocumentTool } from "../ai-edition/deep-agent/service";
 import type { DocumentService } from "../ai-edition/document-service";
 import type { RunnerHandlers } from "../cli/runnerHost";
 import type { OpenedVideo } from "./hidden-video";
-import { type McpToolRunner, type RunnerEdit, textResult as text } from "./openscreen-mcp-server";
+import {
+	MCP_EDITS_SETTING,
+	type McpToolRunner,
+	type McpTransport,
+	type RunnerEdit,
+	textResult as text,
+} from "./openscreen-mcp-server";
+
+/** What startRecording asks a recorder for. */
+export type RecordRequest = Pick<
+	CliRecordRequest,
+	"displayIndex" | "windowTitle" | "mic" | "micDevice" | "systemAudio"
+>;
+
+/** A take turned into a project, ready for the document tools. */
+export interface RecordedTake {
+	projectId: string;
+	/** The take's video, as the project's asset names it: setPointerTrack's key. */
+	videoPath: string;
+	durationSec: number;
+	autoZooms: number;
+	warnings?: string[];
+}
+
+export interface RunningTake {
+	/** Epoch ms when capture started: the clock setPointerTrack's events are on. */
+	startedAt: number;
+	/** Stops the take and hands it back as a project; throws, with the whole story, when it cannot. */
+	stop(title: string | undefined): Promise<RecordedTake>;
+}
+
+export interface TakeRecorder {
+	/** Resolves once capture has started; throws why it did not. */
+	start(request: RecordRequest): Promise<RunningTake>;
+}
 
 export interface MediaToolDeps {
+	/** The server these tools are served by: their texts say what is true on it. */
+	transport: McpTransport;
+	/** Whether a client may record and export: the in-app server's "MCP edits". */
+	editsAllowed(): boolean;
+	/** Records the takes. Default: a hidden record runner, as `openscreen mcp` does. */
+	recorder?: TakeRecorder;
 	runners: {
 		start(
 			request: CliRequest,
@@ -133,14 +179,56 @@ export function pointerSamples(
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 
+/** Where a take is made and where it lands, on each server. */
+const TAKE_NOTES: Record<McpTransport, string> = {
+	http: "Recording is the app's own: startRecording hands over to OpenScreen's recording bar, as the editor's Record button does, so the editor closes for the take, and stopRecording opens the take in the editor, where the user sees each edit land and can undo it. Its zooms on the clicks follow Record mode's Auto-zoom after recording, as for any take.",
+	stdio:
+		"These projects are in the OpenScreen app's project list, so the user can open one in its editor.",
+};
+
 /** The media tools' capability block, placed before the projects-and-checkpoints rules
  *  (`mcpInstructions`) on the server that registers them. */
-export const MEDIA_PREAMBLE = [
-	"OpenScreen records the screen, turns each take into a project you edit with the document tools, and exports it as a video.",
-	"A demo goes: listSources, then startRecording, then drive the app, then stopRecording. It returns the projectId and a checkpointId. Edit with the document tools, always passing that projectId: every edit is saved to the project straight away, and restoreCheckpoint with the checkpointId takes the project back to the raw take in one step. Then exportVideo, and getFrames with the projectId to check the export before you hand it over: it takes the same ruler seconds as the document tools, so a trim or a speed region never shifts what you look at.",
-	"Drive the app with the real mouse when you can: OpenScreen records the pointer, draws a clean cursor and zooms on the clicks as the editor does: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. If you drive it from a script instead (Playwright, CDP), the screen pointer never moves: log each action as the script runs it, then hand the log to setPointerTrack after stopRecording.",
-	"These projects are in the OpenScreen app's project list, so the user can open one in its editor.",
-].join("\n");
+export function mediaPreamble(transport: McpTransport): string {
+	return [
+		"OpenScreen records the screen, turns each take into a project you edit with the document tools, and exports it as a video.",
+		"A demo goes: listSources, then startRecording, then drive the app, then stopRecording. It returns the projectId and a checkpointId. Edit with the document tools, always passing that projectId: every edit is saved to the project straight away, and restoreCheckpoint with the checkpointId takes the project back to the raw take in one step. Then exportVideo, and getFrames with the projectId to check the export before you hand it over: it takes the same ruler seconds as the document tools, so a trim or a speed region never shifts what you look at.",
+		"Drive the app with the real mouse when you can: OpenScreen records the pointer, draws a clean cursor and zooms on the clicks as the editor does: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. If you drive it from a script instead (Playwright, CDP), the screen pointer never moves: log each action as the script runs it, then hand the log to setPointerTrack after stopRecording.",
+		TAKE_NOTES[transport],
+	].join("\n");
+}
+
+/** What a client reads of the media tools: their preamble, and the tools themselves. */
+export interface MediaTools {
+	preamble: string;
+	/** Adds the tools to a server. Their state (the take, the exports) is shared by every
+	 *  server they are added to: the in-app server builds one per request. */
+	register(server: McpServer): void;
+}
+
+const START_RECORDING_NOTES: Record<McpTransport, string> = {
+	http: "It goes through OpenScreen's recording bar, as the editor's Record button does: the editor closes for the take, so this is refused while the editor has unsaved changes, and the bar's countdown and camera settings apply. Where OpenScreen leaves the choice to the system's picker (Linux, macOS 15.2 or later), that picker asks the user what to record, whatever window or display says. The bar records with these settings, and gets the user's own back once the take ends.",
+	stdio: "On Linux the desktop's own picker asks the user which window to record.",
+};
+
+const STOP_RECORDING_DESCRIPTIONS: Record<McpTransport, string> = {
+	http: "Stop the recording. OpenScreen's editor opens the take as a new project, as it does after any recording: one clip, plus the zooms planned from the recorded clicks when Record mode's Auto-zoom after recording is on, and autoZooms says how many. Returns the projectId to edit, now open in the editor, a checkpointId that restores the take as it opened, and the take's videoPath.",
+	stdio:
+		"Stop the recording and turn the take into a new project, laid out as the editor lays out a fresh recording: one clip, plus the zooms planned from the recorded clicks. Not one per click: clicks close in time and on screen share one zoom, a click in the first seconds or the one that stopped the take gets none, and autoZooms says how many there are. Returns the projectId to edit, a checkpointId that restores the raw take, and the take's videoPath.",
+};
+
+const EXPORT_PATH_DESCRIPTIONS: Record<McpTransport, string> = {
+	http: "Where to write the video: an absolute path ending in .mp4 or .gif. This server runs inside the app, so it has no working directory of yours to resolve a relative one against.",
+	stdio:
+		"Where to write the video: an absolute path, or one relative to this server's working directory, ending in .mp4 or .gif.",
+};
+
+const GATED_MESSAGE = `Nothing was recorded or exported: OpenScreen lets MCP clients record and export only while the user allows it. Ask the user to turn on ${MCP_EDITS_SETTING}.`;
+
+/** A path a client passed, resolved; `null` for a relative one the in-app server cannot place. */
+function clientPath(transport: McpTransport, value: string): string | null {
+	if (transport === "http" && !path.isAbsolute(value)) return null;
+	return path.resolve(value);
+}
 
 export const POINTER_TRACK_TOOL = "setPointerTrack";
 
@@ -204,132 +292,68 @@ export async function pointerTrackEdit(
 	};
 }
 
-export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void {
-	const now = deps.now ?? Date.now;
-	/** The take being recorded, then saved: held until it is a project. */
-	let take: {
-		run: ReturnType<MediaToolDeps["runners"]["start"]>;
-		startedAt: number;
-		stopping: boolean;
-	} | null = null;
-	// An export loads its project into the slot a finishing take reads its files from.
-	let exporting = false;
-	/** When each take of this session started, by its video: setPointerTrack's clock. */
-	const startedAtByVideo = new Map<string, number>();
-	/** Each project's last export of this session, and when it was made: what getFrames reads. */
-	const lastExports = new Map<string, { path: string; at: Date; rendered: AxcutDocument }>();
+type Run = ReturnType<MediaToolDeps["runners"]["start"]>;
 
-	/** A runner's result, its hidden window closed: this server outlives every runner. */
-	async function finish(run: ReturnType<MediaToolDeps["runners"]["start"]>) {
-		try {
-			return await run.done;
-		} finally {
-			run.close();
-		}
+/** A runner's result, its hidden window closed: the server outlives every runner. */
+async function finish(run: Run): Promise<CliDoneResult> {
+	try {
+		return await run.done;
+	} finally {
+		run.close();
 	}
+}
 
-	/** The take as a project, laid out as the editor lays out a fresh recording. */
-	async function createProjectFromVideo(videoPath: string, title: string) {
-		const video = await deps.openVideo(videoPath);
-		video.close();
-		const { durationSec, width, height } = video;
-		if (!Number.isFinite(durationSec) || durationSec <= 0) {
-			throw new Error(`Could not read the duration of ${videoPath}`);
-		}
-		const created = await deps.documents.createProject(title);
-		let document: AxcutDocument = await deps.documents.addAsset(created.project.id, {
-			path: videoPath,
-		});
-		const assetId = document.project.primaryAssetId;
-		document = {
-			...document,
-			assets: document.assets.map((asset) =>
-				asset.id === assetId
-					? {
-							...asset,
-							durationSec,
-							video: {
-								codec: asset.video?.codec ?? "unknown",
-								width,
-								height,
-								fps: asset.video?.fps ?? 0,
-							},
-						}
-					: asset,
-			),
-		};
-		const seeded = await runDocumentTool(
-			document,
-			"replaceTimeline",
-			{ intervals: [{ startSec: 0, endSec: durationSec }], reason: "The recorded take" },
-			true,
-			{},
-		);
-		if (!seeded.ok || !seeded.document) throw new Error(seeded.resultJson);
-		// The zooms a recording made in the app starts with, planned from its clicks (zoom-suggestions.ts).
-		const suggestions = await collectAutoZoomSuggestionsForDocument(
-			seeded.document,
-			deps.readCursor,
-		);
-		const saved = await deps.documents.saveProject(
-			appendAutoZoomSuggestions(seeded.document, suggestions),
-		);
-		return { document: saved, durationSec, autoZooms: suggestions.length };
+/** The take as a project, laid out as the editor lays out a fresh recording. */
+async function createProjectFromVideo(deps: MediaToolDeps, videoPath: string, title: string) {
+	const video = await deps.openVideo(videoPath);
+	video.close();
+	const { durationSec, width, height } = video;
+	if (!Number.isFinite(durationSec) || durationSec <= 0) {
+		throw new Error(`Could not read the duration of ${videoPath}`);
 	}
-
-	server.registerTool(
-		"listSources",
-		{
-			description: `List the displays and windows OpenScreen can record, and the microphones. Pass a display's index or part of a window's title to startRecording. ${HIDDEN_WINDOWS_NOTE}`,
-			inputSchema: z.object({}),
-			annotations: READ_ONLY,
-		},
-		async () => {
-			const result = await finish(deps.runners.start({ kind: "sources" }));
-			if (!result.success || !result.sources) {
-				return text(`Could not list the sources: ${result.error ?? "unknown error"}`, true);
-			}
-			const { displays, windows, microphones } = result.sources;
-			return text(
-				JSON.stringify({
-					displays: displays.map(({ index, name }) => ({ index, name })),
-					windows: windows.map((window) => window.name),
-					microphones: microphones.map((mic) => mic.label),
-				}),
-			);
-		},
+	const created = await deps.documents.createProject(title);
+	let document: AxcutDocument = await deps.documents.addAsset(created.project.id, {
+		path: videoPath,
+	});
+	const assetId = document.project.primaryAssetId;
+	document = {
+		...document,
+		assets: document.assets.map((asset) =>
+			asset.id === assetId
+				? {
+						...asset,
+						durationSec,
+						video: {
+							codec: asset.video?.codec ?? "unknown",
+							width,
+							height,
+							fps: asset.video?.fps ?? 0,
+						},
+					}
+				: asset,
+		),
+	};
+	const seeded = await runDocumentTool(
+		document,
+		"replaceTimeline",
+		{ intervals: [{ startSec: 0, endSec: durationSec }], reason: "The recorded take" },
+		true,
+		{},
 	);
+	if (!seeded.ok || !seeded.document) throw new Error(seeded.resultJson);
+	// The zooms a recording made in the app starts with, planned from its clicks (zoom-suggestions.ts).
+	const suggestions = await collectAutoZoomSuggestionsForDocument(seeded.document, deps.readCursor);
+	const saved = await deps.documents.saveProject(
+		appendAutoZoomSuggestions(seeded.document, suggestions),
+	);
+	return { document: saved, durationSec, autoZooms: suggestions.length };
+}
 
-	server.registerTool(
-		"startRecording",
-		{
-			description:
-				"Start recording one window (preferred: nothing else on the desktop is captured) or one display. Returns once capture has started; then drive the app and call stopRecording. The pointer is recorded as data, so the export draws a clean cursor and the zooms planned from the clicks. On Linux the desktop's own picker asks the user which window to record.",
-			inputSchema: z.object({
-				window: z
-					.string()
-					.optional()
-					.describe("Part of the title of the window to record, ignoring case. Wins over display."),
-				display: z
-					.number()
-					.int()
-					.min(0)
-					.optional()
-					.describe("Index of the display to record, from listSources. Default 0."),
-				systemAudio: z.boolean().optional().describe("Also record the computer's sound."),
-				microphone: z
-					.union([z.boolean(), z.string()])
-					.optional()
-					.describe("true for the default microphone, or part of a microphone's name."),
-			}),
-			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-		},
-		async (args) => {
-			if (take?.stopping) {
-				return text("The last take is still being saved. Try again in a moment.", true);
-			}
-			if (take) return text("A recording is already running. Call stopRecording first.", true);
-			if (exporting) return text("An export is running. Wait for it, then try again.", true);
+/** `openscreen mcp`'s recorder: a hidden record runner, and the take laid out as a project here. */
+function runnerRecorder(deps: MediaToolDeps): TakeRecorder {
+	const now = deps.now ?? Date.now;
+	return {
+		async start(request) {
 			let markStarted: () => void = () => undefined;
 			const started = new Promise<"started">((resolve) => {
 				markStarted = () => resolve("started");
@@ -337,11 +361,7 @@ export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void
 			const run = deps.runners.start(
 				{
 					kind: "record",
-					displayIndex: args.display ?? 0,
-					windowTitle: args.window ?? null,
-					mic: args.microphone !== undefined && args.microphone !== false,
-					micDevice: typeof args.microphone === "string" ? args.microphone : null,
-					systemAudio: args.systemAudio === true,
+					...request,
 					cursorMode: "editable-overlay",
 					durationMs: null,
 					projectOut: null,
@@ -355,68 +375,78 @@ export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void
 			const outcome = await Promise.race([started, run.done]);
 			if (outcome !== "started") {
 				run.close();
-				return text(`The recording did not start: ${outcome.error ?? "unknown error"}`, true);
+				throw new Error(outcome.error ?? "unknown error");
 			}
-			take = { run, startedAt: now(), stopping: false };
-			return text(
-				JSON.stringify({ recording: true, startedAt: take.startedAt }) +
-					"\nRecording. Drive the app now, pausing about a second after each result appears, then call stopRecording.",
-			);
+			const startedAt = now();
+			return {
+				startedAt,
+				async stop(title) {
+					try {
+						run.window.webContents.send("cli-stop-recording");
+					} catch {
+						// The runner already went away; its result says why.
+					}
+					const result = await finish(run);
+					if (!result.success || !result.screenVideoPath) {
+						throw new Error(`The recording failed: ${result.error ?? "unknown error"}`);
+					}
+					try {
+						const project = await createProjectFromVideo(
+							deps,
+							result.screenVideoPath,
+							title || `Recording ${new Date(startedAt).toLocaleString()}`,
+						);
+						return {
+							projectId: project.document.project.id,
+							videoPath: result.screenVideoPath,
+							durationSec: project.durationSec,
+							autoZooms: project.autoZooms,
+							...(result.warnings?.length ? { warnings: result.warnings } : {}),
+						};
+					} catch (error) {
+						// The take is on disk all the same: say where, so it can still be looked at.
+						throw new Error(
+							`The take was saved to ${result.screenVideoPath}, but it could not be turned into a project: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					}
+				},
+			};
 		},
-	);
+	};
+}
 
-	server.registerTool(
-		"stopRecording",
-		{
-			description:
-				"Stop the recording and turn the take into a new project, laid out as the editor lays out a fresh recording: one clip, plus the zooms planned from the recorded clicks. Not one per click: clicks close in time and on screen share one zoom, a click in the first seconds or the one that stopped the take gets none, and autoZooms says how many there are. Returns the projectId to edit, a checkpointId that restores the raw take, and the take's videoPath.",
-			inputSchema: z.object({
-				title: z.string().optional().describe("The project's title in OpenScreen."),
-			}),
-			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-		},
-		async (args) => {
-			const current = take;
-			if (!current) return text("No recording is running.", true);
-			if (current.stopping) return text("This recording is already being stopped.", true);
-			// Claimed before the first await, so a second call cannot save the same take twice.
-			current.stopping = true;
-			try {
-				return await stopTake(current, args.title);
-			} finally {
-				take = null;
-			}
-		},
-	);
+/** The take startRecording claimed: `running` once capture has started. */
+interface TakeSlot {
+	running: RunningTake | null;
+	stopping: boolean;
+}
 
-	/** Stops the take, then turns it into a project with its checkpoint. */
+export function createMediaTools(deps: MediaToolDeps): MediaTools {
+	const { transport } = deps;
+	const recorder = deps.recorder ?? runnerRecorder(deps);
+	/** The take being recorded, then saved: held until it is a project. */
+	let take: TakeSlot | null = null;
+	// A take and an export never run together: each is a heavy job of its own, and a
+	// take's capture must not lose frames to an export.
+	let exporting = false;
+	/** When each take of this session started, by its video: setPointerTrack's clock. */
+	const startedAtByVideo = new Map<string, number>();
+	/** Each project's last export of this session, and when it was made: what getFrames reads. */
+	const lastExports = new Map<string, { path: string; at: Date; rendered: AxcutDocument }>();
+
+	/** Stops the take, then hands back its project with a checkpoint of it. */
 	async function stopTake(
-		current: NonNullable<typeof take>,
+		running: RunningTake,
 		requestedTitle: string | undefined,
 	): Promise<CallToolResult> {
+		let recorded: RecordedTake;
 		try {
-			current.run.window.webContents.send("cli-stop-recording");
-		} catch {
-			// The runner already went away; its result says why.
-		}
-		const result = await finish(current.run);
-		if (!result.success || !result.screenVideoPath) {
-			return text(`The recording failed: ${result.error ?? "unknown error"}`, true);
-		}
-		const title =
-			requestedTitle?.trim() || `Recording ${new Date(current.startedAt).toLocaleString()}`;
-		let project: Awaited<ReturnType<typeof createProjectFromVideo>>;
-		try {
-			project = await createProjectFromVideo(result.screenVideoPath, title);
+			recorded = await running.stop(requestedTitle?.trim() || undefined);
 		} catch (error) {
-			// The take is on disk all the same: say where, so it can still be looked at.
-			return text(
-				`The take was saved to ${result.screenVideoPath}, but it could not be turned into a project: ${error instanceof Error ? error.message : String(error)}`,
-				true,
-			);
+			return text(error instanceof Error ? error.message : String(error), true);
 		}
-		startedAtByVideo.set(result.screenVideoPath, current.startedAt);
-		const projectId = project.document.project.id;
+		startedAtByVideo.set(recorded.videoPath, running.startedAt);
+		const { projectId } = recorded;
 		const checkpoint = await deps.runTool("createCheckpoint", { projectId });
 		const checkpointText = checkpoint.content[0]?.type === "text" ? checkpoint.content[0].text : "";
 		const checkpointId = checkpoint.isError
@@ -426,224 +456,346 @@ export function registerMediaTools(server: McpServer, deps: MediaToolDeps): void
 			JSON.stringify({
 				projectId,
 				checkpointId,
-				videoPath: result.screenVideoPath,
-				durationSec: project.durationSec,
-				recordingStartedAt: current.startedAt,
-				autoZooms: project.autoZooms,
-				...(result.warnings?.length ? { warnings: result.warnings } : {}),
+				videoPath: recorded.videoPath,
+				durationSec: recorded.durationSec,
+				recordingStartedAt: running.startedAt,
+				autoZooms: recorded.autoZooms,
+				...(recorded.warnings?.length ? { warnings: recorded.warnings } : {}),
 			}),
 		);
 	}
 
-	server.registerTool(
-		"setPointerTrack",
-		{
-			description: [
-				"For a take driven by a script (Playwright, CDP, a browser extension) rather than the real mouse: the screen pointer never moved, so the video has no cursor and no zoom. Give the pointer's path here and OpenScreen draws it, gliding between your actions, and zooms on its clicks as for a real mouse. It replaces the pointer recorded with the take, then plans zooms on the new clicks as stopRecording does, clear of the zooms already there; autoZoomsAdded says how many. Only for a take recorded by this server. Like any edit it needs a checkpoint of the project (stopRecording made one), and restoreCheckpoint undoes it, the pointer track included.",
-				"events, one per action: `at` is Date.now() when your script did it (log it as it runs; the take's recordingStartedAt is on the same clock). `x` and `y` are fractions (0 to 1) of the recorded window. For a point (clientX, clientY) of a page shown in that window, from inside the page: border = (outerWidth - innerWidth) / 2; x = (border + clientX) / outerWidth; y = (outerHeight - innerHeight - border + clientY) / outerHeight.",
-			].join("\n"),
-			inputSchema: z.object({ projectId: z.string(), events: POINTER_EVENTS }),
-			annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-		},
-		// Through the document tools' runner, like any edit: the same queue, the same refusals
-		// (a project open in the app's editor, one with no checkpoint) before anything is
-		// written, and the sidecar kept by the checkpoints so restoreCheckpoint puts it back.
-		// The args carry what the edit needs, so a running app can compute it (app-channel.ts).
-		(args) => {
-			const takes = Object.fromEntries(startedAtByVideo);
-			return deps.runTool(
-				POINTER_TRACK_TOOL,
-				{ projectId: args.projectId, events: args.events, takes },
-				{ edit: (document) => pointerTrackEdit(document, args.events, takes) },
-			);
-		},
-	);
-
-	server.registerTool(
-		"exportVideo",
-		{
-			description:
-				"Render a project to an MP4 (H.264, 60 fps) or a GIF with OpenScreen's compositor: the background, cursor, zooms, cuts, speed changes and annotations as edited. Returns the file's path; call getFrames with the projectId to check it at the ruler seconds you edited with. The video's shape follows the project's format (setAspectRatio).",
-			inputSchema: z.object({
-				projectId: z.string(),
-				path: z
-					.string()
-					.describe(
-						"Where to write the video: an absolute path, or one relative to this server's working directory, ending in .mp4 or .gif.",
-					),
-				quality: z
-					.enum(["medium", "good", "source"])
-					.optional()
-					.describe(
-						"The height: medium is 720 pixels, good is 1080 (default), source keeps the recording's. The width follows the format.",
-					),
-			}),
-			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-		},
-		async (args, extra) => {
-			if (take) return text("A recording is running. Stop it before exporting.", true);
-			if (exporting)
-				return text("An export is already running. Wait for it, then try again.", true);
-			const outPath = path.resolve(args.path);
-			const extension = path.extname(outPath).toLowerCase();
-			if (extension !== ".mp4" && extension !== ".gif") {
-				return text(`The path must end in .mp4 or .gif, got "${args.path}".`, true);
-			}
-			const progressToken = extra._meta?.progressToken;
-			exporting = true;
-			try {
-				// The project as the export reads it, and when: getFrames maps ruler seconds through
-				// THIS document's cuts and speeds, and calls anything saved after `at` a change the
-				// video does not have.
-				const at = new Date();
-				const rendered = await deps.documents.getProject(args.projectId).catch(() => null);
-				if (!rendered) return text(`No project has the id "${args.projectId}".`, true);
-				const run = deps.runners.start(
-					{
-						kind: "export",
-						projectPath: deps.documents.filePathFor(args.projectId),
-						outPath,
-						format: extension === ".gif" ? "gif" : "mp4",
-						quality: args.quality ?? "good",
-						gifFrameRate: null,
-						gifSizePreset: null,
-						autoZoom: false,
-						audioPath: null,
-						audioMode: "mix",
-						audioOffsetSec: 0,
-					},
-					{
-						onProgress: (progress) => {
-							if (progressToken === undefined) return;
-							void extra
-								.sendNotification({
-									method: "notifications/progress",
-									params: { progressToken, progress: progress.percentage, total: 100 },
-								})
-								.catch(() => undefined);
-						},
-					},
-				);
-				const result = await finish(run);
-				if (!result.success) {
-					return text(`The export failed: ${result.error ?? "unknown error"}`, true);
+	function register(server: McpServer): void {
+		server.registerTool(
+			"listSources",
+			{
+				description: `List the displays and windows OpenScreen can record, and the microphones. Pass a display's index or part of a window's title to startRecording. ${HIDDEN_WINDOWS_NOTE}`,
+				inputSchema: z.object({}),
+				annotations: READ_ONLY,
+			},
+			async () => {
+				const result = await finish(deps.runners.start({ kind: "sources" }));
+				if (!result.success || !result.sources) {
+					return text(`Could not list the sources: ${result.error ?? "unknown error"}`, true);
 				}
-				const written = result.outputPath ?? outPath;
-				// The file now holds this video: no other project's record may still point at it.
-				for (const [id, record] of lastExports) {
-					if (id !== args.projectId && record.path === written) lastExports.delete(id);
-				}
-				// The runner read the project file itself. Unless nothing was saved since `rendered`
-				// was read, it may have rendered another version, so this video gets no record.
-				const after = await deps.documents.getProject(args.projectId).catch(() => null);
-				if (after?.project.updatedAt !== rendered.project.updatedAt) {
-					lastExports.delete(args.projectId);
-					return text(
-						`${JSON.stringify({ path: result.outputPath, format: result.format, width: result.width, height: result.height })}\nThe project changed while it exported, so this video may not match it: export again before checking it with getFrames.`,
-					);
-				}
-				lastExports.set(args.projectId, { path: written, at, rendered });
+				const { displays, windows, microphones } = result.sources;
 				return text(
 					JSON.stringify({
-						path: result.outputPath,
-						format: result.format,
-						width: result.width,
-						height: result.height,
+						displays: displays.map(({ index, name }) => ({ index, name })),
+						windows: windows.map((window) => window.name),
+						microphones: microphones.map((mic) => mic.label),
 					}),
 				);
-			} finally {
-				exporting = false;
-			}
-		},
-	);
+			},
+		);
 
-	server.registerTool(
-		"getFrames",
-		{
-			description: [
-				`Look at a video as still images, at most ${MAX_FRAMES} per call. Ask for the moments you need to check, such as each zoom and each callout.`,
-				"To check an edit, pass projectId: you get the project's last export, and atSec are the ruler seconds the document tools use, mapped through the trims and speed regions to the moment the export plays them. With path instead, you get any video file (a take's videoPath, say) and atSec are that file's own seconds.",
-			].join("\n"),
-			inputSchema: z.object({
-				projectId: z.string().optional().describe("Look at this project's last export."),
-				path: z.string().optional().describe("Or look at this video file."),
-				atSec: z
-					.array(z.number().nonnegative())
-					.max(MAX_FRAMES)
-					.optional()
-					.describe("Times in seconds: ruler seconds with projectId, the file's own with path."),
-				count: z
-					.number()
-					.int()
-					.min(1)
-					.max(MAX_FRAMES)
-					.optional()
-					.describe("Frames spread evenly, when atSec is not given. Default 6."),
-			}),
-			annotations: READ_ONLY,
-		},
-		async (args) => {
-			if ((args.projectId === undefined) === (args.path === undefined)) {
-				return text("Pass either projectId or path.", true);
-			}
-			let videoPath: string;
-			/** Ruler seconds → seconds of the exported file, when looking at a project. */
-			let toVideoSec = (sec: number) => sec;
-			let rulerEndSec: number | null = null;
-			let note = "";
-			if (args.projectId !== undefined) {
-				const exported = lastExports.get(args.projectId);
-				if (!exported) {
-					return text("This project has no export yet: call exportVideo first.", true);
+		server.registerTool(
+			"startRecording",
+			{
+				description: `Start recording one window (preferred: nothing else on the desktop is captured) or one display. Returns once capture has started; then drive the app and call stopRecording. The pointer is recorded as data, so the export draws a clean cursor and the zooms planned from the clicks. ${START_RECORDING_NOTES[transport]}`,
+				inputSchema: z.object({
+					window: z
+						.string()
+						.optional()
+						.describe(
+							"Part of the title of the window to record, ignoring case. Wins over display.",
+						),
+					display: z
+						.number()
+						.int()
+						.min(0)
+						.optional()
+						.describe("Index of the display to record, from listSources. Default 0."),
+					systemAudio: z.boolean().optional().describe("Also record the computer's sound."),
+					microphone: z
+						.union([z.boolean(), z.string()])
+						.optional()
+						.describe("true for the default microphone, or part of a microphone's name."),
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			async (args) => {
+				if (!deps.editsAllowed()) return text(GATED_MESSAGE, true);
+				if (take?.stopping) {
+					return text("The last take is still being saved. Try again in a moment.", true);
 				}
-				// Mapped through the document the export rendered, so a cut made since cannot shift
-				// which frame of this video is shown; the current one only says whether it is stale.
-				const { rendered } = exported;
-				videoPath = exported.path;
-				toVideoSec = (sec) => programmeSecOf(rendered, sec);
-				rulerEndSec = Math.max(0, ...rendered.timeline.clips.map((clip) => clip.timelineEndSec));
-				const current = await deps.documents.getProject(args.projectId);
-				if (Date.parse(current.project.updatedAt) > exported.at.getTime()) {
-					note = " The project changed after this export: export it again to see the changes.";
-				}
-			} else {
-				videoPath = path.resolve(args.path ?? "");
-			}
-
-			const video = await deps.openVideo(videoPath);
-			try {
-				const asked =
-					args.atSec ??
-					(rulerEndSec === null ? null : frameTimes(rulerEndSec, null, args.count ?? 6));
-				const times = asked
-					? asked.map((sec) => ({
-							asked: sec,
-							at: frameTimes(video.durationSec, [toVideoSec(sec)], 1)[0],
-						}))
-					: frameTimes(video.durationSec, null, args.count ?? 6).map((at) => ({ asked: at, at }));
-				const content: CallToolResult["content"] = [
-					{
-						type: "text",
-						text: `${times.length} frame(s) of a ${video.width}x${video.height} video lasting ${video.durationSec.toFixed(2)}s.${note}`,
-					},
-				];
-				for (const { asked: askedSec, at } of times) {
-					const frame = await video.capture(at, FRAME_WIDTH);
-					content.push({
-						type: "text",
-						text:
-							rulerEndSec === null
-								? `${at.toFixed(2)}s`
-								: `${askedSec.toFixed(2)}s on the ruler, ${at.toFixed(2)}s into the video`,
+				if (take) return text("A recording is already running. Call stopRecording first.", true);
+				if (exporting) return text("An export is running. Wait for it, then try again.", true);
+				// Claimed before the first await, so a second call cannot start a second take.
+				const claimed: TakeSlot = { running: null, stopping: false };
+				take = claimed;
+				try {
+					claimed.running = await recorder.start({
+						displayIndex: args.display ?? 0,
+						windowTitle: args.window ?? null,
+						mic: args.microphone !== undefined && args.microphone !== false,
+						micDevice: typeof args.microphone === "string" ? args.microphone : null,
+						systemAudio: args.systemAudio === true,
 					});
-					content.push({ type: "image", data: frame.data, mimeType: frame.mimeType });
+				} catch (error) {
+					take = null;
+					return text(
+						`The recording did not start: ${error instanceof Error ? error.message : String(error)}`,
+						true,
+					);
 				}
-				return { content };
-			} finally {
-				video.close();
-			}
-		},
-	);
+				return text(
+					JSON.stringify({ recording: true, startedAt: claimed.running.startedAt }) +
+						"\nRecording. Drive the app now, pausing about a second after each result appears, then call stopRecording.",
+				);
+			},
+		);
+
+		server.registerTool(
+			"stopRecording",
+			{
+				description: STOP_RECORDING_DESCRIPTIONS[transport],
+				inputSchema: z.object({
+					title: z.string().optional().describe("The project's title in OpenScreen."),
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			async (args) => {
+				const current = take;
+				if (!current?.running) {
+					return text(
+						current ? "The recording is still starting." : "No recording is running.",
+						true,
+					);
+				}
+				if (current.stopping) return text("This recording is already being stopped.", true);
+				// Claimed before the first await, so a second call cannot save the same take twice.
+				current.stopping = true;
+				try {
+					return await stopTake(current.running, args.title);
+				} finally {
+					take = null;
+				}
+			},
+		);
+
+		server.registerTool(
+			"setPointerTrack",
+			{
+				description: [
+					"For a take driven by a script (Playwright, CDP, a browser extension) rather than the real mouse: the screen pointer never moved, so the video has no cursor and no zoom. Give the pointer's path here and OpenScreen draws it, gliding between your actions, and zooms on its clicks as for a real mouse. It replaces the pointer recorded with the take, then plans zooms on the new clicks as stopRecording does, clear of the zooms already there; autoZoomsAdded says how many. Only for a take recorded by this server. It is an edit like any other: on a project that is not open in the editor it needs a checkpoint (stopRecording made one), and restoreCheckpoint undoes it, the pointer track included.",
+					"events, one per action: `at` is Date.now() when your script did it (log it as it runs; the take's recordingStartedAt is on the same clock). `x` and `y` are fractions (0 to 1) of the recorded window. For a point (clientX, clientY) of a page shown in that window, from inside the page: border = (outerWidth - innerWidth) / 2; x = (border + clientX) / outerWidth; y = (outerHeight - innerHeight - border + clientY) / outerHeight.",
+				].join("\n"),
+				inputSchema: z.object({ projectId: z.string(), events: POINTER_EVENTS }),
+				annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+			},
+			// Through the document tools' runner, like any edit: the same queue, the same refusals
+			// (edits turned off, a project open in the app's editor, one with no checkpoint) before
+			// anything is written, and the sidecar kept by the checkpoints so restoreCheckpoint puts
+			// it back. The args carry what the edit needs, so a running app can compute it
+			// (app-channel.ts).
+			(args) => {
+				const takes = Object.fromEntries(startedAtByVideo);
+				return deps.runTool(
+					POINTER_TRACK_TOOL,
+					{ projectId: args.projectId, events: args.events, takes },
+					{ edit: (document) => pointerTrackEdit(document, args.events, takes) },
+				);
+			},
+		);
+
+		server.registerTool(
+			"exportVideo",
+			{
+				description:
+					"Render a project to an MP4 (H.264, 60 fps) or a GIF with OpenScreen's compositor: the background, cursor, zooms, cuts, speed changes and annotations as edited. Returns the file's path; call getFrames with the projectId to check it at the ruler seconds you edited with. The video's shape follows the project's format (setAspectRatio).",
+				inputSchema: z.object({
+					projectId: z.string(),
+					path: z.string().describe(EXPORT_PATH_DESCRIPTIONS[transport]),
+					quality: z
+						.enum(["medium", "good", "source"])
+						.optional()
+						.describe(
+							"The height: medium is 720 pixels, good is 1080 (default), source keeps the recording's. The width follows the format.",
+						),
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			async (args, extra) => {
+				if (!deps.editsAllowed()) return text(GATED_MESSAGE, true);
+				if (take) return text("A recording is running. Stop it before exporting.", true);
+				if (exporting)
+					return text("An export is already running. Wait for it, then try again.", true);
+				const outPath = clientPath(transport, args.path);
+				if (!outPath) return text(`The path must be absolute, got "${args.path}".`, true);
+				const extension = path.extname(outPath).toLowerCase();
+				if (extension !== ".mp4" && extension !== ".gif") {
+					return text(`The path must end in .mp4 or .gif, got "${args.path}".`, true);
+				}
+				const progressToken = extra._meta?.progressToken;
+				exporting = true;
+				try {
+					// The project as the export reads it, and when: getFrames maps ruler seconds through
+					// THIS document's cuts and speeds, and calls anything saved after `at` a change the
+					// video does not have.
+					const at = new Date();
+					const rendered = await deps.documents.getProject(args.projectId).catch(() => null);
+					if (!rendered) return text(`No project has the id "${args.projectId}".`, true);
+					const run = deps.runners.start(
+						{
+							kind: "export",
+							projectPath: deps.documents.filePathFor(args.projectId),
+							// Read by id, as the editor opens a project: nothing of the app's own state moves.
+							projectId: args.projectId,
+							outPath,
+							format: extension === ".gif" ? "gif" : "mp4",
+							quality: args.quality ?? "good",
+							gifFrameRate: null,
+							gifSizePreset: null,
+							autoZoom: false,
+							audioPath: null,
+							audioMode: "mix",
+							audioOffsetSec: 0,
+						},
+						{
+							onProgress: (progress) => {
+								if (progressToken === undefined) return;
+								void extra
+									.sendNotification({
+										method: "notifications/progress",
+										params: { progressToken, progress: progress.percentage, total: 100 },
+									})
+									.catch(() => undefined);
+							},
+						},
+					);
+					const result = await finish(run);
+					if (!result.success) {
+						return text(`The export failed: ${result.error ?? "unknown error"}`, true);
+					}
+					const written = result.outputPath ?? outPath;
+					// The file now holds this video: no other project's record may still point at it.
+					for (const [id, record] of lastExports) {
+						if (id !== args.projectId && record.path === written) lastExports.delete(id);
+					}
+					// The runner read the project file itself. Unless nothing was saved since `rendered`
+					// was read, it may have rendered another version, so this video gets no record.
+					const after = await deps.documents.getProject(args.projectId).catch(() => null);
+					if (after?.project.updatedAt !== rendered.project.updatedAt) {
+						lastExports.delete(args.projectId);
+						return text(
+							`${JSON.stringify({ path: result.outputPath, format: result.format, width: result.width, height: result.height })}\nThe project changed while it exported, so this video may not match it: export again before checking it with getFrames.`,
+						);
+					}
+					lastExports.set(args.projectId, { path: written, at, rendered });
+					return text(
+						JSON.stringify({
+							path: result.outputPath,
+							format: result.format,
+							width: result.width,
+							height: result.height,
+						}),
+					);
+				} finally {
+					exporting = false;
+				}
+			},
+		);
+
+		server.registerTool(
+			"getFrames",
+			{
+				description: [
+					`Look at a video as still images, at most ${MAX_FRAMES} per call. Ask for the moments you need to check, such as each zoom and each callout.`,
+					"To check an edit, pass projectId: you get the project's last export, and atSec are the ruler seconds the document tools use, mapped through the trims and speed regions to the moment the export plays them. With path instead, you get any video file (a take's videoPath, say) and atSec are that file's own seconds.",
+				].join("\n"),
+				inputSchema: z.object({
+					projectId: z.string().optional().describe("Look at this project's last export."),
+					path: z
+						.string()
+						.optional()
+						.describe(
+							transport === "http"
+								? "Or look at this video file, by its absolute path."
+								: "Or look at this video file.",
+						),
+					atSec: z
+						.array(z.number().nonnegative())
+						.max(MAX_FRAMES)
+						.optional()
+						.describe("Times in seconds: ruler seconds with projectId, the file's own with path."),
+					count: z
+						.number()
+						.int()
+						.min(1)
+						.max(MAX_FRAMES)
+						.optional()
+						.describe("Frames spread evenly, when atSec is not given. Default 6."),
+				}),
+				annotations: READ_ONLY,
+			},
+			async (args) => {
+				if ((args.projectId === undefined) === (args.path === undefined)) {
+					return text("Pass either projectId or path.", true);
+				}
+				let videoPath: string;
+				/** Ruler seconds → seconds of the exported file, when looking at a project. */
+				let toVideoSec = (sec: number) => sec;
+				let rulerEndSec: number | null = null;
+				let note = "";
+				if (args.projectId !== undefined) {
+					const exported = lastExports.get(args.projectId);
+					if (!exported) {
+						return text("This project has no export yet: call exportVideo first.", true);
+					}
+					// Mapped through the document the export rendered, so a cut made since cannot shift
+					// which frame of this video is shown; the current one only says whether it is stale.
+					const { rendered } = exported;
+					videoPath = exported.path;
+					toVideoSec = (sec) => programmeSecOf(rendered, sec);
+					rulerEndSec = Math.max(0, ...rendered.timeline.clips.map((clip) => clip.timelineEndSec));
+					const current = await deps.documents.getProject(args.projectId);
+					if (Date.parse(current.project.updatedAt) > exported.at.getTime()) {
+						note = " The project changed after this export: export it again to see the changes.";
+					}
+				} else {
+					const resolved = clientPath(transport, args.path ?? "");
+					if (!resolved) return text(`The path must be absolute, got "${args.path}".`, true);
+					videoPath = resolved;
+				}
+
+				const video = await deps.openVideo(videoPath);
+				try {
+					const asked =
+						args.atSec ??
+						(rulerEndSec === null ? null : frameTimes(rulerEndSec, null, args.count ?? 6));
+					const times = asked
+						? asked.map((sec) => ({
+								asked: sec,
+								at: frameTimes(video.durationSec, [toVideoSec(sec)], 1)[0],
+							}))
+						: frameTimes(video.durationSec, null, args.count ?? 6).map((at) => ({ asked: at, at }));
+					const content: CallToolResult["content"] = [
+						{
+							type: "text",
+							text: `${times.length} frame(s) of a ${video.width}x${video.height} video lasting ${video.durationSec.toFixed(2)}s.${note}`,
+						},
+					];
+					for (const { asked: askedSec, at } of times) {
+						const frame = await video.capture(at, FRAME_WIDTH);
+						content.push({
+							type: "text",
+							text:
+								rulerEndSec === null
+									? `${at.toFixed(2)}s`
+									: `${askedSec.toFixed(2)}s on the ruler, ${at.toFixed(2)}s into the video`,
+						});
+						content.push({ type: "image", data: frame.data, mimeType: frame.mimeType });
+					}
+					return { content };
+				} finally {
+					video.close();
+				}
+			},
+		);
+	}
+
+	return { preamble: mediaPreamble(transport), register };
 }
 
 /**

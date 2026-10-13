@@ -6,6 +6,7 @@
 
 import type { AiEditionMcpStatus } from "../../src/native/contracts";
 import type { McpSettingsStore } from "./mcp-settings-store";
+import type { MediaTools } from "./media-tools";
 import {
 	MCP_ENDPOINT_PATH,
 	type McpToolDeps,
@@ -25,6 +26,8 @@ export class McpController {
 		private readonly deps: McpToolDeps,
 		/** The app's shared runner, so checkpoints outlive a restart and `openscreen mcp` sees them. */
 		private readonly runTool?: McpToolRunner,
+		/** Built once, so a take or an export outlives a restart of the server. */
+		private readonly media?: MediaTools,
 	) {}
 
 	private serially<T>(task: () => Promise<T>): Promise<T> {
@@ -52,6 +55,7 @@ export class McpController {
 				token,
 				deps: this.deps,
 				runTool: this.runTool,
+				media: this.media,
 			});
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException | null)?.code;

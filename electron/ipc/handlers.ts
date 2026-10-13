@@ -24,6 +24,7 @@ import {
 	isAxcutDocumentFile,
 	parseDocumentFile,
 } from "../../src/lib/ai-edition/schema";
+import { pickRecordingSource } from "../../src/lib/cliSourcePick";
 import {
 	type NativeLinuxRecordingRequest,
 	portalCursorMode,
@@ -68,6 +69,7 @@ import { DocumentService } from "../ai-edition/document-service";
 import { LlmConfigStore } from "../ai-edition/llm-config-store";
 import { StylePresetService } from "../ai-edition/style-preset-service";
 import { AppSettingsStore } from "../app-settings";
+import { createRunnerHost } from "../cli/runnerHost";
 import { isDiagnosticModeEnabled, mainLogBuffer } from "../diagnostics/main-log-buffer";
 import { mainT } from "../i18n";
 import { getInstallChannel } from "../install-channel";
@@ -77,9 +79,12 @@ import {
 	RECORDINGS_DIR,
 	setRecordingsDir,
 } from "../main";
+import { createAppRecorder } from "../mcp/app-recorder";
 import { EditorDocumentHost } from "../mcp/editor-document-host";
+import { openVideoInHiddenWindow } from "../mcp/hidden-video";
 import { McpController } from "../mcp/mcp-controller";
 import { McpSettingsStore } from "../mcp/mcp-settings-store";
+import { createMediaTools, type MediaToolDeps, type RecordRequest } from "../mcp/media-tools";
 import { createToolRunner, type McpToolDeps } from "../mcp/openscreen-mcp-server";
 import { type AudioPeaksResult, getAudioPeaks } from "../media/audioPeaks";
 import {
@@ -151,6 +156,7 @@ import {
 	shouldEnumerateRecordingSources,
 	shouldPersistSelectedSource,
 } from "../recording-source-settings";
+import { createRunnerWindow } from "../windows";
 import { getSourcesByType, shouldEnumerateSourceTypesSeparately } from "./desktopSourceTypes";
 import { registerNativeBridgeHandlers } from "./nativeBridge";
 import { createNativeMacMidCaptureErrorWatch } from "./nativeMacMidCaptureErrorWatch";
@@ -1975,7 +1981,11 @@ export function registerIpcHandlers(
 	getCountdownOverlayWindow?: () => BrowserWindow | null,
 	onRecordingStateChange?: (recording: boolean, sourceName: string) => void,
 	_switchToHud?: () => void,
+	/** The editor holds changes it has not saved (main.ts): an MCP take would close it. */
+	editorHasUnsavedChanges?: () => boolean,
 ) {
+	/** The HUD is recording a take, the user's or an MCP client's (`set-recording-state`). */
+	let appRecording = false;
 	const appSettings = new AppSettingsStore(app.getPath("userData"));
 	const broadcastSelectedSource = (source: SelectedSource | null) => {
 		for (const window of BrowserWindow.getAllWindows()) {
@@ -2000,7 +2010,9 @@ export function registerIpcHandlers(
 		clipboard.writeText(text);
 	});
 
-	ipcMain.handle("get-sources", async (_, opts) => {
+	/** The sources the pickers list, in their order: the in-app MCP server's startRecording
+	 *  picks from the same list its listSources shows. */
+	async function getSourcesForPickers(opts: Electron.SourcesOptions) {
 		// desktopCapturer.getSources can never settle where the GL stack cannot be
 		// reached -- a container, a CI runner, a host whose ANGLE fails to
 		// initialise. Bounded here rather than per-caller because every caller has
@@ -2084,7 +2096,8 @@ export function registerIpcHandlers(
 			thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
 			appIcon: source.appIcon ? source.appIcon.toDataURL() : null,
 		}));
-	});
+	}
+	ipcMain.handle("get-sources", (_, opts) => getSourcesForPickers(opts));
 
 	const selectSourceContext: SelectSourceContext<DesktopCapturerSource> = {
 		generation: selectSourceGeneration,
@@ -2099,37 +2112,37 @@ export function registerIpcHandlers(
 		},
 	};
 
-	ipcMain.handle(
-		"select-source",
-		async (_, source: SelectedSource, options?: { persist?: boolean }) => {
-			const next = await selectSourceWithOwnership(
-				selectSourceContext,
-				{ id: source.id, name: source.name, display_id: source.display_id },
-				options,
-				{
-					getSources: () =>
-						desktopCapturer.getSources({
-							types: ["screen", "window"],
-							thumbnailSize: { width: 0, height: 0 },
-							fetchWindowIcons: true,
-						}),
-					persist: (live) => {
-						appSettings.setLastSource(
-							describeRecordingSource(process.platform, live as Required<SelectedSource>),
-						);
-					},
-					broadcast: broadcastSelectedSource,
-					shouldPersist: shouldPersistSelectedSource,
+	async function selectSource(source: SelectedSource, options?: { persist?: boolean }) {
+		const next = await selectSourceWithOwnership(
+			selectSourceContext,
+			{ id: source.id, name: source.name, display_id: source.display_id },
+			options,
+			{
+				getSources: () =>
+					desktopCapturer.getSources({
+						types: ["screen", "window"],
+						thumbnailSize: { width: 0, height: 0 },
+						fetchWindowIcons: true,
+					}),
+				persist: (live) => {
+					appSettings.setLastSource(
+						describeRecordingSource(process.platform, live as Required<SelectedSource>),
+					);
 				},
-			);
-			if (next) {
-				const sourceSelectorWin = getSourceSelectorWindow();
-				if (sourceSelectorWin) {
-					sourceSelectorWin.close();
-				}
+				broadcast: broadcastSelectedSource,
+				shouldPersist: shouldPersistSelectedSource,
+			},
+		);
+		if (next) {
+			const sourceSelectorWin = getSourceSelectorWindow();
+			if (sourceSelectorWin) {
+				sourceSelectorWin.close();
 			}
-			return next;
-		},
+		}
+		return next;
+	}
+	ipcMain.handle("select-source", (_, source: SelectedSource, options?: { persist?: boolean }) =>
+		selectSource(source, options),
 	);
 
 	/**
@@ -2282,7 +2295,7 @@ export function registerIpcHandlers(
 		return selectedSource;
 	});
 
-	registerRecordingPrefsHandlers(
+	const recordingPrefs = registerRecordingPrefsHandlers(
 		defaultRecordingPrefs,
 		getMainWindow,
 		() => BrowserWindow.getAllWindows(),
@@ -2484,7 +2497,8 @@ export function registerIpcHandlers(
 		return { success: true };
 	});
 
-	ipcMain.handle("start-new-recording", () => {
+	/** The editor's Record button: over to the HUD, which starts the take by itself. */
+	function startNewRecording() {
 		_switchToHud?.();
 		const hudWindow = getMainWindow();
 		if (hudWindow && !hudWindow.isDestroyed()) {
@@ -2495,6 +2509,9 @@ export function registerIpcHandlers(
 				sendAutoStart();
 			}
 		}
+	}
+	ipcMain.handle("start-new-recording", () => {
+		startNewRecording();
 		return { success: true };
 	});
 
@@ -4112,6 +4129,8 @@ export function registerIpcHandlers(
 			}
 
 			const source = selectedSource || { name: "Screen" };
+			appRecording = recording;
+			mcpAppRecorder.recordingChanged(recording);
 			if (onRecordingStateChange) {
 				onRecordingStateChange(recording, source.name);
 			}
@@ -4856,6 +4875,7 @@ export function registerIpcHandlers(
 		setCurrentRecordingSessionState(normalizedSession);
 		currentVideoPath = normalizedSession?.screenVideoPath ?? null;
 		currentProjectPath = null;
+		if (normalizedSession) mcpAppRecorder.takeSaved(normalizedSession.screenVideoPath);
 		return { success: true, session: currentRecordingSession };
 	});
 
@@ -5043,7 +5063,109 @@ export function registerIpcHandlers(
 	// One runner, so one queue and one checkpoint store, for the in-app server and every
 	// `openscreen mcp` the app answers through its channel (app-channel.ts, started by main.ts).
 	const mcpRunTool = createToolRunner(mcpToolDeps);
-	const mcpController = new McpController(mcpSettings, mcpToolDeps, mcpRunTool);
+
+	// The in-app server's media tools. listSources and exportVideo run the CLI's hidden
+	// runners in this process, their IPC registered on first use: never in the headless
+	// CLI, which registers its own and never starts this server.
+	let mcpRunnerHost: ReturnType<typeof createRunnerHost<BrowserWindow>> | null = null;
+	const mcpRunners: MediaToolDeps["runners"] = {
+		start(request, handlers) {
+			mcpRunnerHost ??= createRunnerHost(ipcMain, createRunnerWindow);
+			return mcpRunnerHost.start(request, handlers);
+		},
+	};
+
+	/**
+	 * Points the HUD at a client's take, as Record mode does before it hands over, and
+	 * returns what puts back what the user had. Restored once the take is captured, so the
+	 * user's own source and settings are what their next take starts from.
+	 */
+	async function pointHudAtTake(request: RecordRequest): Promise<() => void> {
+		const before = { source: selectedSource, live: selectedDesktopSource };
+		if (process.platform === "linux" && findPipeWireCursorHelperPath()) {
+			// The portal asks the user once the take starts: nothing here to select.
+		} else if (macPickerOwnsSources()) {
+			// Apple's picker asks for this take: an earlier pick must not stand in for it.
+			selectedSource = null;
+			selectedDesktopSource = null;
+			broadcastSelectedSource(null);
+		} else {
+			// The list listSources shows, in its order: its display indexes are this list's.
+			const sources = await getSourcesForPickers({
+				types: ["screen", "window"],
+				thumbnailSize: { width: 0, height: 0 },
+			});
+			const picked = pickRecordingSource(sources, request);
+			if (!(await selectSource(picked, { persist: false }))) {
+				throw new Error(`"${picked.name}" can no longer be recorded. Call listSources again.`);
+			}
+		}
+		let microphone: Pick<RecordingPrefs, "micDeviceId" | "micDeviceName"> = {
+			micDeviceId: null,
+			micDeviceName: null,
+		};
+		if (request.mic && request.micDevice) {
+			// Its id as well as its name, both of which the HUD records with: a renderer's to read.
+			const run = mcpRunners.start({ kind: "sources" });
+			const listed = await run.done.finally(() => run.close());
+			const needle = request.micDevice.toLowerCase();
+			const match = listed.sources?.microphones.find((mic) =>
+				mic.label.toLowerCase().includes(needle),
+			);
+			if (!match) {
+				throw new Error(
+					`No microphone's name contains "${request.micDevice}". Call listSources for their names.`,
+				);
+			}
+			microphone = { micDeviceId: match.deviceId ?? null, micDeviceName: match.label };
+		}
+		const prefs = recordingPrefs.get();
+		recordingPrefs.set({
+			micEnabled: request.mic,
+			...microphone,
+			systemAudioEnabled: request.systemAudio,
+			cursorCaptureMode: "editable-overlay",
+		});
+		return () => {
+			recordingPrefs.set({
+				micEnabled: prefs.micEnabled,
+				micDeviceId: prefs.micDeviceId,
+				micDeviceName: prefs.micDeviceName,
+				systemAudioEnabled: prefs.systemAudioEnabled,
+				cursorCaptureMode: prefs.cursorCaptureMode,
+			});
+			selectedSource = before.source;
+			selectedDesktopSource = before.live;
+			broadcastSelectedSource(before.source);
+		};
+	}
+
+	const mcpAppRecorder = createAppRecorder({
+		isRecording: () => appRecording,
+		editorHasUnsavedChanges: () => editorHasUnsavedChanges?.() ?? false,
+		prepare: pointHudAtTake,
+		startTake: startNewRecording,
+		stopTake: () => {
+			const hudWindow = getMainWindow();
+			if (hudWindow && !hudWindow.isDestroyed()) {
+				hudWindow.webContents.send("stop-recording-from-tray");
+			}
+		},
+		host: mcpToolDeps.host,
+	});
+	const mcpMedia = createMediaTools({
+		transport: "http",
+		// Recording and exporting change things too: the same switch as edits.
+		editsAllowed: mcpToolDeps.editsAllowed,
+		recorder: mcpAppRecorder,
+		runners: mcpRunners,
+		documents: aiEditionDocuments,
+		openVideo: openVideoInHiddenWindow,
+		readCursor: async (videoPath) => (await readCursorTelemetryFile(videoPath)).samples,
+		// Never overriding the switch: setPointerTrack is refused while MCP edits is off.
+		runTool: mcpRunTool,
+	});
+	const mcpController = new McpController(mcpSettings, mcpToolDeps, mcpRunTool, mcpMedia);
 
 	// The editor says which project it holds, so `openscreen mcp`, a process of its own
 	// that cannot ask it, refuses to edit that project behind its back (#1138).

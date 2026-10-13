@@ -1412,6 +1412,7 @@ appReady?.then(async () => {
 			}
 		},
 		switchToHudWrapper,
+		() => editorHasUnsavedChanges,
 	);
 
 	// Native STT (whisper.cpp + forced alignment) — single instance per app.
