@@ -273,7 +273,7 @@
 			"subtitle": "El chat edita tu vídeo hablando con un modelo de lenguaje. Elige el proveedor que prefieras y conecta una clave de API para empezar.",
 			"feature1": "Corta silencios, aprieta pausas, elimina muletillas",
 			"feature2": "Añade subtítulos, hace zoom a la cámara, genera un título",
-			"feature3": "Reescribe una sección, reformula o divide un clip bajo pedido",
+			"feature3": "Reescribe una sección, reformula o reordena los clips bajo pedido",
 			"cta": "Configurar un proveedor",
 			"disclaimer": "La transcripción de tu vídeo se enviará al proveedor que elijas. No se comparte nada hasta que conectes uno."
 		},
