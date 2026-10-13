@@ -14,11 +14,12 @@ import type { CliDoneResult, CliRequest } from "../../src/lib/cliContracts";
 import { DocumentService } from "../ai-edition/document-service";
 import type { RunnerHandlers } from "../cli/runnerHost";
 import {
+	createMediaTools,
 	frameTimes,
-	MEDIA_PREAMBLE,
 	type MediaToolDeps,
+	mediaPreamble,
 	pointerSamples,
-	registerMediaTools,
+	type TakeRecorder,
 } from "./media-tools";
 import {
 	createOpenScreenMcpServer,
@@ -95,6 +96,8 @@ let runners: FakeRunners;
 let closed: number;
 let openVideoFails: boolean;
 let client: Client;
+/** The stdio server's media deps: the in-app tests reuse its stand-ins. */
+let stdioDeps: MediaToolDeps;
 
 /** The pointer recorded with the take, as the sidecar beside the video. */
 async function readSidecar(video: string): Promise<CursorTelemetryPoint[]> {
@@ -124,8 +127,9 @@ beforeEach(async () => {
 		version: "test",
 	};
 	const runTool = createToolRunner(toolDeps);
-	const server = createOpenScreenMcpServer(toolDeps, runTool, MEDIA_PREAMBLE);
-	const deps: MediaToolDeps = {
+	stdioDeps = {
+		transport: "stdio",
+		editsAllowed: () => true,
 		runners,
 		documents,
 		openVideo: async () => {
@@ -147,7 +151,7 @@ beforeEach(async () => {
 		runTool,
 		now: () => 1_000,
 	};
-	registerMediaTools(server, deps);
+	const server = createOpenScreenMcpServer(toolDeps, runTool, createMediaTools(stdioDeps));
 
 	const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
 	await server.connect(serverSide);
@@ -179,7 +183,7 @@ async function recordTake(title = "Demo") {
 describe("what `openscreen mcp` tells its client", () => {
 	it("composes the media block with the checkpoint rule, and nothing true only in the app", () => {
 		const instructions = client.getInstructions() ?? "";
-		expect(instructions.startsWith(MEDIA_PREAMBLE)).toBe(true);
+		expect(instructions.startsWith(mediaPreamble("stdio"))).toBe(true);
 		expect(instructions).toContain("Before a series of edits, call createCheckpoint");
 		expect(instructions).toContain("in OpenScreen's memory while the app runs");
 		expect(instructions).not.toMatch(
@@ -497,6 +501,8 @@ describe("exportVideo", () => {
 		expect(runners.started.at(-1)).toMatchObject({
 			kind: "export",
 			projectPath: documents.filePathFor(projectId),
+			// Read by id: the app's current project and recording session stay as they are.
+			projectId,
 			outPath,
 			format: "mp4",
 			quality: "good",
@@ -608,5 +614,142 @@ describe("getFrames", () => {
 			"img",
 		]);
 		expect(closed).toBe(1);
+	});
+});
+
+describe("the media tools in the app", () => {
+	let allowed: boolean;
+	let asked: Parameters<TakeRecorder["start"]>[0][];
+	const appClients: Client[] = [];
+
+	/** The in-app server, its takes made by the app's recorder (a stand-in here). */
+	async function connectApp(): Promise<Client> {
+		const toolDeps: McpToolDeps = {
+			transport: "http",
+			host: { snapshot: async () => null, apply: async () => "no-editor" },
+			projects: documents,
+			editsAllowed: () => allowed,
+			version: "test",
+		};
+		const runTool = createToolRunner(toolDeps);
+		const recorder: TakeRecorder = {
+			async start(request) {
+				asked.push(request);
+				return {
+					startedAt: 5_000,
+					async stop(title) {
+						const created = await documents.createProject(title ?? "Recording");
+						const added = await documents.addAsset(created.project.id, { path: videoPath });
+						// The editor has measured the take by the time the recorder hands it back.
+						await documents.saveProject({
+							...added,
+							assets: added.assets.map((asset) => ({ ...asset, durationSec: 12 })),
+						});
+						return { projectId: created.project.id, videoPath, durationSec: 12, autoZooms: 1 };
+					},
+				};
+			},
+		};
+		const media = createMediaTools({
+			...stdioDeps,
+			transport: "http",
+			editsAllowed: () => allowed,
+			recorder,
+			runTool,
+		});
+		const server = createOpenScreenMcpServer(toolDeps, runTool, media);
+		const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverSide);
+		const appClient = new Client({ name: "test", version: "1" });
+		await appClient.connect(clientSide);
+		appClients.push(appClient);
+		return appClient;
+	}
+
+	beforeEach(() => {
+		allowed = true;
+		asked = [];
+	});
+	afterEach(async () => {
+		for (const appClient of appClients.splice(0)) await appClient.close();
+	});
+
+	const callOn = (on: Client, name: string, args: Record<string, unknown> = {}) =>
+		on.callTool({ name, arguments: args }) as Promise<CallToolResult>;
+
+	it("records through the app's recorder, never a runner, and hands back the project with its checkpoint", async () => {
+		const app = await connectApp();
+		const started = await callOn(app, "startRecording", { window: "My App", microphone: "USB" });
+		expect(started.isError).toBeFalsy();
+		expect(asked).toEqual([
+			{ displayIndex: 0, windowTitle: "My App", mic: true, micDevice: "USB", systemAudio: false },
+		]);
+		const take = JSON.parse(textOf(await callOn(app, "stopRecording", { title: "Demo" })));
+		expect(take).toMatchObject({
+			videoPath,
+			durationSec: 12,
+			autoZooms: 1,
+			recordingStartedAt: 5_000,
+		});
+		expect(take.checkpointId).toMatch(/^cp_/);
+		expect(runners.started.filter((request) => request.kind === "record")).toEqual([]);
+		expect((await documents.getProject(take.projectId)).project.title).toBe("Demo");
+		// setPointerTrack knows the take's clock, as for a take of `openscreen mcp`.
+		const set = await callOn(app, "setPointerTrack", {
+			projectId: take.projectId,
+			events: [{ at: 5_000 + 4_000, x: 0.5, y: 0.5, click: true }],
+		});
+		expect(set.isError).toBeFalsy();
+	});
+
+	it("records and exports only while MCP edits is on, and says so in its instructions", async () => {
+		allowed = false;
+		const app = await connectApp();
+		expect(app.getInstructions()).toContain(
+			"startRecording and exportVideo are refused too while 'MCP edits'",
+		);
+		const started = await callOn(app, "startRecording", {});
+		expect(started.isError).toBe(true);
+		expect(textOf(started)).toContain("'MCP edits'");
+		expect(asked).toEqual([]);
+		const exported = await callOn(app, "exportVideo", {
+			projectId: "proj_x",
+			path: path.join(dir, "out.mp4"),
+		});
+		expect(textOf(exported)).toContain("'MCP edits'");
+		expect(runners.started).toEqual([]);
+		// Reading stays open: listing what could be recorded changes nothing.
+		runners.results.sources = {
+			success: true,
+			sources: { displays: [], windows: [], microphones: [], microphoneLabelsUnavailable: false },
+		};
+		expect((await callOn(app, "listSources")).isError).toBeFalsy();
+	});
+
+	it("takes only absolute paths: it has no working directory of the client's", async () => {
+		const app = await connectApp();
+		const exported = await callOn(app, "exportVideo", { projectId: "proj_x", path: "out.mp4" });
+		expect(textOf(exported)).toContain("must be absolute");
+		const frames = await callOn(app, "getFrames", { path: "take.mp4" });
+		expect(textOf(frames)).toContain("must be absolute");
+	});
+
+	it("tells its client what is true in the app, and nothing true only of `openscreen mcp`", async () => {
+		const app = await connectApp();
+		const instructions = app.getInstructions() ?? "";
+		expect(instructions.startsWith(mediaPreamble("http"))).toBe(true);
+		expect(instructions).toContain("recording bar");
+		expect(instructions).not.toContain("refused too");
+		const { tools } = await app.listTools();
+		const describeTool = (name: string) =>
+			tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(describeTool("startRecording")).toContain("recording bar");
+		expect(describeTool("startRecording")).not.toContain("On Linux the desktop's own picker");
+		expect(describeTool("stopRecording")).toContain("editor opens the take");
+		expect(describeTool("restoreCheckpoint")).toContain("pointer track");
+		const exportPath = tools.find((tool) => tool.name === "exportVideo")?.inputSchema.properties
+			?.path as { description?: string };
+		expect(exportPath.description).toContain("absolute path ending in");
+		expect(exportPath.description).not.toContain("working directory, ending");
 	});
 });

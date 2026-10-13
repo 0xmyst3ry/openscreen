@@ -2,7 +2,11 @@ import { app, type BrowserWindow, ipcMain } from "electron";
 import { AppSettingsStore } from "../app-settings";
 import type { RecordingPrefs } from "./handlers";
 
-/** Shared durable recording preferences. Persist before publishing any new snapshot. */
+/**
+ * Shared durable recording preferences. Persist before publishing any new snapshot.
+ * Returns the same read and write for the main process: the MCP server points the
+ * recording bar at a take with them (handlers.ts).
+ */
 export function registerRecordingPrefsHandlers(
 	defaults: RecordingPrefs,
 	getMainWindow: () => BrowserWindow | null,
@@ -11,7 +15,7 @@ export function registerRecordingPrefsHandlers(
 		return mainWindow ? [mainWindow] : [];
 	},
 	onChange?: (previous: RecordingPrefs, next: RecordingPrefs) => void,
-): void {
+): { get(): RecordingPrefs; set(prefs: Partial<RecordingPrefs>): RecordingPrefs } {
 	const userData = app.getPath("userData");
 	const settings = new AppSettingsStore(userData);
 	let recordingPrefs = { ...defaults, ...settings.getSnapshot().recording };
@@ -23,8 +27,7 @@ export function registerRecordingPrefsHandlers(
 		}
 	};
 
-	ipcMain.handle("get-recording-prefs", () => recordingPrefs);
-	ipcMain.handle("set-recording-prefs", (_, prefs: Partial<RecordingPrefs>) => {
+	const set = (prefs: Partial<RecordingPrefs>) => {
 		// Persist every validated field first. A failed save must leave both the
 		// durable value and the main-process published snapshot unchanged.
 		const previous = recordingPrefs;
@@ -32,5 +35,8 @@ export function registerRecordingPrefsHandlers(
 		onChange?.(previous, recordingPrefs);
 		publish();
 		return recordingPrefs;
-	});
+	};
+	ipcMain.handle("get-recording-prefs", () => recordingPrefs);
+	ipcMain.handle("set-recording-prefs", (_, prefs: Partial<RecordingPrefs>) => set(prefs));
+	return { get: () => recordingPrefs, set };
 }

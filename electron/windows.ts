@@ -835,3 +835,30 @@ export function createNotesWindow(): BrowserWindow {
 
 	return win;
 }
+
+/** A hidden window running one of the CLI runners (src/cli/): `openscreen <command>`, or a
+ *  media tool of an MCP server. */
+export function createRunnerWindow(windowType: string): BrowserWindow {
+	const win = new BrowserWindow({
+		width: 1280,
+		height: 720,
+		show: false,
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			additionalArguments: [ASSET_BASE_URL_ARG],
+			nodeIntegration: false,
+			contextIsolation: true,
+			// Same relaxation as the editor window: exporters load recording media
+			// via file:// URLs.
+			webSecurity: false,
+			backgroundThrottling: false,
+		},
+	});
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(`${VITE_DEV_SERVER_URL}?windowType=${windowType}`);
+	} else {
+		win.loadFile(path.join(RENDERER_DIST, "index.html"), { query: { windowType } });
+	}
+	return win;
+}

@@ -10,6 +10,13 @@ export interface CliExportRequest {
 	kind: "export";
 	/** Absolute path to the .openscreen project file. */
 	projectPath: string;
+	/**
+	 * Set by the MCP server: the project of the projects folder that `projectPath` is the file
+	 * of, read by id as the editor opens a project. Unlike a project file opened by path, that
+	 * leaves the main process's current project and recording session alone, which the app's
+	 * editor relies on while an export runs beside it.
+	 */
+	projectId?: string;
 	/** Absolute output path; null = derive from projectPath + format. */
 	outPath: string | null;
 	/** null = use the format stored in the project. */
@@ -75,7 +82,8 @@ export type CliRequest =
 export interface CliSourcesResult {
 	displays: { index: number; id: string; name: string }[];
 	windows: { id: string; name: string }[];
-	microphones: { label: string }[];
+	/** `deviceId`: the renderer's id for it, as the HUD records with it beside the label. */
+	microphones: { label: string; deviceId?: string }[];
 	/** True when microphone labels required a permission the user hasn't granted. */
 	microphoneLabelsUnavailable: boolean;
 }

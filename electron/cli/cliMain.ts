@@ -5,7 +5,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, session, systemPreferences } from "electron";
 import type { CliProgressEvent, CliSourcesResult } from "../../src/lib/cliContracts";
 import { isDiagnosticModeEnabled } from "../diagnostics/main-log-buffer";
@@ -13,16 +12,12 @@ import { getSelectedDesktopSource, registerIpcHandlers } from "../ipc/handlers";
 import { openVideoInHiddenWindow } from "../mcp/hidden-video";
 import { serveMcpOverStdio } from "../mcp/stdio-server";
 import { registerSttIpc } from "../stt";
-import { ASSET_BASE_URL_ARG } from "../windows";
+import { createRunnerWindow } from "../windows";
 import { CLI_USAGE, type CliCommand } from "./args";
 import { runInfoCommand, runPackCommand } from "./projectCommands";
 import { createRunnerHost } from "./runnerHost";
 import { isolateCliSessionData } from "./sessionData";
 import { openStdin } from "./stdin";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
-const RENDERER_DIST = path.join(__dirname, "..", "dist");
 
 interface CliOutput {
 	json: boolean;
@@ -119,31 +114,6 @@ function createOutput(json: boolean): CliOutput {
 			}
 		},
 	};
-}
-
-function loadRunnerWindow(windowType: string): BrowserWindow {
-	const win = new BrowserWindow({
-		width: 1280,
-		height: 720,
-		show: false,
-		webPreferences: {
-			preload: path.join(__dirname, "preload.mjs"),
-			additionalArguments: [ASSET_BASE_URL_ARG],
-			nodeIntegration: false,
-			contextIsolation: true,
-			// Same relaxation as the editor window: exporters load recording media
-			// via file:// URLs.
-			webSecurity: false,
-			backgroundThrottling: false,
-		},
-	});
-
-	if (VITE_DEV_SERVER_URL) {
-		win.loadURL(`${VITE_DEV_SERVER_URL}?windowType=${windowType}`);
-	} else {
-		win.loadFile(path.join(RENDERER_DIST, "index.html"), { query: { windowType } });
-	}
-	return win;
 }
 
 function registerAppHandlersForCli(cliWindowRef: () => BrowserWindow | null) {
@@ -402,7 +372,7 @@ export function runCli(command: CliCommand): void {
 			// The latest runner is the app's "main window" for the recording handlers, as the
 			// HUD is in the GUI.
 			const runners = createRunnerHost(ipcMain, (windowType): BrowserWindow => {
-				const runnerWindow = loadRunnerWindow(windowType);
+				const runnerWindow = createRunnerWindow(windowType);
 				cliWindow = runnerWindow;
 				return runnerWindow;
 			});

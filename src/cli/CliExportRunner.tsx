@@ -220,21 +220,27 @@ async function loadLegacyProject(project: EditorProjectData): Promise<ExportProj
 	};
 }
 
-async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
+/** The project to export: by id when the MCP server names one, else the file at its path. */
+async function loadExportProject(request: CliExportRequest): Promise<ExportProject> {
+	const probe = (videoPath: string) => probeVideoDimensions(toFileUrl(videoPath));
+	if (request.projectId) {
+		const stored = await nativeBridgeClient.aiEdition.get(request.projectId);
+		if (!stored.success || !stored.document) {
+			throw new Error(stored.error ?? `No project has the id "${request.projectId}"`);
+		}
+		return loadDocumentProject(stored.document, probe);
+	}
 	const loaded = await nativeBridgeClient.project.loadProjectFileFromPath(request.projectPath);
 	if (!loaded.success || loaded.project === undefined) {
 		throw new Error(loaded.error ?? loaded.message ?? "Failed to load project file");
 	}
-	let project: ExportProject;
-	if (isAxcutDocumentFile(loaded.project)) {
-		project = await loadDocumentProject(loaded.project, (videoPath) =>
-			probeVideoDimensions(toFileUrl(videoPath)),
-		);
-	} else if (validateProjectData(loaded.project)) {
-		project = await loadLegacyProject(loaded.project);
-	} else {
-		throw new Error("Project file is not a valid .openscreen project");
-	}
+	if (isAxcutDocumentFile(loaded.project)) return loadDocumentProject(loaded.project, probe);
+	if (validateProjectData(loaded.project)) return loadLegacyProject(loaded.project);
+	throw new Error("Project file is not a valid .openscreen project");
+}
+
+async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
+	const project = await loadExportProject(request);
 	const { editor } = project;
 	let axcutDocument = project.document;
 

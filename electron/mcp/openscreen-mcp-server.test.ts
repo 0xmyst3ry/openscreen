@@ -18,6 +18,7 @@ import {
 import { OPENSCREEN_TOOL_NAMES } from "../ai-edition/agent-tools";
 import { TOOL_DESCRIPTIONS } from "../ai-edition/deep-agent/service";
 import { DocumentService } from "../ai-edition/document-service";
+import { createMediaTools } from "./media-tools";
 import {
 	LIST_PROJECTS_TOOL,
 	MCP_ENDPOINT_PATH,
@@ -142,16 +143,32 @@ async function connect(
 	editor: FakeEditor,
 	options: { editsAllowed?: boolean; headers?: Record<string, string> } = {},
 ) {
+	const editsAllowed = () => options.editsAllowed ?? true;
+	const deps = {
+		transport: "http" as const,
+		host: editor,
+		projects,
+		editsAllowed,
+		version: "0.0.0",
+	};
+	const unused = () => {
+		throw new Error("not used by these tests");
+	};
 	running = await startMcpHttpServer({
 		port: 0,
 		token: TOKEN,
-		deps: {
+		deps,
+		// As the app serves them; media-tools.test.ts calls them.
+		media: createMediaTools({
 			transport: "http",
-			host: editor,
-			projects,
-			editsAllowed: () => options.editsAllowed ?? true,
-			version: "0.0.0",
-		},
+			editsAllowed,
+			recorder: { start: unused },
+			runners: { start: unused },
+			documents: projects,
+			openVideo: unused,
+			readCursor: unused,
+			runTool: unused,
+		}),
 	});
 	client = new Client({ name: "test", version: "0.0.0" });
 	const url = new URL(`http://127.0.0.1:${running.port}${MCP_ENDPOINT_PATH}`);
@@ -169,7 +186,7 @@ function resultText(result: Awaited<ReturnType<Client["callTool"]>>): string {
 }
 
 describe("the MCP tool surface", () => {
-	it("is listProjects, then exactly the in-app agent's tools with its descriptions, then the checkpoints", async () => {
+	it("is listProjects, then exactly the in-app agent's tools with its descriptions, then the checkpoints and the media tools", async () => {
 		const mcp = await connect(new FakeEditor());
 		const { tools } = await mcp.listTools();
 		expect(tools.map((t) => t.name)).toEqual([
@@ -177,6 +194,13 @@ describe("the MCP tool surface", () => {
 			...OPENSCREEN_TOOL_NAMES,
 			"createCheckpoint",
 			"restoreCheckpoint",
+			// The same as `openscreen mcp` serves (#1174).
+			"listSources",
+			"startRecording",
+			"stopRecording",
+			"setPointerTrack",
+			"exportVideo",
+			"getFrames",
 		]);
 		for (const tool of tools.slice(1, 1 + OPENSCREEN_TOOL_NAMES.length)) {
 			expect(tool.description).toBe(TOOL_DESCRIPTIONS[tool.name]);
@@ -184,8 +208,9 @@ describe("the MCP tool surface", () => {
 			expect(Object.keys(tool.inputSchema.properties ?? {})).toContain("projectId");
 			expect(tool.inputSchema.required ?? []).not.toContain("projectId");
 		}
-		for (const tool of tools.slice(-2)) {
-			expect(Object.keys(tool.inputSchema.properties ?? {})).toContain("projectId");
+		for (const name of ["createCheckpoint", "restoreCheckpoint"]) {
+			const tool = tools.find((t) => t.name === name);
+			expect(Object.keys(tool?.inputSchema.properties ?? {})).toContain("projectId");
 		}
 		// The zod schemas survive the trip to JSON Schema with their fields intact.
 		const addTrim = tools.find((t) => t.name === "addTrim");
@@ -215,20 +240,21 @@ describe("the MCP tool surface", () => {
 		expect(mcp.getInstructions()).toContain("Time-bases (do not mix them up)");
 	});
 
-	it("tells the client what is true here: an editor, its undo, no media, and its own switch", async () => {
+	it("tells the client what is true here: an editor, its undo, its recording bar, and its own switch", async () => {
 		const mcp = await connect(new FakeEditor(), { editsAllowed: false });
 		const instructions = mcp.getInstructions() ?? "";
 		expect(instructions).toContain(
 			"Without a projectId they act on the project open in the editor",
 		);
-		expect(instructions).toContain("Nothing here records, exports or imports media.");
+		expect(instructions).toContain("startRecording hands over to OpenScreen's recording bar");
+		expect(instructions).toContain("startRecording and exportVideo are refused too");
 		expect(instructions).toContain("all of them are lost when OpenScreen quits.");
 		expect(instructions).toContain("turn on 'MCP edits' under MCP server in AI settings");
 		expect(instructions).not.toContain("Agent edits");
 		const { tools } = await mcp.listTools();
 		const restore = tools.find((t) => t.name === "restoreCheckpoint");
 		expect(restore?.description).toContain("one undo step");
-		expect(restore?.description).not.toContain("pointer track");
+		expect(restore?.description).toContain("pointer track");
 	});
 });
 
@@ -236,17 +262,17 @@ describe("the instructions, composed per transport", () => {
 	const media = "MEDIA BLOCK";
 	it("puts the media block first, then the same checkpoint rule on both transports", () => {
 		const stdio = mcpInstructions({ transport: "stdio", editsAllowed: true, media });
-		const http = mcpInstructions({ transport: "http", editsAllowed: true });
-		expect(stdio.startsWith(media)).toBe(true);
+		const http = mcpInstructions({ transport: "http", editsAllowed: true, media });
 		for (const instructions of [stdio, http]) {
+			expect(instructions.startsWith(media)).toBe(true);
 			expect(instructions).toContain("Before a series of edits, call createCheckpoint");
 			expect(instructions).toContain("Time-bases (do not mix them up)");
+			// Both export, so exporting is no example of a request without a tool.
+			expect(instructions).not.toContain("exporting)");
 		}
-		// stdio reaches the editor only through the app, and exports.
-		expect(stdio).not.toMatch(/Without a projectId they act|Nothing here records/);
+		// stdio reaches the editor only through the app.
+		expect(stdio).not.toContain("Without a projectId they act");
 		expect(stdio).toContain("While the OpenScreen app runs, this server hands each call to it");
-		expect(stdio).not.toContain("exporting)");
-		expect(http).toContain("exporting)");
 		expect(stdio).toContain("in OpenScreen's memory while the app runs");
 	});
 });

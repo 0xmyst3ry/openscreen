@@ -104,7 +104,7 @@ async function enumerateMicrophones(): Promise<{
 
 	const labeled = inputs.filter((device) => device.label);
 	return {
-		microphones: labeled.map((device) => ({ label: device.label })),
+		microphones: labeled.map((device) => ({ label: device.label, deviceId: device.deviceId })),
 		microphoneLabelsUnavailable: inputs.length > 0 && labeled.length === 0,
 	};
 }

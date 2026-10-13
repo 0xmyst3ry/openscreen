@@ -26,7 +26,8 @@
 // in-app agent has no need for them: its whole turn is already a single apply.
 //
 // Two transports serve these tools: the in-app server over HTTP (below) and
-// `openscreen mcp` over stdio (`stdio-server.ts`, which adds the media tools). The
+// `openscreen mcp` over stdio (`stdio-server.ts`), both with the media tools around
+// them (media-tools.ts: record, export, look). The
 // runner and the tools are the same; the texts a client reads are composed per
 // transport (`mcpInstructions`, the `*_MESSAGES` tables), so each says what is true
 // on the server that serves it. While the app runs, `openscreen mcp` forwards its document
@@ -66,6 +67,7 @@ import {
 	type ProjectSummary,
 	type ProjectVersion,
 } from "../ai-edition/document-service";
+import type { MediaTools } from "./media-tools";
 
 export const MCP_SERVER_NAME = "openscreen";
 export const MCP_ENDPOINT_PATH = "/mcp";
@@ -115,8 +117,9 @@ type ProjectRead = Awaited<ReturnType<McpProjectStore["getProjectForUpdate"]>>;
 
 /**
  * Which server this is. The tools are the same; what differs is what a call can reach:
- * the in-app server (`http`) has the editor, its undo stack and a switch for edits;
- * `openscreen mcp` (`stdio`) is a process of its own, with no editor and no switch.
+ * the in-app server (`http`) has the editor, its undo stack, the app's recording bar and
+ * a switch for edits; `openscreen mcp` (`stdio`) is a process of its own, with no editor
+ * and no switch, recording in a hidden runner.
  * Every text the client reads says what is true on the one it is connected to.
  */
 export type McpTransport = "http" | "stdio";
@@ -134,7 +137,7 @@ export interface McpToolDeps {
 export const LIST_PROJECTS_TOOL = "listProjects";
 
 /** The in-app server's edit switch, as AI settings label it (`mcpServer.editsLabel`). */
-const MCP_EDITS_SETTING = "'MCP edits' under MCP server in AI settings";
+export const MCP_EDITS_SETTING = "'MCP edits' under MCP server in AI settings";
 
 const LIST_PROJECTS_DESCRIPTION =
 	"List every OpenScreen project: id, title, last update, asset count, and `open`: whether the OpenScreen editor has it open, in which case an edit to it goes through the editor, shows there live and the user can undo it with Ctrl/Cmd+Z. Pass a project's id as `projectId` to any other tool to read or edit that project.";
@@ -204,17 +207,16 @@ const CORE_PREAMBLES: Record<McpTransport, readonly string[]> = {
 	],
 };
 
-const NO_MEDIA_NOTE = "Nothing here records, exports or imports media.";
-
 /**
- * The server's instructions: the capability block of the media tools when they are served,
- * the projects-and-checkpoints rules of this transport, then the in-app agent's editing
- * guidance, naming this server's edit switch and whether it can export.
+ * The server's instructions: the capability block of the media tools, the
+ * projects-and-checkpoints rules of this transport, then the in-app agent's editing
+ * guidance, naming this server's edit switch, which holds back recording and export too.
  */
 export function mcpInstructions(options: {
 	transport: McpTransport;
 	editsAllowed: boolean;
-	/** The media tools' preamble, when this server registers them. */
+	/** The media tools' preamble. Both servers register them; only the app's channel for
+	 *  `openscreen mcp` (app-channel.ts), which no agent reads, goes without. */
 	media?: string;
 }): string {
 	const { transport, editsAllowed, media } = options;
@@ -222,7 +224,9 @@ export function mcpInstructions(options: {
 		...(media ? [media] : []),
 		...CORE_PREAMBLES[transport],
 		CHECKPOINT_LIFETIMES[transport],
-		...(media ? [] : [NO_MEDIA_NOTE]),
+		...(media && !editsAllowed
+			? [`startRecording and exportVideo are refused too while ${MCP_EDITS_SETTING} is off.`]
+			: []),
 		"",
 	].join("\n");
 	return (
@@ -547,8 +551,8 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 export function createOpenScreenMcpServer(
 	deps: McpToolDeps,
 	runTool: McpToolRunner,
-	/** The media tools' preamble, when the caller registers them on this server. */
-	media?: string,
+	/** The media tools (media-tools.ts), served by both servers but not the app's channel. */
+	media?: MediaTools,
 ): McpServer {
 	const server = new McpServer(
 		{ name: MCP_SERVER_NAME, version: deps.version },
@@ -556,7 +560,7 @@ export function createOpenScreenMcpServer(
 			instructions: mcpInstructions({
 				transport: deps.transport,
 				editsAllowed: deps.editsAllowed(),
-				media,
+				media: media?.preamble,
 			}),
 		},
 	);
@@ -601,6 +605,7 @@ export function createOpenScreenMcpServer(
 			(args: unknown) => runTool(tool.name, args),
 		);
 	}
+	media?.register(server);
 	return server;
 }
 
@@ -637,6 +642,8 @@ export async function startMcpHttpServer(options: {
 	deps: McpToolDeps;
 	/** The app's shared runner (see createToolRunner); a fresh one when omitted. */
 	runTool?: McpToolRunner;
+	/** The media tools, built once: the take and the exports outlive each request. */
+	media?: MediaTools;
 }): Promise<RunningMcpServer> {
 	const { token, deps } = options;
 	const shared = options.runTool ?? createToolRunner(deps);
@@ -657,8 +664,9 @@ export async function startMcpHttpServer(options: {
 
 		// Stateless: one server + transport per request, the SDK's documented shape
 		// for a server that keeps no per-session state. Tools read the live editor
-		// on every call, so there is nothing a session would need to remember.
-		const server = createOpenScreenMcpServer(deps, runTool);
+		// on every call, and what the media tools hold (the take, the exports) lives in
+		// `media`, built once, so there is nothing a session would need to remember.
+		const server = createOpenScreenMcpServer(deps, runTool, options.media);
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: undefined,
 			enableJsonResponse: true,

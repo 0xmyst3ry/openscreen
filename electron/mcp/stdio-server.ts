@@ -9,14 +9,14 @@
 //
 // No port and no token: the client launched this process itself, with the
 // user's rights, as it would launch `openscreen record` or `openscreen export`.
-// For the same reason it may edit, where the in-app server waits for the user to
-// allow it: there is no other caller to keep out.
+// For the same reason it may edit, record and export, where the in-app server waits
+// for the user to allow it: there is no other caller to keep out.
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { DocumentService } from "../ai-edition/document-service";
 import { openStdin } from "../cli/stdin";
 import { routeToApp } from "./app-channel";
-import { MEDIA_PREAMBLE, type MediaToolDeps, registerMediaTools } from "./media-tools";
+import { createMediaTools, type MediaToolDeps } from "./media-tools";
 import {
 	createOpenScreenMcpServer,
 	createToolRunner,
@@ -46,14 +46,16 @@ export async function serveMcpOverStdio(options: {
 		version: deps.version,
 		local: createToolRunner(deps),
 	});
-	const server = createOpenScreenMcpServer(deps, runTool, MEDIA_PREAMBLE);
-	registerMediaTools(server, {
+	const media = createMediaTools({
+		transport: "stdio",
+		editsAllowed: () => true,
 		runners: options.runners,
 		documents: options.documents,
 		openVideo: options.openVideo,
 		readCursor: options.readCursorTelemetry,
 		runTool,
 	});
+	const server = createOpenScreenMcpServer(deps, runTool, media);
 	const stdin = openStdin();
 	// The transport only reads stdin; a client that exits just closes it. A pipe can
 	// report that as "end", "close" or "error", depending on how the client went.
