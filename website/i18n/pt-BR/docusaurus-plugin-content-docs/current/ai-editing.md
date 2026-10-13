@@ -72,7 +72,7 @@ As ferramentas são as que o agente integrado usa. Elas agem sobre o projeto abe
 - **No projeto aberto no editor**, uma edição se desfaz com `Ctrl/Cmd + Z`. Os clientes são instruídos a salvar um ponto de restauração antes de uma série de edições, então você pode pedir a eles que deixem o projeto como estava em um único passo, que o próprio `Ctrl/Cmd + Z` pode desfazer.
 - **Em qualquer outro projeto**, uma edição é salva no arquivo dele, fora do alcance de `Ctrl/Cmd + Z`. Um cliente precisa salvar um ponto de restauração desse projeto antes da primeira edição, e voltar a ele é a única forma de desfazê-la.
 
-Os pontos de restauração ficam na memória do OpenScreen: eles se perdem quando ele é fechado ou quando o servidor reinicia, o que acontece ao mudar a porta ou gerar um novo token. **Gerar novo** token desconecta todos os clientes configurados com o antigo.
+Os pontos de restauração ficam na memória do OpenScreen: eles se perdem quando ele é fechado ou quando o servidor reinicia, o que acontece ao mudar a porta ou gerar um novo token. Só os 20 pontos de restauração mais recentes são mantidos, então um mais antigo pode sumir antes. **Gerar novo** token desconecta todos os clientes configurados com o antigo.
 
 ## Como deixar um agente fazer o vídeo inteiro {#letting-an-agent-make-the-whole-video}
 
@@ -94,7 +94,7 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 O executável de cada sistema está listado em [Como executar a CLI](./cli.md#running-the-cli).
 
 - **Sem porta, sem token, sem configuração.** O agente inicia o processo por conta própria, com as suas permissões, como faria ao rodar `openscreen record`. Por isso ele pode gravar a sua tela e editar sem o interruptor **Edições via MCP**.
-- **Cada tomada vira um novo projeto** na sua lista de projetos, com zooms nos seus cliques, como uma gravação feita no app: cliques próximos no tempo e na tela dividem um zoom, e os primeiros segundos e o final ficam na tela inteira. Cada edição do agente é salva no arquivo do projeto. Ela se desfaz com o ponto de restauração que o agente cria, que dura até o fim da sessão dele.
+- **Cada tomada vira um novo projeto** na sua lista de projetos, com zooms nos seus cliques, como uma gravação feita no app: cliques próximos no tempo e na tela dividem um zoom, e os primeiros segundos e o final ficam na tela inteira. Cada edição do agente é salva no arquivo do projeto. Ela se desfaz com o ponto de restauração que o agente cria, que dura até o fim da sessão dele. Só os 20 pontos de restauração mais recentes são mantidos, então um mais antigo pode sumir antes.
 - **Um projeto aberto no editor do OpenScreen fica fora do alcance.** O agente pode lê-lo, mas as edições dele são recusadas até você fechar o projeto ali, porque o editor salvaria a própria cópia por cima.
 - **Uma tomada conduzida por um script** (o Playwright, por exemplo) nunca move o ponteiro da tela. O agente passa ao OpenScreen o próprio registro das ações com `setPointerTrack`, e o vídeo ganha um cursor e seus zooms do mesmo jeito.
 - **A skill `openscreen-demo`** ensina a um agente o trabalho inteiro, do storyboard até o vídeo pronto. Depois ele anexa o vídeo a um pull request, para que os revisores vejam a mudança ali mesmo, ou redige um post no X que só publica depois que você disser sim. Adicione-a com `npx skills add getopenscreen/openscreen --skill openscreen-demo`. A receita é [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).

@@ -454,6 +454,20 @@ describe("setPointerTrack", () => {
 		expect(await sidecarFile(take.videoPath)).toBe(first);
 	});
 
+	it("says the edit is partial when the project saved but the track could not be written", async () => {
+		await fs.rm(`${videoPath}.cursor.json`);
+		const take = await recordTake();
+		// A directory where the sidecar goes: the save succeeds, the sidecar write cannot.
+		await fs.mkdir(`${take.videoPath}.cursor.json`);
+		const set = await call("setPointerTrack", {
+			projectId: take.projectId,
+			events: clickAt(take, 0.2),
+		});
+		expect(set.isError).toBe(true);
+		expect(textOf(set)).toContain("The project was saved, but the pointer track");
+		expect(textOf(set)).not.toContain("Tool failed");
+	});
+
 	it("refuses a project whose take this server did not record", async () => {
 		const other = await documents.createProject("Imported");
 		const refused = await call("setPointerTrack", {

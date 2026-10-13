@@ -72,7 +72,7 @@ The tools are the ones the built-in agent uses. They act on the project open in 
 - **On the project open in the editor**, an edit is undone with `Ctrl/Cmd + Z`. Clients are told to save a checkpoint before a series of edits, so you can ask them to put the project back as it was in a single step, which `Ctrl/Cmd + Z` can itself undo.
 - **On any other project**, an edit is saved to its file, where `Ctrl/Cmd + Z` cannot reach it. A client must save a checkpoint of that project before its first edit, and putting the project back from it is the only undo.
 
-Checkpoints are kept in OpenScreen's memory: they are lost when it quits or when the server restarts, which changing the port or regenerating the token does. **Regenerate** the token to disconnect every client set up with the old one.
+Checkpoints are kept in OpenScreen's memory: they are lost when it quits or when the server restarts, which changing the port or regenerating the token does. Only the 20 most recent checkpoints are kept, so an older one can be gone sooner. **Regenerate** the token to disconnect every client set up with the old one.
 
 ## Letting an agent make the whole video
 
@@ -94,7 +94,7 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 The executable on each system is listed in [Running the CLI](./cli.md#running-the-cli).
 
 - **No port, no token, no setting.** The agent starts the process itself, with your rights, as it would run `openscreen record`. So it can record your screen and edit without the **MCP edits** switch.
-- **Each take becomes a new project** in your project list, zoomed on its clicks as a recording made in the app is: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. Every edit the agent makes is saved to the project's file. Its undo is the checkpoint the agent takes, which lasts until the agent's session ends.
+- **Each take becomes a new project** in your project list, zoomed on its clicks as a recording made in the app is: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. Every edit the agent makes is saved to the project's file. Its undo is the checkpoint the agent takes, which lasts until the agent's session ends. Only the 20 most recent checkpoints are kept, so an older one can be gone sooner.
 - **A project open in the OpenScreen editor is off limits.** The agent can read it, but its edits are refused until you close the project there, since the editor would save its own copy over them.
 - **A take driven by a script** (Playwright, for example) never moves the screen pointer. The agent hands OpenScreen its own log of the actions with `setPointerTrack`, and the video gets a cursor and its zooms all the same.
 - **The `openscreen-demo` skill** teaches an agent the whole job, from the storyboard to the finished video. It then attaches the video to a pull request, so reviewers watch the change in place, or drafts a post on X that it publishes only once you say yes. Add it with `npx skills add getopenscreen/openscreen --skill openscreen-demo`. The recipe is [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).

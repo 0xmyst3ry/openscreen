@@ -116,7 +116,7 @@ A client chains several edits in one turn, and each is its own undo step, so rev
 `registerMediaTools` adds the tools that make a video around the edits. They share the runner the document tools use (`createToolRunner` in `stdio-server.ts`):
 
 - `stopRecording` turns the take into a project and creates its checkpoint through the runner.
-- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. It computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result.
+- `setPointerTrack` gives a script-driven take a pointer track and plans zooms on its clicks. It computes the new sidecar and the zooms from the project the runner read, writes nothing itself, and hands both to the runner as a `RunnerEdit`. The runner then applies the same refusals as any edit (another process's editor, no checkpoint, a project changed mid-call) before writing anything, saves the project, and only then writes the sidecar, keeping its previous content for the checkpoints. Every refusal comes back as the tool's own text result. A sidecar write that fails after the save is reported as a partial edit: the project was saved, the pointer track was not.
 - `exportVideo` and `getFrames` read projects; they write none.
 
 ## Transport and security
