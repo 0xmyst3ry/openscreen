@@ -370,17 +370,31 @@ export function createToolRunner(deps: McpToolDeps) {
 		return false;
 	}
 
-	/** Writes an edit's sidecars, first keeping what each held for the project's checkpoints. */
-	async function writeSidecars(projectId: string, writes: readonly SidecarWrite[]) {
-		for (const { path, content } of writes) {
-			const before = await readSidecar(path);
-			for (const checkpoint of checkpoints.values()) {
-				if (checkpoint.document.project.id === projectId && !checkpoint.sidecars.has(path)) {
-					checkpoint.sidecars.set(path, before);
+	/**
+	 * Writes an edit's sidecars, first keeping what each held for the project's checkpoints.
+	 * Runs once the document is saved, so a failure here is a partial edit, said as one.
+	 */
+	async function writeSidecars(
+		projectId: string,
+		writes: readonly SidecarWrite[] = [],
+	): Promise<CallToolResult | null> {
+		try {
+			for (const { path, content } of writes) {
+				const before = await readSidecar(path);
+				for (const checkpoint of checkpoints.values()) {
+					if (checkpoint.document.project.id === projectId && !checkpoint.sidecars.has(path)) {
+						checkpoint.sidecars.set(path, before);
+					}
 				}
+				if (content === null) await fs.rm(path, { force: true });
+				else await fs.writeFile(path, content, "utf8");
 			}
-			if (content === null) await fs.rm(path, { force: true });
-			else await fs.writeFile(path, content, "utf8");
+			return null;
+		} catch (error) {
+			return textResult(
+				`The project was saved, but the pointer track beside its video was NOT written: ${errorMessage(error)}. Call this tool again to write it, or restoreCheckpoint to take the project back.`,
+				true,
+			);
 		}
 	}
 
@@ -413,7 +427,8 @@ export function createToolRunner(deps: McpToolDeps) {
 		if (execution.document) {
 			const applied = await deps.host.apply(execution.document, snapshot.revision);
 			if (applied !== "applied") return textResult(APPLY_FAILURE_MESSAGES[applied], true);
-			await writeSidecars(execution.document.project.id, execution.sidecars ?? []);
+			const partial = await writeSidecars(execution.document.project.id, execution.sidecars);
+			if (partial) return partial;
 		}
 		return textResult(execution.resultJson, !execution.ok);
 	}
@@ -444,7 +459,8 @@ export function createToolRunner(deps: McpToolDeps) {
 				return textResult(PROJECT_CHANGED_MESSAGE, true);
 			}
 			// After the save, so an edit refused above has written nothing at all.
-			await writeSidecars(projectId, execution.sidecars ?? []);
+			const partial = await writeSidecars(projectId, execution.sidecars);
+			if (partial) return partial;
 		}
 		return textResult(execution.resultJson, !execution.ok);
 	}
