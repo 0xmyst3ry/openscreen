@@ -96,6 +96,14 @@ describe("captionProject", () => {
 		expect(result.document.annotations).toEqual([]);
 	});
 
+	it("copies a transcript only the legacy mirror holds where the captions read it", async () => {
+		const legacy = { ...project(), transcript: transcript("one two"), transcripts: [] };
+		const result = await captionProject(legacy, LINE, vi.fn());
+
+		expect(result.document.transcripts).toHaveLength(1);
+		expect(result.captionCount).toBe(1);
+	});
+
 	it("fails on media with no speech, writing nothing", async () => {
 		const silent: AxcutTranscript = {
 			assetId: "asset_1",
