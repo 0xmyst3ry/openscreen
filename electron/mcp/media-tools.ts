@@ -443,11 +443,17 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 
 	/** A fresh project's checkpoint, so a client can edit it at once and take it back in one step. */
 	async function checkpointOf(projectId: string): Promise<string | null> {
-		const checkpoint = await deps.runTool("createCheckpoint", { projectId });
-		const checkpointText = checkpoint.content[0]?.type === "text" ? checkpoint.content[0].text : "";
-		return checkpoint.isError
-			? null
-			: ((JSON.parse(checkpointText) as { checkpointId?: string }).checkpointId ?? null);
+		// Never fails the call: the project exists either way, and its id is the answer.
+		try {
+			const checkpoint = await deps.runTool("createCheckpoint", { projectId });
+			const checkpointText =
+				checkpoint.content[0]?.type === "text" ? checkpoint.content[0].text : "";
+			return checkpoint.isError
+				? null
+				: ((JSON.parse(checkpointText) as { checkpointId?: string }).checkpointId ?? null);
+		} catch {
+			return null;
+		}
 	}
 
 	/** Stops the take, then hands back its project with a checkpoint of it. */
@@ -838,8 +844,15 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 				}
 				const title = args.title?.trim();
 				if (args.videoPath === undefined) {
-					const created = await deps.documents.createProject(title ?? "");
-					const projectId = created.project.id;
+					let projectId: string;
+					try {
+						projectId = (await deps.documents.createProject(title ?? "")).project.id;
+					} catch (error) {
+						return text(
+							`No project was created: ${error instanceof Error ? error.message : String(error)}`,
+							true,
+						);
+					}
 					return text(JSON.stringify({ projectId, checkpointId: await checkpointOf(projectId) }));
 				}
 				const videoPath = args.videoPath;

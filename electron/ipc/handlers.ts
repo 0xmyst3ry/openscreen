@@ -274,6 +274,7 @@ const ALLOWED_IMPORT_AUDIO_EXTENSIONS = new Set([
 	".aac",
 	".flac",
 	".ogg",
+	".oga",
 	".opus",
 ]);
 
