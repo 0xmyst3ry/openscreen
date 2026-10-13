@@ -41,7 +41,7 @@ As opções de login do ChatGPT e do GitHub Copilot foram **removidas na 1.8.0**
 
 ## Como usar o agente {#using-the-agent}
 
-Descreva a edição em linguagem natural — "corte o tempo morto da introdução", "dê zoom quando eu abrir o terminal". O agente trabalha com operações reais da linha do tempo, que podem ser desfeitas, e não com uma nova renderização: ele pode adicionar e ajustar recortes, zooms, regiões de velocidade, anotações e segmentos de Câmera em Tela Cheia, editar os pontos de entrada/saída dos clipes, reordenar ou remover clipes e ler a transcrição para encontrar o trecho a que você se refere.
+Descreva a edição em linguagem natural — "corte o tempo morto da introdução", "dê zoom quando eu abrir o terminal". O agente trabalha com operações reais da linha do tempo, que podem ser desfeitas, e não com uma nova renderização: ele pode adicionar e ajustar recortes, zooms, regiões de velocidade, anotações (texto, setas e desfoques que escondem dados privados na tela), faixas de áudio importadas com seus fades e segmentos de Câmera em Tela Cheia, editar os pontos de entrada/saída dos clipes, reordenar ou remover clipes e ler a transcrição para encontrar o trecho a que você se refere.
 
 O painel em volta dele:
 
