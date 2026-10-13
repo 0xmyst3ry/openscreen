@@ -1200,6 +1200,9 @@ function clipRoster(document: AxcutDocument): string {
 	return `The timeline is: ${clips.map((c) => `${c.id}${c.reason ? ` (${c.reason})` : ""}`).join(", ")}.`;
 }
 
+/** The in-app agent's edit switch, as AI settings label it (`providerSettings.projectEditsLabel`). */
+export const AGENT_EDITS_SETTING = "'Agent edits' in AI settings";
+
 /**
  * The refusal the model gets for every write while `allowAgentEdits` is off.
  *
@@ -1215,14 +1218,21 @@ function clipRoster(document: AxcutDocument): string {
  *
  * The `{error}` envelope is the shape the workbench's wire oracle already
  * recognises as a failed tool result — a new one would read as a success.
+ *
+ * `setting` names the switch as the user sees it: the in-app agent's by default,
+ * the MCP server's when an MCP client is refused (`openscreen-mcp-server.ts`).
  */
-function consentRequired(name: string, args: unknown): AgentToolExecution {
+export function consentRequired(
+	name: string,
+	args: unknown,
+	setting: string = AGENT_EDITS_SETTING,
+): AgentToolExecution {
 	return {
 		ok: false,
 		resultJson: JSON.stringify({
 			error:
-				"Project edits are turned off for this project: the user asked to be consulted " +
-				"before the timeline changes. Nothing was modified.",
+				"Edits are turned off: the user asked to be consulted before the timeline changes. " +
+				"Nothing was modified.",
 			code: "consent_required",
 			tool: name,
 			requestedArgs: args,
@@ -1230,7 +1240,7 @@ function consentRequired(name: string, args: unknown): AgentToolExecution {
 				"Describe the exact edit you would make — the tool, the times, the ids — and ask the " +
 				"user to confirm it. Do NOT retry this call and do NOT reach for another write tool: " +
 				"every one of them is refused while the setting is off. Never say an edit was applied. " +
-				"If they want you to go ahead, they can re-enable 'Project edits' in Settings → AI.",
+				`If they want you to go ahead, they can turn on ${setting}.`,
 		}),
 	};
 }

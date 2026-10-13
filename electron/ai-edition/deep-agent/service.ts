@@ -27,6 +27,7 @@ import type { AxcutDocument } from "../../../src/lib/ai-edition/schema";
 import { ZOOM_DEPTH_LEGEND } from "../../../src/lib/ai-edition/timeline/zoom-scale";
 import { ZOOM_TRANSITION_LEGEND } from "../../../src/lib/ai-edition/timeline/zoom-transitions";
 import {
+	AGENT_EDITS_SETTING,
 	type AgentToolExecution,
 	addAnnotationArgs,
 	addAudioArgs,
@@ -83,7 +84,8 @@ export interface OpenScreenAgentSink {
 // inline read-tool schemas below stay local.
 
 /**
- * The block appended when the user has turned "Project edits" off.
+ * The block appended when the user has turned edits off: "Agent edits" for the
+ * in-app agent, "MCP edits" for an MCP client; `setting` names the one in force.
  *
  * ponytail: the executor's refusal is the wall (see `consentRequired` in
  * agent-tools.ts) but a wall alone does not fix the measured defect. The
@@ -93,14 +95,15 @@ export interface OpenScreenAgentSink {
  * rightly: the model tried. Only the prompt can stop the emission. Two layers,
  * neither sufficient alone.
  */
-const CONSENT_PROMPT_BLOCK = [
-	"",
-	"PROJECT EDITS ARE CURRENTLY DISABLED by the user, who asked to be consulted before the timeline changes.",
-	"- Read freely: getCurrentDocument and getTranscript work as usual.",
-	"- Do NOT call any tool that writes (removeWords, addTrim, setTrim, setClipRange, moveClip, replaceTimeline, add*/set* effects, remove*). Every one of them will be refused, so calling them wastes the turn and tells the user nothing.",
-	"- Instead: say precisely what you would change — which tool, which times, which ids — and ask the user to confirm. Be specific enough that they can say yes to it.",
-	"- Never state or imply that an edit was applied. If the user confirms and you are still refused, tell them the 'Project edits' setting in Settings → AI has to be re-enabled first.",
-].join("\n");
+const consentPromptBlock = (setting: string) =>
+	[
+		"",
+		"PROJECT EDITS ARE CURRENTLY DISABLED by the user, who asked to be consulted before the timeline changes.",
+		"- Read freely: getCurrentDocument and getTranscript work as usual.",
+		"- Do NOT call any tool that writes (removeWords, addTrim, setTrim, setClipRange, moveClip, replaceTimeline, add*/set* effects, remove*). Every one of them will be refused, so calling them wastes the turn and tells the user nothing.",
+		"- Instead: say precisely what you would change — which tool, which times, which ids — and ask the user to confirm. Be specific enough that they can say yes to it.",
+		`- Never state or imply that an edit was applied. If the user confirms and you are still refused, tell them to turn on ${setting} first.`,
+	].join("\n");
 
 // ponytail: exported so a test can assert that what the model receives is this
 // string and NOTHING else — the deepagents regression was invisible precisely
@@ -134,14 +137,27 @@ const BASE_SYSTEM_PROMPT = [
 	"Cursor telemetry: while the screen was captured, OpenScreen recorded where the pointer went. assets[].hasCursorTelemetry in getCurrentDocument says which assets carry it, and getCursorTrack returns the recorded track for one of them — positions over time, and the pointer shape at each moment. What it means is yours to read.",
 	"Blindness is not evidence. When a tool reports it could not read something (reason 'unavailable'), that is a limit of your runtime, not a fact about the project. Only an explicit negative — reason 'no-sidecar', or a false flag — supports telling the user the data is not there.",
 	"",
-	"Honesty rules: if a request has NO matching tool (e.g. deleting an asset/recording, exporting), say so plainly — do not substitute a different edit and report it as the requested one. After your edits, if you are at all unsure the document ended up as intended, call getCurrentDocument and reconcile what you claim with the real state; each tool result already tells you exactly what it did, so never report a change the results don't support.",
 ].join("\n");
 
-/** The system prompt for a turn, which depends on ONE thing: whether the user
- *  currently allows the agent to write. Exported so the consent wording can be
- *  tested without a provider. */
-export function buildSystemPrompt(options: { editsAllowed: boolean }): string {
-	return options.editsAllowed ? BASE_SYSTEM_PROMPT : BASE_SYSTEM_PROMPT + CONSENT_PROMPT_BLOCK;
+// Exporting is the example of a missing tool only where there is none: `openscreen mcp` has exportVideo.
+const honestyRules = (canExport: boolean) =>
+	`Honesty rules: if a request has NO matching tool (e.g. deleting an asset/recording${canExport ? "" : ", exporting"}), say so plainly — do not substitute a different edit and report it as the requested one. After your edits, if you are at all unsure the document ended up as intended, call getCurrentDocument and reconcile what you claim with the real state; each tool result already tells you exactly what it did, so never report a change the results don't support.`;
+
+/** The system prompt for a turn: whether the user currently allows writes, and through
+ *  which setting. The MCP server reuses it as its instructions, naming its own setting
+ *  and, over stdio, the export tool it serves. Exported so the wording can be tested
+ *  without a provider. */
+export function buildSystemPrompt(options: {
+	editsAllowed: boolean;
+	/** Where the user turns writes back on. Default: the in-app agent's switch. */
+	editsSetting?: string;
+	/** The caller also has a tool that exports the video. */
+	canExport?: boolean;
+}): string {
+	const prompt = BASE_SYSTEM_PROMPT + honestyRules(options.canExport === true);
+	return options.editsAllowed
+		? prompt
+		: prompt + consentPromptBlock(options.editsSetting ?? AGENT_EDITS_SETTING);
 }
 
 /** The prompt of a normal (edits-allowed) turn — the overwhelmingly common

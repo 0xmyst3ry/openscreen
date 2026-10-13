@@ -326,7 +326,7 @@ describe("runChat tool loop", () => {
 
 // ── D-CONSENT ───────────────────────────────────────────────────────────────
 //
-// `allowAgentEdits` is offered in Settings as "Project edits — when off, the
+// `allowAgentEdits` is offered in Settings as "Agent edits — when off, the
 // agent must ask before changing the timeline". `runChat` computed
 // `const editsAllowed = config.allowAgentEdits !== false;` and then, twenty
 // lines later, `void editsAllowed;`. That was every use of it: it reached

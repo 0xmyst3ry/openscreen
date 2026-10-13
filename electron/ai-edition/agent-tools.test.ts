@@ -1769,7 +1769,7 @@ describe("moveClip — the tool the prompt used to promise", () => {
 
 // ── D-CONSENT ───────────────────────────────────────────────────────────────
 //
-// Settings offers "Project edits — when off, the agent must ask before changing
+// Settings offers "Agent edits — when off, the agent must ask before changing
 // the timeline". `chat-service.ts` computed `editsAllowed` and then did
 // `void editsAllowed;`. The flag reached nothing: not the tools, not the prompt.
 describe("allowAgentEdits=false refuses every write", () => {

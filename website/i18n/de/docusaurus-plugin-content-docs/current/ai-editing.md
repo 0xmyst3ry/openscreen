@@ -49,7 +49,7 @@ Der Bereich drumherum:
 - **Modellauswahl**: aktuelle Modellliste des verbundenen Anbieters, mit einer Einstellung für den Reasoning-Aufwand, wo der Anbieter das unterstützt.
 - **Kontextanzeige**: geschätzte verbrauchte Tokens im Verhältnis zum Budget, mit der Aktion **Compact context**, die frühere Runden zusammenfasst, statt sie zu verwerfen.
 - **Rewind to this message**: macht die Änderungen des Agenten und alle folgenden Runden ab diesem Punkt rückgängig und stellt Projekt, Unterhaltung und Agentenzustand gemeinsam wieder her.
-- **Project edits**: ein Schalter in **AI settings**. Ist er aus, wird jede Änderung, die der Agent versucht, abgelehnt: Er kann das Projekt weiterhin lesen und beschreiben, was er ändern würde, wendet aber nichts an, bis du den Schalter wieder einschaltest.
+- **Agenten-Änderungen**: ein Schalter in **AI settings**. Ist er aus, wird jede Änderung, die der Agent versucht, abgelehnt: Er kann das Projekt weiterhin lesen und beschreiben, was er ändern würde, wendet aber nichts an, bis du den Schalter wieder einschaltest.
 
 `Ctrl/Cmd + Z` macht eine Änderung des Agenten genauso rückgängig wie eine manuelle.
 
@@ -65,9 +65,14 @@ Wenn du bereits einen KI-Coding-Agenten wie Claude Code oder Codex nutzt, kann e
 
 1. **AI settings** → **MCP server** → einschalten. Er lauscht nur auf deinem eigenen Rechner (`127.0.0.1`), auf dem angezeigten Port.
 2. Kopiere den dort angezeigten Befehl für **Claude Code** oder **Codex** und führe ihn in einem Terminal aus. Der Befehl für Claude Code enthält das Zugriffstoken. Codex liest es stattdessen aus der Umgebungsvariable `OPENSCREEN_MCP_TOKEN`: Setze sie in der Shell, aus der du Codex startest.
-3. Lass ein Projekt im OpenScreen-Editor geöffnet und bitte dann deinen Agenten um die Änderung.
+3. Bitte deinen Agenten um die Änderung, am im OpenScreen-Editor geöffneten Projekt oder an einem beliebigen anderen Projekt deiner Liste.
 
-Die Werkzeuge sind die, die der eingebaute Agent nutzt, und sie wirken auf das im Editor geöffnete Projekt. MCP-Clients können das Projekt nur **lesen**, bis du im Abschnitt MCP-Server auch **Project edits** einschaltest; dieser Schalter ist von dem des eingebauten Agenten getrennt und steht anfangs auf aus. Ist er an, wird jede Änderung gespeichert, sobald sie ankommt, und mit `Ctrl/Cmd + Z` rückgängig gemacht. Clients werden angewiesen, vor einer Reihe von Änderungen einen Wiederherstellungspunkt zu speichern. So kannst du sie bitten, das Projekt in einem einzigen Schritt wiederherzustellen, wie es war, und auch diesen Schritt kann `Ctrl/Cmd + Z` rückgängig machen. Wenn du das Token mit **Regenerate** ersetzt, werden alle Clients getrennt, die mit dem alten eingerichtet wurden.
+Die Werkzeuge sind die, die der eingebaute Agent nutzt. Sie wirken auf das im Editor geöffnete Projekt, es sei denn, der Client nennt ein anderes: Er kann alle Projekte auflisten und jedes davon lesen oder bearbeiten. MCP-Clients können nur **lesen**, bis du im Abschnitt MCP-Server auch **MCP-Änderungen** einschaltest; dieser Schalter ist von **Agenten-Änderungen**, dem des eingebauten Agenten, getrennt und steht anfangs auf aus. Ist er an, wird jede Änderung gespeichert, sobald sie ankommt:
+
+- **Am im Editor geöffneten Projekt** wird eine Änderung mit `Ctrl/Cmd + Z` rückgängig gemacht. Clients werden angewiesen, vor einer Reihe von Änderungen einen Wiederherstellungspunkt zu speichern. So kannst du sie bitten, das Projekt in einem einzigen Schritt wiederherzustellen, wie es war, und auch diesen Schritt kann `Ctrl/Cmd + Z` rückgängig machen.
+- **An jedem anderen Projekt** wird eine Änderung in seiner Datei gespeichert, wo `Ctrl/Cmd + Z` sie nicht erreicht. Ein Client muss vor der ersten Änderung einen Wiederherstellungspunkt dieses Projekts speichern, und dorthin zurückzukehren ist der einzige Weg, sie rückgängig zu machen.
+
+Wiederherstellungspunkte liegen im Speicher von OpenScreen: Sie gehen verloren, wenn OpenScreen beendet wird oder der Server neu startet, was ein Wechsel des Ports oder ein neues Token bewirkt. Wenn du das Token mit **Regenerate** ersetzt, werden alle Clients getrennt, die mit dem alten eingerichtet wurden.
 
 ## Einen Agenten das ganze Video erstellen lassen {#letting-an-agent-make-the-whole-video}
 
@@ -88,7 +93,8 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 
 Die ausführbare Datei für jedes System steht unter [Die CLI ausführen](./cli.md#running-the-cli).
 
-- **Kein Port, kein Token, keine Einstellung.** Der Agent startet den Prozess selbst, mit deinen Rechten, so wie er `openscreen record` ausführen würde. Deshalb kann er deinen Bildschirm aufnehmen und bearbeiten, ohne den Schalter **Project edits**.
-- **Jeder Take wird zu einem neuen Projekt** in deiner Projektliste, mit Zooms auf seine Klicks, wie eine in der App gemachte Aufnahme: Zeitlich und räumlich nah beieinanderliegende Klicks teilen sich einen Zoom, und die ersten Sekunden und das Ende bleiben auf dem ganzen Bildschirm. Bearbeite es nicht im Editor, solange der Agent noch daran arbeitet: Der Editor hält seine eigene Kopie.
+- **Kein Port, kein Token, keine Einstellung.** Der Agent startet den Prozess selbst, mit deinen Rechten, so wie er `openscreen record` ausführen würde. Deshalb kann er deinen Bildschirm aufnehmen und bearbeiten, ohne den Schalter **MCP-Änderungen**.
+- **Jeder Take wird zu einem neuen Projekt** in deiner Projektliste, mit Zooms auf seine Klicks, wie eine in der App gemachte Aufnahme: Zeitlich und räumlich nah beieinanderliegende Klicks teilen sich einen Zoom, und die ersten Sekunden und das Ende bleiben auf dem ganzen Bildschirm. Jede Änderung des Agenten wird in der Projektdatei gespeichert. Rückgängig macht sie der Wiederherstellungspunkt, den der Agent anlegt und der bis zum Ende seiner Sitzung besteht.
+- **Ein im OpenScreen-Editor geöffnetes Projekt ist tabu.** Der Agent kann es lesen, aber seine Änderungen werden abgelehnt, bis du das Projekt dort schließt, denn der Editor würde seine eigene Kopie darüber speichern.
 - **Ein per Skript gesteuerter Take** (zum Beispiel mit Playwright) bewegt nie den Zeiger auf dem Bildschirm. Der Agent übergibt OpenScreen mit `setPointerTrack` sein eigenes Protokoll der Aktionen, und das Video bekommt trotzdem einen Cursor und dessen Zooms.
 - **Der Skill `openscreen-demo`** bringt einem Agenten die ganze Arbeit bei, vom Storyboard bis zum fertigen Video. Danach hängt er das Video an einen Pull Request, damit die Reviewer die Änderung direkt dort sehen, oder entwirft einen Post auf X, den er erst veröffentlicht, wenn du Ja sagst. Füge ihn mit `npx skills add getopenscreen/openscreen --skill openscreen-demo` hinzu. Das Rezept ist [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).

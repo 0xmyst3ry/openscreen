@@ -5029,10 +5029,11 @@ export function registerIpcHandlers(
 	// dependencies live, but NOT started here: the headless CLI shares this
 	// function and must never bind the port a running app is listening on.
 	// `main.ts` starts it. Its writes have their own switch, off by default and
-	// read on every call — separate from the in-app agent's "Project edits", so
-	// turning the server on grants a client read access and nothing more.
+	// read on every call: "MCP edits", separate from the in-app agent's "Agent edits",
+	// so turning the server on grants a client read access and nothing more.
 	const mcpSettings = new McpSettingsStore(app.getPath("userData"), safeStorage);
 	const mcpToolDeps: McpToolDeps = {
+		transport: "http",
 		host: new EditorDocumentHost(ipcMain),
 		projects: aiEditionDocuments,
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,

@@ -16,6 +16,7 @@ const fakeCrypto: McpTokenCrypto = {
 };
 
 const deps: McpToolDeps = {
+	transport: "http",
 	host: { snapshot: async () => null, apply: async () => "no-editor" },
 	projects: {
 		listProjects: async () => [],

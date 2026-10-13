@@ -26,7 +26,11 @@ export async function serveMcpOverStdio(options: {
 	/** The client went away: nothing is left to serve. */
 	onClose(): void;
 }): Promise<void> {
-	const deps: McpToolDeps = { ...options.mcpToolDeps, editsAllowed: () => true };
+	const deps: McpToolDeps = {
+		...options.mcpToolDeps,
+		transport: "stdio",
+		editsAllowed: () => true,
+	};
 	const runTool = createToolRunner(deps);
 	const server = createOpenScreenMcpServer(deps, runTool, MEDIA_PREAMBLE);
 	registerMediaTools(server, {
