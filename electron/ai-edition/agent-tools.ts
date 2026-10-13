@@ -48,7 +48,6 @@ import {
 	figureDataSchema,
 } from "../../src/lib/ai-edition/schema";
 import { getEditorSettings } from "../../src/lib/ai-edition/store/editorSettings";
-import { applySettingsPatch } from "../../src/lib/ai-edition/store/settingsPatch";
 import { hasAnyClipWithCamera } from "../../src/lib/ai-edition/timeline/camera";
 import { isGeneratedAssetId } from "../../src/lib/ai-edition/timeline/clip-parts";
 import {
@@ -79,8 +78,10 @@ import {
 	zoomTransitions,
 } from "../../src/lib/ai-edition/timeline/zoom-transitions";
 import { SETTING_BOUNDS } from "../../src/lib/projectDefaults";
+import type { SegmentationSupport } from "../../src/native/contracts";
 import { annotationFootageRect, zoomScaleLimit } from "../../src/native/sceneDescription";
 import { ASPECT_RATIO_PRESETS } from "../../src/utils/aspectRatioUtils";
+import { editorSettingsSnapshot, executeSetEditorSettings } from "./editor-settings-tool";
 import { measureTextInShippedFonts } from "./text-measure";
 
 export interface AgentToolExecution {
@@ -670,7 +671,11 @@ export const setClipRangeArgs = z.object({
 });
 
 export const setAspectRatioArgs = z.object({
-	aspectRatio: z.enum(["auto", ...ASPECT_RATIO_PRESETS]),
+	aspectRatio: z
+		.string()
+		.describe(
+			`"auto", one of ${ASPECT_RATIO_PRESETS.join(", ")}, or a token from getCurrentDocument's settingsContext.originalAspectRatios.`,
+		),
 });
 
 export const replaceTimelineArgs = z.object({
@@ -1027,6 +1032,7 @@ export const OPENSCREEN_TOOL_NAMES = [
 	"removeModifier",
 	"removeClip",
 	"setAspectRatio",
+	"setEditorSettings",
 ] as const;
 
 /**
@@ -1100,6 +1106,7 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"removeModifier",
 	"removeClip",
 	"setAspectRatio",
+	"setEditorSettings",
 ]);
 
 export function isMutatingTool(name: string): boolean {
@@ -1512,6 +1519,9 @@ export interface AgentToolOptions {
 	 *  Absent means the runtime has no telemetry reader wired at all, which the
 	 *  executor reports as "could not look", never as "there is none". */
 	cursorTelemetry?: CursorTelemetryContext;
+	/** Whether this machine can cut out the camera background, asked only by the two tools that
+	 *  report it. Absent where nothing can ask the compositor: reported as not checked. */
+	cameraSegmentation?: () => SegmentationSupport;
 }
 
 /**
@@ -1724,28 +1734,33 @@ export function executeAgentTool(
 
 	switch (name) {
 		case "setAspectRatio": {
+			// The format alone, kept for clients that know it: setEditorSettings does the work.
 			const parsed = setAspectRatioArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
 			const previous = getEditorSettings(document).aspectRatio;
-			// The editor's own write: the frame-placed annotations keep their centre, and a text is
-			// refitted to its words in the new frame, measured in the shipped fonts.
-			const next = applySettingsPatch(
+			const execution = executeSetEditorSettings(
 				document,
 				{ aspectRatio: parsed.data.aspectRatio },
-				measureTextInShippedFonts,
+				options?.cameraSegmentation?.() ?? null,
 			);
+			if (!execution.ok) return execution;
 			return {
-				ok: true,
-				document: next,
+				...execution,
 				resultJson: JSON.stringify({ aspectRatio: parsed.data.aspectRatio, previous }),
 				summary: `set the format to ${parsed.data.aspectRatio}`,
 			};
 		}
 
+		case "setEditorSettings":
+			return executeSetEditorSettings(document, args, options?.cameraSegmentation?.() ?? null);
+
 		case "getCurrentDocument": {
 			return {
 				ok: true,
-				resultJson: JSON.stringify(documentSnapshotForModel(document, options?.cursorTelemetry)),
+				resultJson: JSON.stringify({
+					...documentSnapshotForModel(document, options?.cursorTelemetry),
+					...editorSettingsSnapshot(document, options?.cameraSegmentation?.() ?? null),
+				}),
 			};
 		}
 

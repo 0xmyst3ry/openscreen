@@ -203,6 +203,7 @@ describe("the mutating-tool table", () => {
 				"setAudio",
 				"setCameraFullscreen",
 				"setClipRange",
+				"setEditorSettings",
 				"setSpeed",
 				"setTrim",
 				"setWordText",
