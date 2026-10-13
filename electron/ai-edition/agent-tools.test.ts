@@ -7,6 +7,7 @@ import {
 	documentSchema,
 } from "../../src/lib/ai-edition/schema";
 import { ZOOM_DEPTH_SCALES } from "../../src/lib/ai-edition/timeline/zoom-scale";
+import { zoomScaleLimit } from "../../src/native/sceneDescription";
 import { executeAgentTool, isMutatingTool, MUTATING_TOOL_NAMES } from "./agent-tools";
 import { measureTextInShippedFonts } from "./text-measure";
 
@@ -2507,6 +2508,34 @@ describe("addAudio / setAudio", () => {
 		});
 	});
 
+	it("fades a track in and out, reads the fades back, and refuses one past the inspector's cap", () => {
+		const placed = place(withAudioAsset(), {
+			assetId: "audio_1",
+			startSec: 2,
+			endSec: 6,
+			fadeInMs: 800,
+		});
+		expect(placed.document?.audioTracks[0]).toMatchObject({ fadeInMs: 800, fadeOutMs: 0 });
+		const id = JSON.parse(placed.resultJson).audioId;
+		const faded = executeAgentTool(
+			placed.document as AxcutDocument,
+			"setAudio",
+			JSON.stringify({ audioId: id, fadeOutMs: 1500 }),
+		);
+		expect(JSON.parse(faded.resultJson)).toMatchObject({ fadeInMs: 800, fadeOutMs: 1500 });
+		const snapshot = JSON.parse(
+			executeAgentTool(faded.document as AxcutDocument, "getCurrentDocument", "").resultJson,
+		);
+		expect(snapshot.audioTracks[0]).toMatchObject({ fadeInMs: 800, fadeOutMs: 1500 });
+		expect(
+			executeAgentTool(
+				placed.document as AxcutDocument,
+				"setAudio",
+				JSON.stringify({ audioId: id, fadeInMs: 5001 }),
+			).ok,
+		).toBe(false);
+	});
+
 	it("setAudio applies the same offset guard as addAudio", () => {
 		const placed = place(withAudioAsset(20), { assetId: "audio_1", startSec: 2, endSec: 6 });
 		const id = JSON.parse(placed.resultJson).audioId;
@@ -3196,5 +3225,252 @@ describe("zoom transitions are reported, not hidden (#1028)", () => {
 		expect(trimmed.payload.applied[0].cutTransitions).toEqual([
 			{ zoomId: snapshotZoom(trimmed.document).id, side: "out", cutSec: 0.77, by: "trim" },
 		]);
+	});
+});
+
+// #1180 batch C: what the inspector sets on a zoom or an annotation, the agent sets and reads back.
+describe("region tools reach the inspector's settings (#1180)", () => {
+	const run = (doc: AxcutDocument, name: string, args: Record<string, unknown>) => {
+		const result = executeAgentTool(doc, name, JSON.stringify(args));
+		return { ...result, payload: JSON.parse(result.resultJson) };
+	};
+	const snapshot = (doc: AxcutDocument | undefined) =>
+		JSON.parse(executeAgentTool(doc as AxcutDocument, "getCurrentDocument", "").resultJson);
+
+	it("sets a zoom's focus mode, hidden cursor and free level, and reads them back", () => {
+		const added = run(fixtureDocument(), "addZoom", {
+			startSec: 2,
+			endSec: 4,
+			focusMode: "auto",
+			hideCursor: true,
+			customScale: 1.6,
+		});
+		expect(added.ok).toBe(true);
+		expect(added.document?.zoomRanges[0]).toMatchObject({
+			focusMode: "auto",
+			hideCursor: true,
+			customScale: 1.6,
+		});
+		expect(added.payload).toMatchObject({
+			focusMode: "auto",
+			hideCursor: true,
+			renderedScale: 1.6,
+		});
+		expect(() => documentSchema.parse(added.document)).not.toThrow();
+		expect(snapshot(added.document).zoomRanges[0]).toMatchObject({
+			focusMode: "auto",
+			hideCursor: true,
+			customScale: 1.6,
+			renderedScale: 1.6,
+		});
+
+		const id = added.payload.zoomId;
+		const shown = run(added.document as AxcutDocument, "setZoom", {
+			zoomId: id,
+			hideCursor: false,
+			focusMode: "manual",
+		});
+		expect(shown.document?.zoomRanges[0]).not.toHaveProperty("hideCursor");
+		expect(shown.document?.zoomRanges[0]).toMatchObject({ focusMode: "manual", customScale: 1.6 });
+		expect(snapshot(shown.document).zoomRanges[0]).not.toHaveProperty("hideCursor");
+	});
+
+	it("writes a level the depth table has as that depth, as the inspector does", () => {
+		const added = run(fixtureDocument(), "addZoom", { startSec: 2, endSec: 4, customScale: 2.2 });
+		expect(added.document?.zoomRanges[0]).toMatchObject({ depth: 4 });
+		expect(added.document?.zoomRanges[0]).not.toHaveProperty("customScale");
+
+		const custom = run(added.document as AxcutDocument, "setZoom", {
+			zoomId: added.payload.zoomId,
+			customScale: 1.333,
+		});
+		// To the hundredth, like a typed level.
+		expect(custom.document?.zoomRanges[0]).toMatchObject({ depth: 4, customScale: 1.33 });
+		const preset = run(custom.document as AxcutDocument, "setZoom", {
+			zoomId: added.payload.zoomId,
+			customScale: 1.5,
+		});
+		expect(preset.document?.zoomRanges[0]).toMatchObject({ depth: 2 });
+		expect(preset.document?.zoomRanges[0]).not.toHaveProperty("customScale");
+	});
+
+	it("refuses a level past the clip's own limit, naming it, and depth with customScale", () => {
+		const added = run(fixtureDocument(), "addZoom", { startSec: 2, endSec: 4 });
+		const limit = zoomScaleLimit(added.document as AxcutDocument, added.payload.zoomId);
+		// The fixture's 1080p take at the default padding blurs before the renderer's own 5×.
+		expect(limit).toBeLessThan(5);
+		const past = run(added.document as AxcutDocument, "setZoom", {
+			zoomId: added.payload.zoomId,
+			customScale: limit + 0.1,
+		});
+		expect(past.ok).toBe(false);
+		expect(past.payload.error).toContain(`${limit}×`);
+		expect(past.document).toBeUndefined();
+		expect(
+			run(fixtureDocument(), "addZoom", { startSec: 2, endSec: 4, customScale: limit + 0.1 }).ok,
+		).toBe(false);
+		expect(
+			run(added.document as AxcutDocument, "setZoom", {
+				zoomId: added.payload.zoomId,
+				customScale: limit,
+			}).ok,
+		).toBe(true);
+		const both = run(fixtureDocument(), "addZoom", {
+			startSec: 2,
+			endSec: 4,
+			depth: 3,
+			customScale: 2,
+		});
+		expect(both.ok).toBe(false);
+	});
+
+	it("reads an annotation back in the terms its writes take", () => {
+		const added = run(fixtureDocument(), "addAnnotation", {
+			startSec: 1,
+			endSec: 3,
+			text: "Hi",
+			x: 30,
+			y: 70,
+			fontSize: 48,
+			background: "none",
+			animation: "pop",
+		});
+		const [ann] = snapshot(added.document).annotations;
+		expect(ann).toMatchObject({
+			type: "text",
+			text: "Hi",
+			box: "frame",
+			x: expect.closeTo(30, 1),
+			y: expect.closeTo(70, 1),
+			fontSize: 48,
+			color: "#ffffff",
+			background: "none",
+			bold: true,
+			animation: "pop",
+		});
+		expect(ann.width).toBeGreaterThan(0);
+		expect(added.payload).toMatchObject({ type: "text", fontSize: 48 });
+	});
+
+	it("adds a privacy blur on the recording's picture, sized and placed as asked", () => {
+		const added = run(fixtureDocument(), "addAnnotation", {
+			startSec: 1,
+			endSec: 3,
+			type: "blur",
+			x: 20,
+			y: 10,
+			width: 30,
+			height: 6,
+			blurData: { type: "blur", intensity: 20 },
+		});
+		expect(added.ok).toBe(true);
+		const stored = added.document?.annotations[0];
+		expect(stored).toMatchObject({
+			type: "blur",
+			content: "",
+			position: { x: 5, y: 7 },
+			size: { width: 30, height: 6 },
+			blurData: { type: "blur", shape: "rectangle", intensity: 20 },
+		});
+		// A blur stays on what it hides: measured on the footage, never on the frame.
+		expect(stored?.space).toBeUndefined();
+		expect(() => documentSchema.parse(added.document)).not.toThrow();
+		expect(snapshot(added.document).annotations[0]).toMatchObject({
+			type: "blur",
+			box: "footage",
+			x: 20,
+			y: 10,
+			width: 30,
+			height: 6,
+			blurData: { type: "blur", shape: "rectangle", color: "white", intensity: 20, blockSize: 12 },
+		});
+		expect(snapshot(added.document).annotations[0]).not.toHaveProperty("text");
+
+		// A patch of blurData changes what it names and keeps the rest.
+		const oval = run(added.document as AxcutDocument, "setAnnotation", {
+			annotationId: added.payload.annotationId,
+			blurData: { shape: "oval" },
+		});
+		expect(oval.document?.annotations[0].blurData).toMatchObject({
+			type: "blur",
+			shape: "oval",
+			intensity: 20,
+		});
+	});
+
+	it("adds an arrow on the frame with its figureData", () => {
+		const added = run(fixtureDocument(), "addAnnotation", {
+			startSec: 1,
+			endSec: 3,
+			type: "figure",
+			figureData: { arrowDirection: "down-left", color: "#ff0000" },
+		});
+		expect(added.ok).toBe(true);
+		expect(added.document?.annotations[0]).toMatchObject({
+			type: "figure",
+			space: "frame",
+			size: { width: 30, height: 20 },
+			figureData: { arrowDirection: "down-left", color: "#ff0000", strokeWidth: 4 },
+		});
+		expect(() => documentSchema.parse(added.document)).not.toThrow();
+		expect(snapshot(added.document).annotations[0]).toMatchObject({
+			type: "figure",
+			box: "frame",
+			x: 50,
+			y: 50,
+			figureData: { arrowDirection: "down-left" },
+		});
+	});
+
+	it("switches an annotation's type as the inspector does, keeping the text to come back to", () => {
+		const added = run(fixtureDocument(), "addAnnotation", {
+			startSec: 1,
+			endSec: 3,
+			text: "secret@example.com",
+		});
+		const id = added.payload.annotationId;
+		const blurred = run(added.document as AxcutDocument, "setAnnotation", {
+			annotationId: id,
+			type: "blur",
+		});
+		expect(blurred.ok).toBe(true);
+		const blur = blurred.document?.annotations[0];
+		expect(blur).toMatchObject({ type: "blur", content: "", textContent: "secret@example.com" });
+		expect(blur?.space).toBeUndefined();
+		expect(() => documentSchema.parse(blurred.document)).not.toThrow();
+
+		const back = run(blurred.document as AxcutDocument, "setAnnotation", {
+			annotationId: id,
+			type: "text",
+		});
+		expect(back.document?.annotations[0]).toMatchObject({
+			type: "text",
+			content: "secret@example.com",
+			space: "frame",
+		});
+	});
+
+	it("refuses arguments that mean nothing for the annotation's kind", () => {
+		const text = run(fixtureDocument(), "addAnnotation", { startSec: 1, endSec: 3, text: "Hi" });
+		const id = text.payload.annotationId;
+		const doc = text.document as AxcutDocument;
+		expect(run(doc, "setAnnotation", { annotationId: id, width: 40 }).ok).toBe(false);
+		expect(run(doc, "setAnnotation", { annotationId: id, blurData: { type: "blur" } }).ok).toBe(
+			false,
+		);
+		expect(
+			run(doc, "setAnnotation", { annotationId: id, type: "blur", blurData: { type: "blur" } }).ok,
+		).toBe(true);
+		expect(
+			run(fixtureDocument(), "addAnnotation", {
+				startSec: 1,
+				endSec: 3,
+				type: "blur",
+				blurData: { shape: "freehand" },
+			}).ok,
+		).toBe(false);
+		expect(
+			run(fixtureDocument(), "addAnnotation", { startSec: 1, endSec: 3, type: "image" }).ok,
+		).toBe(false);
 	});
 });

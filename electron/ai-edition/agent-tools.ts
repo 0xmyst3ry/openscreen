@@ -17,8 +17,13 @@
 
 import { z } from "zod";
 import { DEFAULT_TEXT_PLATE } from "../../src/lib/ai-edition/annotations/background";
-import { fitTextInFrame } from "../../src/lib/ai-edition/annotations/placement";
 import {
+	convertAnnotationKind,
+	DEFAULT_ANNOTATION_BOX,
+	fitTextInFrame,
+} from "../../src/lib/ai-edition/annotations/placement";
+import {
+	AUDIO_FADE_MAX_MS,
 	collapseTracksToPills,
 	patchAudioTrack,
 	placeAudioTrackInDocument,
@@ -36,7 +41,12 @@ import {
 	setClipSourceRange,
 } from "../../src/lib/ai-edition/document/timeline";
 import { setDocumentWordText } from "../../src/lib/ai-edition/document/transcript";
-import type { AxcutAnnotationRegion, AxcutDocument } from "../../src/lib/ai-edition/schema";
+import {
+	type AxcutAnnotationRegion,
+	type AxcutDocument,
+	blurDataSchema,
+	figureDataSchema,
+} from "../../src/lib/ai-edition/schema";
 import { getEditorSettings } from "../../src/lib/ai-edition/store/editorSettings";
 import { applySettingsPatch } from "../../src/lib/ai-edition/store/settingsPatch";
 import { hasAnyClipWithCamera } from "../../src/lib/ai-edition/timeline/camera";
@@ -58,7 +68,10 @@ import {
 } from "../../src/lib/ai-edition/timeline/trim-mapping";
 import {
 	effectiveZoomScale,
+	MAX_ZOOM_SCALE,
+	MIN_ZOOM_SCALE,
 	ZOOM_DEPTH_LEGEND,
+	zoomLevelFor,
 } from "../../src/lib/ai-edition/timeline/zoom-scale";
 import {
 	chainedPans,
@@ -66,6 +79,7 @@ import {
 	zoomTransitions,
 } from "../../src/lib/ai-edition/timeline/zoom-transitions";
 import { SETTING_BOUNDS } from "../../src/lib/projectDefaults";
+import { annotationFootageRect, zoomScaleLimit } from "../../src/native/sceneDescription";
 import { ASPECT_RATIO_PRESETS } from "../../src/utils/aspectRatioUtils";
 import { measureTextInShippedFonts } from "./text-measure";
 
@@ -196,6 +210,129 @@ function applyAnnotationLook(
 		}
 	}
 	return next;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * One annotation as the agent reads it back, in the terms its writes take: the centre (x, y) and
+ * size of its box, which box that is, and the look of its kind. A text reports the look arguments,
+ * an arrow its figureData and a blur its blurData, the defaults filled in as the renderer fills
+ * them. An image reports its box only: its content is a data URL, megabytes of nothing to read.
+ */
+function annotationForAgent(a: AxcutAnnotationRegion): Record<string, unknown> {
+	const geometry = {
+		box: a.space === "frame" ? "frame" : "footage",
+		x: round2(a.position.x + a.size.width / 2),
+		y: round2(a.position.y + a.size.height / 2),
+		width: round2(a.size.width),
+		height: round2(a.size.height),
+	};
+	switch (a.type) {
+		case "text":
+			return {
+				type: a.type,
+				text: a.content || a.textContent || "",
+				...geometry,
+				fontSize: a.style.fontSize,
+				color: a.style.color,
+				background: a.style.backgroundColor === "transparent" ? "none" : a.style.backgroundColor,
+				bold: a.style.fontWeight === "bold",
+				animation: a.style.textAnimation ?? "none",
+			};
+		case "figure":
+			return {
+				type: a.type,
+				...geometry,
+				figureData: figureDataSchema.unwrap().parse(a.figureData ?? {}),
+			};
+		case "blur":
+			return {
+				type: a.type,
+				...geometry,
+				blurData: blurDataSchema.unwrap().parse(a.blurData ?? {}),
+			};
+		default:
+			return { type: a.type, ...geometry };
+	}
+}
+
+/** The arguments that only mean something for one kind of annotation, refused on another. */
+function refuseShapeMismatch(
+	type: AxcutAnnotationRegion["type"],
+	data: {
+		text?: string;
+		width?: number;
+		height?: number;
+		figureData?: unknown;
+		blurData?: { shape?: string };
+	},
+): AgentToolExecution | null {
+	if (type === "text" && (data.width !== undefined || data.height !== undefined)) {
+		return failure("A text box is sized to its words: change fontSize, not width or height.");
+	}
+	if (type !== "text" && data.text !== undefined) {
+		return failure(`text is for a text annotation; this one is ${type}. Pass type "text" with it.`);
+	}
+	if (type !== "figure" && data.figureData !== undefined) {
+		return failure(`figureData is an arrow's; this annotation is ${type}. Pass type "figure".`);
+	}
+	if (type !== "blur" && data.blurData !== undefined) {
+		return failure(`blurData is a blur's; this annotation is ${type}. Pass type "blur".`);
+	}
+	// The editor no longer offers it either: its input was broken and it renders as its bounding
+	// box, and a privacy mask that is half reliable is worse than none.
+	if (data.blurData?.shape === "freehand") {
+		return failure('A freehand blur is not offered: use shape "rectangle" or "oval".');
+	}
+	return null;
+}
+
+/** The fields of `parsed` the caller actually sent: the schema fills in defaults, and a patch
+ *  must not reset what it never named. */
+function sentKeys<T extends object>(parsed: T | undefined, raw: unknown): Partial<T> {
+	if (!parsed || !raw || typeof raw !== "object") return {};
+	return Object.fromEntries(Object.entries(parsed).filter(([key]) => key in raw)) as Partial<T>;
+}
+
+/**
+ * An arrow's, a blur's or an image's box and data: `size` centred on `center` and kept inside its
+ * reference box, as the editor keeps one it moves; then the figureData or blurData the caller sent,
+ * over what the annotation had or the schema's defaults.
+ */
+function shapeAnnotation(
+	region: AxcutAnnotationRegion,
+	center: { x: number; y: number },
+	size: { width: number; height: number },
+	data: { figureData?: object; blurData?: object },
+	rawArgs: unknown,
+): AxcutAnnotationRegion {
+	const raw = (rawArgs ?? {}) as { figureData?: unknown; blurData?: unknown };
+	const { width, height } = size;
+	return {
+		...region,
+		position: {
+			x: Math.min(Math.max(center.x - width / 2, 0), Math.max(0, 100 - width)),
+			y: Math.min(Math.max(center.y - height / 2, 0), Math.max(0, 100 - height)),
+		},
+		size: { width, height },
+		...(region.type === "figure"
+			? {
+					figureData: {
+						...figureDataSchema.unwrap().parse(region.figureData ?? {}),
+						...sentKeys(data.figureData, raw.figureData),
+					},
+				}
+			: {}),
+		...(region.type === "blur"
+			? {
+					blurData: {
+						...blurDataSchema.unwrap().parse(region.blurData ?? {}),
+						...sentKeys(data.blurData, raw.blurData),
+					},
+				}
+			: {}),
+	} as AxcutAnnotationRegion;
 }
 
 /**
@@ -584,12 +721,28 @@ const focusSchema = z.object({ cx: z.number().min(0).max(1), cy: z.number().min(
  *  (getCurrentDocument) as `rotationPreset`, absent when flat. */
 const rotationPresetSchema = z.enum(["none", "left", "right", "orbit"]);
 
+/** The inspector's focus mode: `manual` holds `focus`, `auto` follows the recorded pointer. */
+const focusModeSchema = z.enum(["manual", "auto"]);
+
+/** The inspector's free zoom level: a factor, refused outside the range it accepts. The clip's own
+ *  limit (`zoomScaleLimit`) is checked once the zoom is placed, as the inspector checks it. */
+const customScaleSchema = z
+	.number()
+	.min(MIN_ZOOM_SCALE)
+	.max(MAX_ZOOM_SCALE)
+	.describe(
+		`A free zoom level, as a factor (${MIN_ZOOM_SCALE}–${MAX_ZOOM_SCALE}, e.g. 2 for 2×), in place of depth. Refused past the clip's own limit, the deepest its recording takes before it blurs; the refusal names it.`,
+	);
+
 export const addZoomArgs = z.object({
 	startSec: secondsSchema,
 	endSec: secondsSchema,
 	depth: depthSchema.default(3),
 	focus: focusSchema.default({ cx: 0.5, cy: 0.5 }),
 	rotationPreset: rotationPresetSchema.default("none"),
+	focusMode: focusModeSchema.default("manual"),
+	hideCursor: z.boolean().default(false),
+	customScale: customScaleSchema.optional(),
 });
 
 /** A zoom with its 3D camera set: `none` drops the key, as a flat zoom never carries it. */
@@ -599,6 +752,59 @@ function withRotationPreset<Z extends { rotationPreset?: unknown }>(
 ): Z {
 	const { rotationPreset: _previous, ...flat } = zoom;
 	return (preset === "none" ? flat : { ...flat, rotationPreset: preset }) as Z;
+}
+
+/** `customScale` as the inspector's typed level writes it: to the hundredth, and a level the depth
+ *  table has as that depth (`zoomLevelFor`). Empty when the caller passed none. */
+function zoomLevelArg(customScale: number | undefined): {
+	depth?: 1 | 2 | 3 | 4 | 5 | 6;
+	customScale?: number;
+} {
+	return customScale === undefined ? {} : zoomLevelFor(Math.round(customScale * 100) / 100);
+}
+
+/** depth and customScale are two ways of saying one thing: both at once has no single meaning. */
+function refuseTwoLevels(args: unknown): AgentToolExecution | null {
+	const raw = (args ?? {}) as { depth?: unknown; customScale?: unknown };
+	return raw.depth !== undefined && raw.customScale !== undefined
+		? failure("Pass depth or customScale, not both: they set the same zoom level.")
+		: null;
+}
+
+/**
+ * The inspector's bound on a typed level: the deepest the clip under the zoom takes before its
+ * recording blurs (`zoomScaleLimit`, the bound the scene applies), the tightest over every
+ * fragment. Refused rather than clamped, as the inspector refuses it, so the caller hears the limit.
+ */
+function refuseScalePastLimit(
+	next: AxcutDocument,
+	ids: string[],
+	customScale: number | undefined,
+): AgentToolExecution | null {
+	if (customScale === undefined) return null;
+	const scale = Math.round(customScale * 100) / 100;
+	const limit = Math.min(...ids.map((id) => zoomScaleLimit(next, id)));
+	return scale > limit
+		? failure(
+				`The zoom was NOT written: customScale ${scale} is deeper than this clip takes (${limit}× at most), past which its recording blurs. Pick ${limit} or less.`,
+			)
+		: null;
+}
+
+/** focusMode, hideCursor and customScale as the snapshot reports them, for a write's result. */
+function zoomBehaviourReport(
+	zoom: AxcutDocument["zoomRanges"][number],
+	document: AxcutDocument,
+): Record<string, unknown> {
+	const autoFocusAll = (document.legacyEditor as Record<string, unknown> | null)?.autoFocusAll;
+	return {
+		focusMode: autoFocusAll === true ? "auto" : (zoom.focusMode ?? "manual"),
+		...(autoFocusAll === true && zoom.focusMode !== "auto"
+			? { focusModeOverriddenByAutoFocusAll: true }
+			: {}),
+		...(zoom.hideCursor ? { hideCursor: true } : {}),
+		...(zoom.customScale != null ? { customScale: zoom.customScale } : {}),
+	};
 }
 
 /** Same contract as `addTrimsArgs`: the element schema IS the unitary one, and
@@ -614,6 +820,9 @@ export const setZoomArgs = z.object({
 	depth: depthSchema.optional(),
 	focus: focusSchema.optional(),
 	rotationPreset: rotationPresetSchema.optional(),
+	focusMode: focusModeSchema.optional(),
+	hideCursor: z.boolean().optional(),
+	customScale: customScaleSchema.optional(),
 });
 
 // The bound every speed reader applies (`readSpeedRegions`): refused here, so the agent hears
@@ -656,24 +865,60 @@ const annotationLookArgs = {
 		.describe("How the text enters: typewriter types it out, pop springs it in, and so on."),
 };
 
+/** The kinds the inspector's type switch offers, image aside: an image needs a file read. */
+const annotationTypeSchema = z
+	.enum(["text", "figure", "blur"])
+	.describe(
+		"text: words on the frame. figure: an arrow. blur: a privacy mask that blurs or pixelates what is under it, such as an email address or a token on screen.",
+	);
+
+/** What an arrow or a blur has instead of a text's look: its box, and its own data. */
+const annotationShapeArgs = {
+	width: z
+		.number()
+		.positive()
+		.max(100)
+		.optional()
+		.describe(
+			"Box width, in percent of the annotation's box: the output frame for an arrow, the recording's picture for a blur. Not for text, whose box is its words.",
+		),
+	height: z
+		.number()
+		.positive()
+		.max(100)
+		.optional()
+		.describe("Box height, in percent of the same box as width."),
+	figureData: figureDataSchema.describe("An arrow's direction, colour and stroke width."),
+	blurData: blurDataSchema.describe(
+		"A blur's look: type blur or mosaic, shape rectangle or oval, color of the mosaic grid, intensity, blockSize.",
+	),
+};
+
 export const addAnnotationArgs = z.object({
 	startSec: secondsSchema,
 	endSec: secondsSchema,
+	type: annotationTypeSchema.default("text"),
 	text: z.string().default(""),
 	x: z.number().min(0).max(100).default(50),
 	y: z.number().min(0).max(100).default(50),
 	...annotationLookArgs,
+	...annotationShapeArgs,
 });
 
 export const setAnnotationArgs = z.object({
 	annotationId: z.string().min(1),
 	startSec: secondsSchema.optional(),
 	endSec: secondsSchema.optional(),
+	type: annotationTypeSchema.optional(),
 	text: z.string().optional(),
 	x: z.number().min(0).max(100).optional(),
 	y: z.number().min(0).max(100).optional(),
 	...annotationLookArgs,
+	...annotationShapeArgs,
 });
+
+/** A track's fade, capped where the inspector's slider stops. */
+const fadeMsSchema = z.number().int().min(0).max(AUDIO_FADE_MAX_MS);
 
 export const addAudioArgs = z.object({
 	assetId: z.string().min(1),
@@ -682,6 +927,8 @@ export const addAudioArgs = z.object({
 	kind: z.enum(["voiceover", "music"]).default("music"),
 	offsetSec: secondsSchema.default(0),
 	gainDb: z.number().min(-60).max(12).default(0),
+	fadeInMs: fadeMsSchema.default(0),
+	fadeOutMs: fadeMsSchema.default(0),
 });
 
 export const setAudioArgs = z.object({
@@ -693,6 +940,8 @@ export const setAudioArgs = z.object({
 	gainDb: z.number().min(-60).max(12).optional(),
 	muted: z.boolean().optional(),
 	loop: z.boolean().optional(),
+	fadeInMs: fadeMsSchema.optional(),
+	fadeOutMs: fadeMsSchema.optional(),
 });
 
 export const addCameraFullscreenArgs = z.object({
@@ -996,7 +1245,10 @@ export function documentSnapshotForModel(
 			"timeline, longer above 1x and shorter below, so read the bounds rather than adding transitionSec). cutByTrim names the move a trim cuts into (in, out or both), cutByJunction the move a clip junction cuts (the clip ends before the move does): the export jumps at that cut. " +
 			"Two zooms at most 1.5 s apart on screen, with no trim or clip junction between them, are CHAINED: " +
 			"no zoom-out and back in, the camera pans from the first (panToZoomId, panUntilSec: 1 s of screen " +
-			"time from its endSec, which can run into the next span) to the second (panFromZoomId).",
+			"time from its endSec, which can run into the next span) to the second (panFromZoomId). " +
+			"focusMode auto follows the recorded pointer instead of holding focus; hideCursor: true hides the pointer while the zoom is on screen (absent, it shows).",
+		annotationNote:
+			"Each annotation reports its box the way addAnnotation and setAnnotation take it: x/y its centre, width/height its size, in percent of `box`. box 'frame' is the output frame (text and arrows, which padding and zooms never move); box 'footage' is the recording's picture (a blur, which stays on what it hides when the picture moves). A text also reports its look (fontSize, color, background, bold, animation), an arrow (type 'figure') its figureData, a blur its blurData.",
 		project: { id: document.project.id, title: document.project.title },
 		primaryAssetId: document.project.primaryAssetId ?? document.assets[0]?.id ?? null,
 		autoFocusAll,
@@ -1074,6 +1326,7 @@ export function documentSnapshotForModel(
 				...(z.rotationPreset ? { rotationPreset: z.rotationPreset } : {}),
 				focus: z.focus,
 				focusMode: autoFocusAll ? "auto" : (z.focusMode ?? "manual"),
+				...(z.hideCursor ? { hideCursor: true } : {}),
 				source: z.source ?? "manual",
 			}),
 		),
@@ -1087,8 +1340,7 @@ export function documentSnapshotForModel(
 			id: a.id,
 			startSec: roundSec(a.startMs),
 			endSec: roundSec(a.endMs),
-			type: a.type,
-			text: a.textContent ?? a.content ?? "",
+			...annotationForAgent(a),
 		})),
 		cameraFullscreenRegions: coalesceForAgent(cameraFullscreenRegions).map((c) => ({
 			id: c.id,
@@ -1110,6 +1362,8 @@ export function documentSnapshotForModel(
 			gainDb: t.gainDb,
 			muted: t.muted,
 			loop: t.loop,
+			fadeInMs: t.fadeInMs,
+			fadeOutMs: t.fadeOutMs,
 		})),
 		hasTranscript: document.transcripts.length > 0 || document.transcript !== null,
 	};
@@ -2170,16 +2424,21 @@ export function executeAgentTool(
 		case "addZoom": {
 			const parsed = addZoomArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
+			const twoLevels = refuseTwoLevels(args);
+			if (twoLevels) return twoLevels;
 			const startMs = toMs(Math.min(parsed.data.startSec, parsed.data.endSec));
 			const endMs = toMs(Math.max(parsed.data.startSec, parsed.data.endSec));
+			const level = zoomLevelArg(parsed.data.customScale);
 			const zoom = withRotationPreset(
 				{
 					id: createId("zoom"),
 					startMs,
 					endMs,
 					depth: parsed.data.depth as 1 | 2 | 3 | 4 | 5 | 6,
+					...level,
 					focus: parsed.data.focus,
-					focusMode: "manual" as const,
+					focusMode: parsed.data.focusMode,
+					...(parsed.data.hideCursor ? { hideCursor: true } : {}),
 					source: "manual" as const,
 				} as AxcutDocument["zoomRanges"][number],
 				parsed.data.rotationPreset,
@@ -2191,6 +2450,8 @@ export function executeAgentTool(
 				...document,
 				zoomRanges: [...document.zoomRanges, ...placed] as AxcutDocument["zoomRanges"],
 			};
+			const pastLimit = refuseScalePastLimit(next, landing.ids, parsed.data.customScale);
+			if (pastLimit) return pastLimit;
 			// Measured over what was STORED, never over what was asked for: `placed`
 			// is the clamped, ventilated truth, so the report cannot end up
 			// describing a window the zoom does not occupy.
@@ -2205,6 +2466,7 @@ export function executeAgentTool(
 					// The depth alone is an ordinal; reported on its own it is what the
 					// model turns into "3×" for a frame that renders 1.80×.
 					renderedScale: effectiveZoomScale(zoom),
+					...zoomBehaviourReport(zoom, document),
 					...landingReport(landing, startMs / 1000, endMs / 1000),
 					...(anchor ? { cursorAnchor: anchor } : {}),
 					...cutTransitionsReport(document, next),
@@ -2225,6 +2487,8 @@ export function executeAgentTool(
 		case "setZoom": {
 			const parsed = setZoomArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
+			const twoLevels = refuseTwoLevels(args);
+			if (twoLevels) return twoLevels;
 			const { zoomId } = parsed.data;
 			const existing = document.zoomRanges.find((z) => z.id === zoomId);
 			if (!existing) return failure(`Unknown zoom: ${zoomId}`);
@@ -2244,17 +2508,26 @@ export function executeAgentTool(
 			const clearsCustomScale =
 				parsed.data.depth !== undefined &&
 				document.zoomRanges.some((z) => zoomPill.has(z.id) && z.customScale != null);
+			const level = zoomLevelArg(parsed.data.customScale);
+			const { hideCursor, focusMode } = parsed.data;
 			const rebuiltZooms = replacePillSpan(
 				// payload edits first, applied to every region under the pill…
 				document.zoomRanges.map((z) => {
 					if (!zoomPill.has(z.id)) return z;
-					const { customScale, ...rest } = z;
+					const { customScale, hideCursor: wasHidden, ...rest } = z;
+					// A level the table has is written as its depth, which drops the custom scale.
+					const keepsScale = !clearsCustomScale && !("depth" in level);
 					const edited = {
-						...(clearsCustomScale ? rest : z),
+						...rest,
+						...(keepsScale && customScale != null ? { customScale } : {}),
+						// As the inspector writes it: shown is the absence of the flag.
+						...((hideCursor ?? wasHidden) ? { hideCursor: true } : {}),
 						...(parsed.data.depth !== undefined
 							? { depth: parsed.data.depth as 1 | 2 | 3 | 4 | 5 | 6 }
 							: {}),
+						...level,
 						...(parsed.data.focus ? { focus: parsed.data.focus } : {}),
+						...(focusMode ? { focusMode } : {}),
 					};
 					return parsed.data.rotationPreset === undefined
 						? edited
@@ -2270,6 +2543,8 @@ export function executeAgentTool(
 			const landing = landingAfterPillEdit(document.zoomRanges, rebuiltZooms, zoomPill, document);
 			if (!landing.anchored) return coversNoClip("zoom", startMs / 1000, endMs / 1000, document);
 			const next: AxcutDocument = { ...document, zoomRanges: rebuiltZooms };
+			const pastLimit = refuseScalePastLimit(next, landing.ids, parsed.data.customScale);
+			if (pastLimit) return pastLimit;
 			// Read back off the document, not off the request: the pill may have been
 			// re-ventilated, and `renderedScale` is the only number the viewer sees.
 			const landed = new Set(landing.ids);
@@ -2296,6 +2571,7 @@ export function executeAgentTool(
 								depth: strength.depth,
 								renderedScale: effectiveZoomScale(strength),
 								...(strength.rotationPreset ? { rotationPreset: strength.rotationPreset } : {}),
+								...zoomBehaviourReport(strength, document),
 							}
 						: {}),
 					...(clearsCustomScale ? { clearedCustomScale: true } : {}),
@@ -2393,11 +2669,17 @@ export function executeAgentTool(
 		case "addAnnotation": {
 			const parsed = addAnnotationArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
+			const { type } = parsed.data;
+			const mismatch = refuseShapeMismatch(type, {
+				...parsed.data,
+				text: parsed.data.text || undefined,
+			});
+			if (mismatch) return mismatch;
 			const startMs = toMs(Math.min(parsed.data.startSec, parsed.data.endSec));
 			const endMs = toMs(Math.max(parsed.data.startSec, parsed.data.endSec));
 			// The editor's new text: its defaults, then whatever look the caller asked for, on the
 			// output frame with the box fitted to the text around x/y (the text's centre).
-			const ann = placeTextOnFrame(
+			const text = placeTextOnFrame(
 				{
 					id: createId("ann"),
 					startMs,
@@ -2426,6 +2708,29 @@ export function executeAgentTool(
 				{ x: parsed.data.x, y: parsed.data.y },
 				document,
 			);
+			// An arrow or a blur is that text switched to its kind, as the inspector's type switch
+			// does it, then given its box around x/y and its data. Nothing to convert through: the
+			// box is set right after, in the kind's own reference box.
+			const ann =
+				type === "text"
+					? text
+					: shapeAnnotation(
+							{
+								...text,
+								...convertAnnotationKind(text, type, {
+									footage: null,
+									frameAspect: 0,
+									measure: measureTextInShippedFonts,
+								}),
+							},
+							{ x: parsed.data.x, y: parsed.data.y },
+							{
+								width: parsed.data.width ?? DEFAULT_ANNOTATION_BOX.width,
+								height: parsed.data.height ?? DEFAULT_ANNOTATION_BOX.height,
+							},
+							parsed.data,
+							args,
+						);
 			const placed = anchorForAgent(ann, document, "ann");
 			const landing = landingOf(placed, document);
 			if (!landing.anchored) {
@@ -2441,9 +2746,13 @@ export function executeAgentTool(
 				resultJson: JSON.stringify({
 					annotationId: landing.ids[0],
 					...landingReport(landing, startMs / 1000, endMs / 1000),
+					...annotationForAgent(placed[0] as AxcutAnnotationRegion),
 				}),
 				summary:
-					`added annotation "${parsed.data.text.slice(0, 24)}" ${formatSec(landing.startSec)} – ${formatSec(landing.endSec)}` +
+					(type === "text"
+						? `added annotation "${parsed.data.text.slice(0, 24)}"`
+						: `added ${type === "blur" ? "blur" : "arrow"}`) +
+					` ${formatSec(landing.startSec)} – ${formatSec(landing.endSec)}` +
 					landingSuffix(landing, startMs / 1000, endMs / 1000),
 			};
 		}
@@ -2461,8 +2770,28 @@ export function executeAgentTool(
 				endMs,
 			});
 			if (blocked) return blocked;
-			const { x, y, text } = parsed.data;
-			const edit = (a: AxcutAnnotationRegion): AxcutAnnotationRegion => {
+			const { x, y, text, type, width, height } = parsed.data;
+			const mismatch = refuseShapeMismatch(type ?? existing.type, parsed.data);
+			if (mismatch) return mismatch;
+			const frameAspect = resolveAspectRatioValue(
+				document,
+				getEditorSettings(document).aspectRatio,
+			);
+			const edit = (original: AxcutAnnotationRegion): AxcutAnnotationRegion => {
+				// The inspector's type switch, through the footage under this very fragment: the box
+				// changes reference (a blur lives on the footage, the rest on the frame) without
+				// moving on screen, and the previous kind's content is parked, not lost.
+				const converted = type !== undefined && type !== original.type;
+				const a = converted
+					? {
+							...original,
+							...convertAnnotationKind(original, type, {
+								footage: annotationFootageRect(document, original.id),
+								frameAspect,
+								measure: measureTextInShippedFonts,
+							}),
+						}
+					: original;
 				const next: AxcutAnnotationRegion = {
 					...a,
 					...(text !== undefined ? { content: text, textContent: text } : {}),
@@ -2485,16 +2814,23 @@ export function executeAgentTool(
 						? placeTextOnFrame(next, centre, document)
 						: next;
 				}
-				if (!moved) return next;
-				// An image or an arrow keeps its size and moves its centre, inside its own box.
-				const { width, height } = a.size;
-				return {
-					...next,
-					position: {
-						x: Math.min(Math.max(centre.x - width / 2, 0), Math.max(0, 100 - width)),
-						y: Math.min(Math.max(centre.y - height / 2, 0), Math.max(0, 100 - height)),
-					},
-				};
+				const reshaped =
+					moved ||
+					converted ||
+					width !== undefined ||
+					height !== undefined ||
+					parsed.data.figureData !== undefined ||
+					parsed.data.blurData !== undefined;
+				if (!reshaped) return next;
+				// An image, an arrow or a blur keeps its size unless given one, and moves its centre,
+				// inside its own box.
+				return shapeAnnotation(
+					next,
+					centre,
+					{ width: width ?? a.size.width, height: height ?? a.size.height },
+					parsed.data,
+					args,
+				);
 			};
 			const rebuiltAnnotations = replacePillSpan(
 				document.annotations.map((a) => (annPill.has(a.id) ? edit(a) : a)),
@@ -2514,12 +2850,14 @@ export function executeAgentTool(
 				return coversNoClip("annotation", startMs / 1000, endMs / 1000, document);
 			}
 			const next: AxcutDocument = { ...document, annotations: rebuiltAnnotations };
+			const landed = rebuiltAnnotations.find((a) => a.id === landing.ids[0]);
 			return {
 				ok: true,
 				document: next,
 				resultJson: JSON.stringify({
 					annotationId: landing.ids[0] ?? annotationId,
 					...landingReport(landing, startMs / 1000, endMs / 1000),
+					...(landed ? annotationForAgent(landed) : {}),
 				}),
 				summary:
 					`updated annotation ${formatSec(landing.startSec)} – ${formatSec(landing.endSec)}` +
@@ -2611,7 +2949,7 @@ export function executeAgentTool(
 		case "addAudio": {
 			const parsed = addAudioArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
-			const { assetId, kind, offsetSec, gainDb } = parsed.data;
+			const { assetId, kind, offsetSec, gainDb, fadeInMs, fadeOutMs } = parsed.data;
 			const asset = document.assets.find((a) => a.id === assetId);
 			// Two distinct refusals, because they need two different corrections: an
 			// unknown id is a hallucinated asset, a video id is the model reaching for
@@ -2662,8 +3000,8 @@ export function executeAgentTool(
 					offsetMs: toMs(offsetSec),
 					gainDb,
 					loop: false,
-					fadeInMs: 0,
-					fadeOutMs: 0,
+					fadeInMs,
+					fadeOutMs,
 					muted: false,
 					label: asset.label,
 					origin: "agent",
@@ -2716,6 +3054,8 @@ export function executeAgentTool(
 				...(parsed.data.gainDb !== undefined ? { gainDb: parsed.data.gainDb } : {}),
 				...(parsed.data.muted !== undefined ? { muted: parsed.data.muted } : {}),
 				...(parsed.data.loop !== undefined ? { loop: parsed.data.loop } : {}),
+				...(parsed.data.fadeInMs !== undefined ? { fadeInMs: parsed.data.fadeInMs } : {}),
+				...(parsed.data.fadeOutMs !== undefined ? { fadeOutMs: parsed.data.fadeOutMs } : {}),
 				...(parsed.data.offsetSec !== undefined ? { offsetMs: toMs(parsed.data.offsetSec) } : {}),
 			});
 
@@ -2762,6 +3102,8 @@ export function executeAgentTool(
 					audioId,
 					startSec: roundSec(after?.startMs ?? pill.startMs),
 					endSec: roundSec(after?.endMs ?? pill.endMs),
+					fadeInMs: after?.fadeInMs ?? pill.fadeInMs,
+					fadeOutMs: after?.fadeOutMs ?? pill.fadeOutMs,
 				}),
 				summary: `updated audio ${audioId} ${formatSec(roundSec(after?.startMs ?? pill.startMs))} – ${formatSec(roundSec(after?.endMs ?? pill.endMs))}`,
 			};

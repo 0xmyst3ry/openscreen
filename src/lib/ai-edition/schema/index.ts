@@ -390,7 +390,7 @@ export const timelineOperationSchema = z.discriminatedUnion("type", [
 // (AnnotationRegion / ZoomRegion) — duplicated here so the schema package has no
 // dependency on the React editor module.
 
-const blurDataSchema = z
+export const blurDataSchema = z
 	.object({
 		type: z.enum(["blur", "mosaic"]).default("mosaic"),
 		shape: z.enum(["rectangle", "oval", "freehand"]).default("rectangle"),
@@ -403,7 +403,7 @@ const blurDataSchema = z
 	})
 	.optional();
 
-const figureDataSchema = z
+export const figureDataSchema = z
 	.object({
 		arrowDirection: z
 			.enum(["up", "down", "left", "right", "up-right", "up-left", "down-right", "down-left"])

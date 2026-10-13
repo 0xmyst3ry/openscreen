@@ -60,6 +60,18 @@ export function effectiveZoomScale(region: ZoomScaleInput): number {
 }
 
 /**
+ * A zoom level as the document stores it: a level the table has is written as its depth, so a
+ * document keeps naming its presets, and anything else as a `customScale`. The inspector's level
+ * control and the agent's zoom tools both write through this.
+ */
+export function zoomLevelFor(scale: number): { depth: ZoomDepth } | { customScale: number } {
+	const depth = (Object.keys(ZOOM_DEPTH_SCALES).map(Number) as ZoomDepth[]).find(
+		(d) => ZOOM_DEPTH_SCALES[d] === scale,
+	);
+	return depth === undefined ? { customScale: scale } : { depth };
+}
+
+/**
  * How far a recording may be blown up on the finished frame before it visibly blurs: output
  * pixels per source pixel. Crop and zoom multiply, so the zoom a clip can take depends on
  * how big it already is at rest (`maxZoomScaleFor`).
