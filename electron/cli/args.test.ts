@@ -166,6 +166,12 @@ describe("parseCliArgs", () => {
 		});
 		expect(parse(["export", "a.openscreen", "--no-gif-loop"])).toMatchObject({ gifLoop: false });
 		expect(parse(["export", "a.openscreen", "--gif-loop"])).toMatchObject({ gifLoop: true });
+		expect(parse(["export", "a.openscreen", "-o", "x.gif", "--quality", "good"])).toMatchObject({
+			kind: "error",
+		});
+		expect(parse(["export", "a.openscreen", "--format", "gif", "--fps", "30"])).toMatchObject({
+			kind: "error",
+		});
 	});
 
 	it("parses --auto-zoom", () => {

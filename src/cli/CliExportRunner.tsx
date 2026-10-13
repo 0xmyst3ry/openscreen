@@ -248,6 +248,11 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 			"--audio is only supported for MP4 exports (this project's stored format is gif; pass --format mp4)",
 		);
 	}
+	if (request.quality && format === "gif") {
+		throw new Error(
+			"--quality is only supported for MP4 exports (this project's stored format is gif; a GIF is sized with --gif-size)",
+		);
+	}
 	const quality = request.quality ?? editor.exportQuality;
 	const gifFrameRate = request.gifFrameRate ?? editor.gifFrameRate;
 	const gifSizePreset = request.gifSizePreset ?? editor.gifSizePreset;
