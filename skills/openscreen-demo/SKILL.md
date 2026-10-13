@@ -86,7 +86,7 @@ Use the document tools, always with the `projectId`. Read the project first with
 - **Undo:** `restoreCheckpoint` with the `checkpointId` takes the project back to the raw take in one step. It also puts back the take's own pointer track, undoing any `setPointerTrack` made since.
 - **Open in the app:** while OpenScreen is running, your edits go through it, so a project the user has open in its editor changes there live and they can undo each edit. If an edit is refused as "open in the OpenScreen editor", the app did not answer: retry once, then ask the user to close the project there or restart OpenScreen.
 
-Keep the rest as it is: the background, padding, shadow and cursor style are chosen to look good.
+Keep the rest as it is: the background, padding, shadow and cursor style are chosen to look good. When the user asks for a different look, `setEditorSettings` sets it (background, frame, camera layout, cursor, volume); `getCurrentDocument` shows the current values under `settings`, and `settingsContext.inactive` says which ones would change nothing right now.
 
 ## 7. Export and review
 

@@ -41,7 +41,7 @@ Die Anmeldeoptionen für ChatGPT und GitHub Copilot wurden **in 1.8.0 entfernt**
 
 ## Den Agenten nutzen {#using-the-agent}
 
-Beschreibe die Änderung in Alltagssprache, etwa „schneide die Stille im Intro heraus“ oder „zoome hinein, wenn ich das Terminal öffne“. Der Agent arbeitet mit echten, rückgängig machbaren Operationen auf der Zeitleiste, nicht mit einem neuen Rendering: Er kann Schnitte, Zooms, Geschwindigkeitsbereiche, Annotationen (Text, Pfeile und Unschärfen, die private Details auf dem Bildschirm verbergen), importierte Audiospuren samt Ein- und Ausblendung und Full-Camera-Segmente hinzufügen und anpassen, Start- und Endpunkte von Clips ändern, Clips umsortieren oder entfernen und das Transkript lesen, um herauszufinden, was du meinst.
+Beschreibe die Änderung in Alltagssprache, etwa „schneide die Stille im Intro heraus“ oder „zoome hinein, wenn ich das Terminal öffne“. Der Agent arbeitet mit echten, rückgängig machbaren Operationen auf der Zeitleiste, nicht mit einem neuen Rendering: Er kann Schnitte, Zooms, Geschwindigkeitsbereiche, Annotationen (Text, Pfeile und Unschärfen, die private Details auf dem Bildschirm verbergen), importierte Audiospuren samt Ein- und Ausblendung und Full-Camera-Segmente hinzufügen und anpassen, Start- und Endpunkte von Clips ändern, Clips umsortieren oder entfernen und das Transkript lesen, um herauszufinden, was du meinst. Außerdem stellt er das Aussehen des Videos ein: Hintergrund, Innenabstand, abgerundete Ecken, Schatten, Geräterahmen, Format, das Kamera-Layout, den Cursor und die Gesamtlautstärke.
 
 Der Bereich drumherum:
 

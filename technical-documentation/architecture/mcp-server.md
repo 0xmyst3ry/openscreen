@@ -42,6 +42,15 @@ So a tool added to the agent appears over MCP with no further work, and the MCP 
 - **`createCheckpoint` / `restoreCheckpoint`**, see [Checkpoints](#checkpoints).
 - MCP metadata: `readOnlyHint` for the reads (`!isMutatingTool`), `listProjects` and `createCheckpoint`, and `destructiveHint` for `replaceTimeline`, the three `remove*` tools and `restoreCheckpoint`.
 
+### The project's look
+
+`setEditorSettings` ([`editor-settings-tool.ts`](../../electron/ai-edition/editor-settings-tool.ts)) writes every setting of the editor's look panes: background, frame, format, camera layout, cursor, `autoFocusAll` and `audioGainDb`. It takes a partial `EditorSettingsPatch` and applies it with `applySettingsPatch`, the editor's own write, plus what the panes do around a pick (a first fixed format fills the frame, an untouched camera roundness follows its shape, the camera framing is stored as size and pan). `setAspectRatio` is the same write for the format alone.
+
+- **Validation.** Numbers are held to `SETTING_BOUNDS`, enums to the constant lists, and both wallpapers go through `parseStylePresetWallpaper`: a colour, a gradient, a bundled path or an inline PNG/JPEG, never `file://` nor a URL. The schema is strict, so a misnamed key is refused rather than dropped.
+- **Read side.** `getCurrentDocument` adds `settings`, in the tool's own shape with data-URL wallpapers elided, and `settingsContext`: the formats on offer (`originalAspectRatios` from `collectNativeFormats`), `formatFill`, `hasTiltedZoom`, the bundled wallpapers, the cursor themes, `cameraSegmentation`, and `inactive`, each setting the editor hides in the current state with why. A write reports the same for the keys it set.
+- **Segmentation.** `McpToolDeps.cameraSegmentation` and the in-app agent's `ChatRunEnv` ask the compositor (`probeSegmentation`), wired in `registerIpcHandlers`; `openscreen mcp` inherits it with `mcpToolDeps`. Where nothing is wired it reads `null`, "not checked".
+- **Not covered yet:** style presets (`StylePresetService`) are not exposed; `setEditorSettings` reaches every field a preset holds.
+
 ## What each transport tells its client
 
 Every text a client reads must be true on the server that serves it, so the texts are composed rather than shared verbatim. `McpToolDeps.transport` (`"http"` or `"stdio"`) selects them:
