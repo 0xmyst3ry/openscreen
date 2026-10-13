@@ -309,6 +309,48 @@ describe("recording", () => {
 	});
 });
 
+describe("createProject", () => {
+	it("creates an empty project the document tools can edit at once", async () => {
+		const created = await call("createProject", { title: "  Blank  " });
+		expect(created.isError).toBeFalsy();
+		const { projectId, checkpointId } = JSON.parse(textOf(created));
+		expect(checkpointId).toEqual(expect.any(String));
+		const document = await documents.getProject(projectId);
+		expect(document.project.title).toBe("Blank");
+		expect(document.assets).toEqual([]);
+		// Its checkpoint lets an edit land on the file straight away.
+		const renamed = await call("setProjectInfo", { projectId, title: "Named" });
+		expect(renamed.isError).toBeFalsy();
+		expect((await documents.getProject(projectId)).project.title).toBe("Named");
+	});
+
+	it("lays a video out as one clip, titled after the file, with the zooms of its clicks", async () => {
+		await fs.writeFile(videoPath, "video");
+		const created = await call("createProject", { videoPath });
+		expect(created.isError).toBeFalsy();
+		const result = JSON.parse(textOf(created));
+		expect(result).toMatchObject({ durationSec: 12 });
+		expect(result.autoZooms).toBeGreaterThan(0);
+		const document = await documents.getProject(result.projectId);
+		expect(document.project.title).toBe("take");
+		expect(document.timeline.clips).toHaveLength(1);
+		expect(document.assets[0]).toMatchObject({ originalPath: videoPath, durationSec: 12 });
+	});
+
+	it("creates nothing from a path it cannot use", async () => {
+		const missing = await call("createProject", { videoPath: path.join(dir, "gone.mp4") });
+		expect(missing.isError).toBe(true);
+		expect(textOf(missing)).toContain("No file");
+		const relative = await call("createProject", { videoPath: "take.mp4" });
+		expect(textOf(relative)).toContain("must be absolute");
+		await fs.writeFile(videoPath, "video");
+		openVideoFails = true;
+		const unreadable = await call("createProject", { videoPath });
+		expect(textOf(unreadable)).toContain("media error 4");
+		expect(await documents.listProjects()).toEqual([]);
+	});
+});
+
 describe("pointerSamples", () => {
 	const startedAt = 10_000;
 	const samples = pointerSamples(
@@ -716,7 +758,7 @@ describe("the media tools in the app", () => {
 		allowed = false;
 		const app = await connectApp();
 		expect(app.getInstructions()).toContain(
-			"startRecording and exportVideo are refused too while 'MCP edits'",
+			"startRecording, exportVideo and createProject are refused too while 'MCP edits'",
 		);
 		const started = await callOn(app, "startRecording", {});
 		expect(started.isError).toBe(true);
@@ -728,6 +770,9 @@ describe("the media tools in the app", () => {
 		});
 		expect(textOf(exported)).toContain("'MCP edits'");
 		expect(runners.started).toEqual([]);
+		const created = await callOn(app, "createProject", {});
+		expect(textOf(created)).toContain("'MCP edits'");
+		expect(await documents.listProjects()).toEqual([]);
 		// Reading stays open: listing what could be recorded changes nothing.
 		runners.results.sources = {
 			success: true,

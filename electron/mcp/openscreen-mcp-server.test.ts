@@ -24,6 +24,7 @@ import {
 	MCP_ENDPOINT_PATH,
 	type McpApplyResult,
 	type McpDocumentHost,
+	type McpToolDeps,
 	mcpInstructions,
 	type RunningMcpServer,
 	startMcpHttpServer,
@@ -141,7 +142,11 @@ afterEach(async () => {
 
 async function connect(
 	editor: FakeEditor,
-	options: { editsAllowed?: boolean; headers?: Record<string, string> } = {},
+	options: {
+		editsAllowed?: boolean;
+		headers?: Record<string, string>;
+		media?: Pick<McpToolDeps, "openVideo" | "approveMedia">;
+	} = {},
 ) {
 	const editsAllowed = () => options.editsAllowed ?? true;
 	const deps = {
@@ -150,6 +155,7 @@ async function connect(
 		projects,
 		editsAllowed,
 		version: "0.0.0",
+		...options.media,
 	};
 	const unused = () => {
 		throw new Error("not used by these tests");
@@ -192,6 +198,9 @@ describe("the MCP tool surface", () => {
 		expect(tools.map((t) => t.name)).toEqual([
 			LIST_PROJECTS_TOOL,
 			...OPENSCREEN_TOOL_NAMES,
+			"setProjectInfo",
+			"importMedia",
+			"removeMedia",
 			"createCheckpoint",
 			"restoreCheckpoint",
 			// The same as `openscreen mcp` serves (#1174).
@@ -201,6 +210,7 @@ describe("the MCP tool surface", () => {
 			"setPointerTrack",
 			"exportVideo",
 			"getFrames",
+			"createProject",
 		]);
 		for (const tool of tools.slice(1, 1 + OPENSCREEN_TOOL_NAMES.length)) {
 			expect(tool.description).toBe(TOOL_DESCRIPTIONS[tool.name]);
@@ -231,6 +241,8 @@ describe("the MCP tool surface", () => {
 		expect(byName.get(LIST_PROJECTS_TOOL)?.readOnlyHint).toBe(true);
 		expect(byName.get("addTrim")?.readOnlyHint).toBe(false);
 		expect(byName.get("removeClip")?.destructiveHint).toBe(true);
+		expect(byName.get("removeMedia")?.destructiveHint).toBe(true);
+		expect(byName.get("importMedia")?.readOnlyHint).toBe(false);
 		expect(byName.get("createCheckpoint")?.readOnlyHint).toBe(true);
 		expect(byName.get("restoreCheckpoint")?.destructiveHint).toBe(true);
 	});
@@ -247,7 +259,7 @@ describe("the MCP tool surface", () => {
 			"Without a projectId they act on the project open in the editor",
 		);
 		expect(instructions).toContain("startRecording hands over to OpenScreen's recording bar");
-		expect(instructions).toContain("startRecording and exportVideo are refused too");
+		expect(instructions).toContain("startRecording, exportVideo and createProject are refused too");
 		expect(instructions).toContain("all of them are lost when OpenScreen quits.");
 		expect(instructions).toContain("turn on 'MCP edits' under MCP server in AI settings");
 		expect(instructions).not.toContain("Agent edits");
@@ -458,6 +470,147 @@ describe("checkpoints", () => {
 		const result = await mcp.callTool({ name: "restoreCheckpoint", arguments: { checkpointId } });
 		expect(result.isError).toBe(true);
 		expect(resultText(result)).toContain("another project");
+		expect(editor.applied).toHaveLength(0);
+	});
+});
+
+describe("the project's name and media", () => {
+	function probe(durationSec = 12) {
+		return vi.fn(async () => ({
+			durationSec,
+			width: 1920,
+			height: 1080,
+			close: () => undefined,
+			capture: async () => ({ mimeType: "image/jpeg" as const, data: "" }),
+		}));
+	}
+
+	function mediaFile(name: string): string {
+		const file = path.join(dir, name);
+		writeFileSync(file, "media");
+		return file;
+	}
+
+	it("renames the open project through the editor, trimmed as the editor commits it", async () => {
+		const editor = new FakeEditor();
+		const mcp = await connect(editor);
+		const result = await mcp.callTool({
+			name: "setProjectInfo",
+			arguments: { title: "  Launch demo " },
+		});
+		expect(result.isError).toBeFalsy();
+		expect(editor.applied).toHaveLength(1);
+		expect(editor.document?.project.title).toBe("Launch demo");
+
+		const empty = await mcp.callTool({ name: "setProjectInfo", arguments: { title: "  " } });
+		expect(empty.isError).toBe(true);
+		expect(editor.applied).toHaveLength(1);
+	});
+
+	it("imports a video into the open project, measured and readable by the editor", async () => {
+		const editor = new FakeEditor();
+		const openVideo = probe();
+		const approveMedia = vi.fn();
+		const mcp = await connect(editor, { media: { openVideo, approveMedia } });
+		const file = mediaFile("broll.mp4");
+		const result = await mcp.callTool({ name: "importMedia", arguments: { path: file } });
+		expect(result.isError).toBeFalsy();
+		const { assetId, kind, durationSec } = JSON.parse(resultText(result));
+		expect([kind, durationSec]).toEqual(["video", 12]);
+		expect(editor.applied).toHaveLength(1);
+		const asset = editor.document?.assets.find((a) => a.id === assetId);
+		expect(asset).toMatchObject({ originalPath: file, label: "broll.mp4", durationSec: 12 });
+		expect(asset?.video).toMatchObject({ width: 1920, height: 1080 });
+		// The project already has its footage: an import never takes its place.
+		expect(editor.document?.project.primaryAssetId).toBe("asset_1");
+		expect(approveMedia).toHaveBeenCalledWith(file);
+	});
+
+	it("files an audio-only extension as audio, and still imports a file it cannot measure", async () => {
+		const editor = new FakeEditor();
+		const openVideo = vi.fn(async () => {
+			throw new Error("media error 4");
+		});
+		const mcp = await connect(editor, { media: { openVideo } });
+		const result = await mcp.callTool({
+			name: "importMedia",
+			arguments: { path: mediaFile("voice.mp3"), label: "Voiceover" },
+		});
+		expect(result.isError).toBeFalsy();
+		expect(JSON.parse(resultText(result))).toMatchObject({
+			kind: "audio",
+			label: "Voiceover",
+			durationSec: null,
+		});
+		expect(editor.document?.assets.at(-1)?.kind).toBe("audio");
+	});
+
+	it("refuses a relative, missing or unsupported path before probing anything", async () => {
+		const editor = new FakeEditor();
+		const openVideo = probe();
+		const mcp = await connect(editor, { media: { openVideo } });
+		for (const [filePath, says] of [
+			["broll.mp4", "must be absolute"],
+			[path.join(dir, "missing.mp4"), "No file"],
+			[mediaFile("notes.txt"), "Unsupported video extension"],
+		]) {
+			const result = await mcp.callTool({ name: "importMedia", arguments: { path: filePath } });
+			expect(result.isError).toBe(true);
+			expect(resultText(result)).toContain(says);
+		}
+		expect(openVideo).not.toHaveBeenCalled();
+		expect(editor.applied).toHaveLength(0);
+	});
+
+	it("imports nothing while MCP edits is off", async () => {
+		const editor = new FakeEditor();
+		const openVideo = probe();
+		const mcp = await connect(editor, { editsAllowed: false, media: { openVideo } });
+		const refused = await mcp.callTool({
+			name: "importMedia",
+			arguments: { path: mediaFile("ok.mp4") },
+		});
+		expect(refused.isError).toBe(true);
+		expect(resultText(refused)).toContain("'MCP edits'");
+		expect(openVideo).not.toHaveBeenCalled();
+		expect(editor.applied).toHaveLength(0);
+	});
+
+	it("removes media only once the timeline no longer uses it", async () => {
+		const editor = new FakeEditor();
+		const mcp = await connect(editor, { media: { openVideo: probe() } });
+		const inUse = await mcp.callTool({ name: "removeMedia", arguments: { assetId: "asset_1" } });
+		expect(inUse.isError).toBe(true);
+		expect(resultText(inUse)).toContain("clip_1 (removeClip)");
+		expect(editor.applied).toHaveLength(0);
+
+		const imported = await mcp.callTool({
+			name: "importMedia",
+			arguments: { path: mediaFile("unused.mov") },
+		});
+		const { assetId } = JSON.parse(resultText(imported));
+		const removed = await mcp.callTool({ name: "removeMedia", arguments: { assetId } });
+		expect(removed.isError).toBeFalsy();
+		expect(editor.document?.assets.map((a) => a.id)).toEqual(["asset_1"]);
+	});
+
+	it("edits a project that is not open on its file, once it has a checkpoint", async () => {
+		await projects.saveProject(fixtureDocument("proj_2"));
+		const editor = new FakeEditor();
+		const mcp = await connect(editor, { media: { openVideo: probe() } });
+		const args = { projectId: "proj_2", path: mediaFile("music.wav") };
+		const refused = await mcp.callTool({ name: "importMedia", arguments: args });
+		expect(resultText(refused)).toContain("createCheckpoint");
+		await mcp.callTool({ name: "createCheckpoint", arguments: { projectId: "proj_2" } });
+		const result = await mcp.callTool({ name: "importMedia", arguments: args });
+		expect(result.isError).toBeFalsy();
+		await mcp.callTool({
+			name: "setProjectInfo",
+			arguments: { projectId: "proj_2", title: "Renamed" },
+		});
+		const saved = await projects.getProject("proj_2");
+		expect(saved.assets.map((a) => a.kind)).toEqual(["video", "audio"]);
+		expect(saved.project.title).toBe("Renamed");
 		expect(editor.applied).toHaveLength(0);
 	});
 });

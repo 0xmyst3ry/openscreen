@@ -40,6 +40,7 @@ import {
 	type RunnerEdit,
 	textResult as text,
 } from "./openscreen-mcp-server";
+import { mediaPathProblem } from "./project-tools";
 
 /** What startRecording asks a recorder for. */
 export type RecordRequest = Pick<
@@ -192,6 +193,7 @@ export function mediaPreamble(transport: McpTransport): string {
 	return [
 		"OpenScreen records the screen, turns each take into a project you edit with the document tools, and exports it as a video.",
 		"A demo goes: listSources, then startRecording, then drive the app, then stopRecording. It returns the projectId and a checkpointId. Edit with the document tools, always passing that projectId: every edit is saved to the project straight away, and restoreCheckpoint with the checkpointId takes the project back to the raw take in one step. Then exportVideo, and getFrames with the projectId to check the export before you hand it over: it takes the same ruler seconds as the document tools, so a trim or a speed region never shifts what you look at.",
+		"To edit a video you already have instead, createProject with its videoPath; importMedia adds a video or an audio file to a project.",
 		"Drive the app with the real mouse when you can: OpenScreen records the pointer, draws a clean cursor and zooms on the clicks as the editor does: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. If you drive it from a script instead (Playwright, CDP), the screen pointer never moves: log each action as the script runs it, then hand the log to setPointerTrack after stopRecording.",
 		TAKE_NOTES[transport],
 	].join("\n");
@@ -214,6 +216,11 @@ const STOP_RECORDING_DESCRIPTIONS: Record<McpTransport, string> = {
 	http: "Stop the recording. OpenScreen's editor opens the take as a new project, as it does after any recording: one clip, plus the zooms planned from the recorded clicks when Record mode's Auto-zoom after recording is on, and autoZooms says how many. Returns the projectId to edit, now open in the editor, a checkpointId that restores the take as it opened, and the take's videoPath.",
 	stdio:
 		"Stop the recording and turn the take into a new project, laid out as the editor lays out a fresh recording: one clip, plus the zooms planned from the recorded clicks. Not one per click: clicks close in time and on screen share one zoom, a click in the first seconds or the one that stopped the take gets none, and autoZooms says how many there are. Returns the projectId to edit, a checkpointId that restores the raw take, and the take's videoPath.",
+};
+
+const CREATE_PROJECT_NOTES: Record<McpTransport, string> = {
+	http: "The editor keeps the project it has open: the new one is in OpenScreen's project list, for the user to open.",
+	stdio: "It is in the OpenScreen app's project list, so the user can open it in its editor.",
 };
 
 const EXPORT_PATH_DESCRIPTIONS: Record<McpTransport, string> = {
@@ -434,6 +441,15 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 	/** Each project's last export of this session, and when it was made: what getFrames reads. */
 	const lastExports = new Map<string, { path: string; at: Date; rendered: AxcutDocument }>();
 
+	/** A fresh project's checkpoint, so a client can edit it at once and take it back in one step. */
+	async function checkpointOf(projectId: string): Promise<string | null> {
+		const checkpoint = await deps.runTool("createCheckpoint", { projectId });
+		const checkpointText = checkpoint.content[0]?.type === "text" ? checkpoint.content[0].text : "";
+		return checkpoint.isError
+			? null
+			: ((JSON.parse(checkpointText) as { checkpointId?: string }).checkpointId ?? null);
+	}
+
 	/** Stops the take, then hands back its project with a checkpoint of it. */
 	async function stopTake(
 		running: RunningTake,
@@ -447,15 +463,10 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		}
 		startedAtByVideo.set(recorded.videoPath, running.startedAt);
 		const { projectId } = recorded;
-		const checkpoint = await deps.runTool("createCheckpoint", { projectId });
-		const checkpointText = checkpoint.content[0]?.type === "text" ? checkpoint.content[0].text : "";
-		const checkpointId = checkpoint.isError
-			? null
-			: (JSON.parse(checkpointText) as { checkpointId?: string }).checkpointId;
 		return text(
 			JSON.stringify({
 				projectId,
-				checkpointId,
+				checkpointId: await checkpointOf(projectId),
 				videoPath: recorded.videoPath,
 				durationSec: recorded.durationSec,
 				recordingStartedAt: running.startedAt,
@@ -792,6 +803,70 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 				} finally {
 					video.close();
 				}
+			},
+		);
+
+		server.registerTool(
+			"createProject",
+			{
+				description: [
+					"Create a new project, in the look new projects start with in OpenScreen (the style preset marked for them, else the last edited project's), as the editor's New does. Empty, or from a video file laid out as one clip, as the editor lays out an opened video, with zooms planned from the clicks when the video is an OpenScreen recording with its pointer track; autoZooms says how many.",
+					`Returns the projectId to edit and a checkpointId that restores the project as it was created. Fill an empty one with importMedia. ${CREATE_PROJECT_NOTES[transport]}`,
+				].join("\n"),
+				inputSchema: z.object({
+					title: z
+						.string()
+						.optional()
+						.describe(
+							"The project's title in OpenScreen. Default: the video's file name, or Untitled Project.",
+						),
+					videoPath: z
+						.string()
+						.optional()
+						.describe(
+							"Absolute path of a video (.mp4, .mov, .m4v, .webm, .mkv, .avi, .wmv) to start from. Omit it for an empty project.",
+						),
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			async (args) => {
+				if (!deps.editsAllowed()) {
+					return text(
+						`No project was created: OpenScreen lets MCP clients create projects only while the user allows it. Ask the user to turn on ${MCP_EDITS_SETTING}.`,
+						true,
+					);
+				}
+				const title = args.title?.trim();
+				if (args.videoPath === undefined) {
+					const created = await deps.documents.createProject(title ?? "");
+					const projectId = created.project.id;
+					return text(JSON.stringify({ projectId, checkpointId: await checkpointOf(projectId) }));
+				}
+				const videoPath = args.videoPath;
+				const problem = await mediaPathProblem(videoPath, "video");
+				if (problem) return text(problem, true);
+				let project: Awaited<ReturnType<typeof createProjectFromVideo>>;
+				try {
+					project = await createProjectFromVideo(
+						deps,
+						videoPath,
+						title || path.parse(videoPath).name,
+					);
+				} catch (error) {
+					return text(
+						`No project was created: ${error instanceof Error ? error.message : String(error)}`,
+						true,
+					);
+				}
+				const projectId = project.document.project.id;
+				return text(
+					JSON.stringify({
+						projectId,
+						checkpointId: await checkpointOf(projectId),
+						durationSec: project.durationSec,
+						autoZooms: project.autoZooms,
+					}),
+				);
 			},
 		);
 	}

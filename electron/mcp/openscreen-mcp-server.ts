@@ -24,6 +24,8 @@
 // back to where the turn started. For a project that is not open they are the
 // only way back, so an edit to one is refused until it has a checkpoint. The
 // in-app agent has no need for them: its whole turn is already a single apply.
+// Nor for the project's own edits (project-tools.ts: its name, its media), which
+// reach a file on disk the in-app agent has no way to name.
 //
 // Two transports serve these tools: the in-app server over HTTP (below) and
 // `openscreen mcp` over stdio (`stdio-server.ts`), both with the media tools around
@@ -68,6 +70,17 @@ import {
 	type ProjectVersion,
 } from "../ai-edition/document-service";
 import type { MediaTools } from "./media-tools";
+import {
+	IMPORT_MEDIA_TOOL,
+	type ImportMediaDeps,
+	PROJECT_EDIT_TOOLS,
+	PROJECT_TOOLS,
+	prepareImportMedia,
+	REMOVE_MEDIA_TOOL,
+	removeMedia,
+	SET_PROJECT_INFO_TOOL,
+	setProjectInfo,
+} from "./project-tools";
 
 export const MCP_SERVER_NAME = "openscreen";
 export const MCP_ENDPOINT_PATH = "/mcp";
@@ -124,7 +137,7 @@ type ProjectRead = Awaited<ReturnType<McpProjectStore["getProjectForUpdate"]>>;
  */
 export type McpTransport = "http" | "stdio";
 
-export interface McpToolDeps {
+export interface McpToolDeps extends ImportMediaDeps {
 	transport: McpTransport;
 	host: McpDocumentHost;
 	projects: McpProjectStore;
@@ -225,7 +238,9 @@ export function mcpInstructions(options: {
 		...CORE_PREAMBLES[transport],
 		CHECKPOINT_LIFETIMES[transport],
 		...(media && !editsAllowed
-			? [`startRecording and exportVideo are refused too while ${MCP_EDITS_SETTING} is off.`]
+			? [
+					`startRecording, exportVideo and createProject are refused too while ${MCP_EDITS_SETTING} is off.`,
+				]
 			: []),
 		"",
 	].join("\n");
@@ -494,10 +509,12 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		if (name === "createCheckpoint") return createCheckpoint(document);
 		if (name === "restoreCheckpoint") return restoreCheckpoint(document, args, editsAllowed);
 		// This server's own switch, so the refusal names it rather than the in-app agent's.
-		if ((edit || isMutatingTool(name)) && !editsAllowed) {
+		if ((edit || isMutatingTool(name) || PROJECT_EDIT_TOOLS.has(name)) && !editsAllowed) {
 			return consentRequired(name, args, MCP_EDITS_SETTING);
 		}
 		if (edit) return edit(document);
+		if (name === SET_PROJECT_INFO_TOOL) return setProjectInfo(document, args);
+		if (name === REMOVE_MEDIA_TOOL) return removeMedia(document, args);
 		const availableByAssetId = await probeCursorTelemetry(document, deps.cursor);
 		return runDocumentTool(document, name, args, editsAllowed, {
 			cursor: deps.cursor,
@@ -537,11 +554,17 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 
 	return (name, args, options = {}) => {
 		// The setting is read when the call's turn comes: it may change while it waits.
-		const runNow = () =>
-			run(name, args, {
-				edit: options.edit,
-				editsAllowed: options.editsAllowed ?? deps.editsAllowed(),
-			});
+		const runNow = async () => {
+			const editsAllowed = options.editsAllowed ?? deps.editsAllowed();
+			let edit = options.edit;
+			// The file is checked and probed before the project is read: see prepareImportMedia.
+			if (name === IMPORT_MEDIA_TOOL && !edit && editsAllowed) {
+				const prepared = await prepareImportMedia(splitProjectId(args).args, deps);
+				if (typeof prepared === "string") return textResult(prepared, true);
+				edit = prepared;
+			}
+			return run(name, args, { edit, editsAllowed });
+		};
 		const next = queue.then(runNow, runNow);
 		queue = next.catch(() => undefined);
 		return next.catch((error) => textResult(`Tool failed: ${errorMessage(error)}`, true));
@@ -588,6 +611,21 @@ export function createOpenScreenMcpServer(
 				},
 			},
 			(args: unknown) => runTool(name, args),
+		);
+	}
+	for (const tool of PROJECT_TOOLS) {
+		server.registerTool(
+			tool.name,
+			{
+				description: tool.description,
+				inputSchema: tool.inputSchema.extend({ projectId: projectIdArg }),
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: tool.destructive,
+					openWorldHint: false,
+				},
+			},
+			(args: unknown) => runTool(tool.name, args),
 		);
 	}
 	for (const tool of checkpointTools(media !== undefined)) {

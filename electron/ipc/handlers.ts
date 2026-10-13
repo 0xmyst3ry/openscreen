@@ -5059,6 +5059,13 @@ export function registerIpcHandlers(
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
 		version: app.getVersion(),
+		// importMedia: the editor's own probe, and the grant a picked file gets, so the editor
+		// can play a file a client imported into the project it has open.
+		openVideo: openVideoInHiddenWindow,
+		approveMedia: (filePath) => {
+			const media = normalizeVideoSourcePath(filePath);
+			if (media && hasAllowedImportMediaExtension(media)) approveFilePath(media);
+		},
 	};
 	// One runner, so one queue and one checkpoint store, for the in-app server and every
 	// `openscreen mcp` the app answers through its channel (app-channel.ts, started by main.ts).

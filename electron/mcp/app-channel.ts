@@ -45,6 +45,7 @@ import {
 	type McpToolDeps,
 	type McpToolRunner,
 } from "./openscreen-mcp-server";
+import { PROJECT_EDIT_TOOLS } from "./project-tools";
 
 const DISCOVERY_FILE = "mcp-app.json";
 /** Connect, token and MCP handshake: the app answers in milliseconds when it is alive. */
@@ -260,7 +261,7 @@ export async function connectToApp(
 function isReadOnly(name: string): boolean {
 	if (name === LIST_PROJECTS_TOOL) return true;
 	if (name === "createCheckpoint" || name === "restoreCheckpoint") return false;
-	return !isMutatingTool(name);
+	return !isMutatingTool(name) && !PROJECT_EDIT_TOOLS.has(name);
 }
 
 /**
