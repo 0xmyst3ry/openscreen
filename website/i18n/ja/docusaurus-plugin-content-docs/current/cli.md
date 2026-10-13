@@ -157,7 +157,7 @@ CLI からの MP4 エクスポートは常に **H.264** で、`--fps` を指定�
 
 ### `openscreen captions` {#openscreen-captions}
 
-プロジェクトの音声をお使いのマシン上で Whisper によって文字起こしし、字幕の注釈をプロジェクトファイルに書き込みます。何もアップロードされず、言語は自動で検出されます。初回実行時には、デスクトップアプリと同じく、Whisper モデル（約 264 MB）を一度だけダウンロードします。
+プロジェクトの音声をお使いのマシン上で Whisper によって文字起こしし、エディターの**字幕**パネルと同じように、プロジェクトの字幕をオンにします。何もアップロードされず、言語は自動で検出されます。初回実行時には、デスクトップアプリと同じく、Whisper モデル（約 264 MB）を一度だけダウンロードします。
 
 ```bash
 openscreen captions demo.openscreen --min-words 2 --max-words 7
@@ -165,7 +165,8 @@ openscreen export demo.openscreen -o demo.mp4   # captions are burned into the v
 ```
 
 - `--min-words` と `--max-words` で、字幕 1 つあたりの単語数を設定します。どちらもエディターと同じ 1〜12 を指定できます。既定値は 2 と 7 です。
-- もう一度実行すると、以前に追加した字幕が置き換えられます。自分で追加した注釈は保持されます。
+- 字幕は動画の上に描画された文字起こしなので、エディターでは他の字幕と同じようにスタイルの変更、修正、翻訳ができます。もう一度実行すると、文字起こしはそのままで、字幕 1 つあたりの単語数だけが設定されます。
+- プロジェクトはエディター独自の形式で保存されます。[下](#example-an-automated-product-demo)の例のようにプロジェクトの JSON を編集するスクリプトは、`captions` の前に編集を行います。また、`pack` はまだこの形式を読み込めません。
 - プロジェクトの画面動画には、音声トラックが必要です（たとえば `record --mic` で録音したもの）。
 - 字幕はエクスポートに焼き込まれます。字幕ファイルは出力されません。[字幕と文字起こし](./captions.md)を参照してください。
 
@@ -241,10 +242,7 @@ openscreen info demo.openscreen --json
 # 1. Record 20 seconds of one window, with narration from the microphone
 openscreen record --window "MyProduct" --mic --duration 20 --project demo.openscreen --json
 
-# 2. Caption the narration on this machine
-openscreen captions demo.openscreen --json
-
-# 3. Add a manual zoom and a text label by editing the project JSON
+# 2. Add a manual zoom and a text label by editing the project JSON
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync("demo.openscreen", "utf8"));
@@ -257,11 +255,14 @@ node -e '
   fs.writeFileSync("demo.openscreen", JSON.stringify(p, null, 2));
 '
 
+# 3. Caption the narration on this machine (this saves the project in the editor's format)
+openscreen captions demo.openscreen --json
+
 # 4. Render, with automatic zooms added on the recorded clicks
 openscreen export demo.openscreen -o demo.mp4 --auto-zoom --json
 ```
 
-手順 3 の `depth` は 1 から 6 まで（1.25× から 5×。3 は 1.8×）で、`cx` と `cy` はズームの中心を、フレームに対する比率で指定します。
+手順 2 の `depth` は 1 から 6 まで（1.25× から 5×。3 は 1.8×）で、`cx` と `cy` はズームの中心を、フレームに対する比率で指定します。
 
 代わりに音声合成エンジンでナレーションを付けるには、`--mic` なしで録画し、エクスポート時にナレーションをミックスします。mp3、wav、m4a を書き出せるエンジンならどれでも使えます。ここでは macOS の `say` を例に示します。
 
