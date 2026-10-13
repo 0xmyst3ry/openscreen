@@ -68,6 +68,8 @@ Write a storyboard and show it to the user in a few lines, then carry on unless 
 - **Real mouse** (computer-use, or any tool that moves the actual pointer): OpenScreen records the pointer, draws a clean cursor and already zooms on the clicks (see *Zoom on the action* below). If your mouse tool cannot click in the app's window (some only read browsers, for one), drive it from a script instead.
 - **A script** (Playwright, CDP): the screen pointer never moves, so the take has no cursor and no zoom. In the script, log every action as it runs: `at` is `Date.now()`, `x` and `y` are the action's position as fractions of the window, `click` is true for a click. Hand the log to `setPointerTrack` after `stopRecording`; its description gives the formula from a page's coordinates. A script also gives the cleanest take: same timing on every run, no hesitation.
 
+**A video you already have** needs no recording: `createProject` with its absolute `videoPath` lays it out as a project, and returns a `projectId` and a `checkpointId` as `stopRecording` does. Then go on from step 6.
+
 ## 5. Check the take
 
 `getFrames` on the `videoPath`, about 6 frames. Is it the right window? Is anything private visible? Did every beat happen? If not, record again: a new take costs less than a fix in editing.
@@ -83,6 +85,8 @@ Use the document tools, always with the `projectId`. Read the project first with
 - **Zoom on the action:** clicks close in time and on screen share one zoom, and the first 2.5 s stay wide. Check them, then add or move zooms with `addZooms` and `setZoom` where a result deserves its own. Hold a zoom at least 1.5 s.
 - **Callouts:** one `addAnnotation` per beat, short, placed clear of the action. Text sits on the output frame and stays put when the picture zooms. Use its look for hierarchy: a large title with `animation: "typewriter"`, step callouts with `animation: "pop"`. An arrow, `type: "figure"`, points at a control the text names. `setAnnotation` moves or restyles one.
 - **Hide what is private:** an email address, a token or a name that shows on screen gets `addAnnotation` with `type: "blur"` over the span it is visible. Its x, y, width and height are percent of the recording's picture, not of the frame, so it stays on what it hides when a zoom moves the picture. Check it with `getFrames`.
+- **Music or a voiceover:** `importMedia` with the file's absolute path adds it to the project's media, then `addAudio` plays it over a span. `removeMedia` takes back a file the timeline no longer uses.
+- **Name:** `setProjectInfo` renames the project, if the `title` given to `stopRecording` no longer fits.
 - **Undo:** `restoreCheckpoint` with the `checkpointId` takes the project back to the raw take in one step. It also puts back the take's own pointer track, undoing any `setPointerTrack` made since.
 - **Open in the app:** while OpenScreen is running, your edits go through it, so a project the user has open in its editor changes there live and they can undo each edit. If an edit is refused as "open in the OpenScreen editor", the app did not answer: retry once, then ask the user to close the project there or restart OpenScreen.
 
