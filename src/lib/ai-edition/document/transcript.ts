@@ -257,3 +257,46 @@ export function carryOverWordEdits(
 
 	return { transcript, carried, dropped: edits.length - carried };
 }
+
+/**
+ * A finished transcription landing on the document: it replaces the asset's transcript,
+ * carrying the user's word corrections over (`carryOverWordEdits`), and clears the failure
+ * the asset remembered from an earlier run. What could not be carried is counted in
+ * `dropped`. The editor's queue and the MCP `transcribe` tool both land a run through here.
+ */
+export function applyTranscriptionResult(
+	document: AxcutDocument,
+	transcript: AxcutTranscript,
+): { document: AxcutDocument; dropped: number } {
+	const merged = carryOverWordEdits(
+		document.transcripts.find((t) => t.assetId === transcript.assetId),
+		transcript,
+	);
+	return {
+		document: withTranscript(
+			{
+				...document,
+				assets: document.assets.map((a) =>
+					a.id === transcript.assetId && a.transcriptionFailure
+						? { ...a, transcriptionFailure: null }
+						: a,
+				),
+			},
+			merged.transcript,
+		),
+		dropped: merged.dropped,
+	};
+}
+
+/**
+ * Whisper reads at most the last 223 tokens of its prompt; 600 characters of
+ * names and terms stays under that for Latin scripts (issue #1023).
+ */
+export const VOCABULARY_MAX_CHARS = 600;
+
+/** The document with its names and terms set, or null when nothing changed. */
+export function withVocabulary(document: AxcutDocument, text: string): AxcutDocument | null {
+	const vocabulary = text.trim().slice(0, VOCABULARY_MAX_CHARS) || undefined;
+	if (vocabulary === document.project.vocabulary) return null;
+	return { ...document, project: { ...document.project, vocabulary } };
+}

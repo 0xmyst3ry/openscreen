@@ -11,7 +11,7 @@ import { isDiagnosticModeEnabled } from "../diagnostics/main-log-buffer";
 import { getSelectedDesktopSource, registerIpcHandlers } from "../ipc/handlers";
 import { openVideoInHiddenWindow } from "../mcp/hidden-video";
 import { serveMcpOverStdio } from "../mcp/stdio-server";
-import { registerSttIpc } from "../stt";
+import { registerSttIpc, shutdownStt } from "../stt";
 import { createRunnerWindow } from "../windows";
 import { CLI_USAGE, type CliCommand } from "./args";
 import { runInfoCommand, runPackCommand } from "./projectCommands";
@@ -392,7 +392,8 @@ export function runCli(command: CliCommand): void {
 					userDataDir,
 					runners,
 					openVideo: openVideoInHiddenWindow,
-					onClose: () => app.exit(0),
+					// The Whisper helper is a process of its own: it must not outlive this one.
+					onClose: () => void shutdownStt().finally(() => app.exit(0)),
 				});
 				milestone("mcp server listening on stdio");
 				return;
@@ -496,7 +497,7 @@ export function runCli(command: CliCommand): void {
 					printSources(output, result.sources);
 				} else if (command.kind === "captions") {
 					output.info(
-						`Added ${result.captionCount ?? 0} caption annotation(s) → ${result.projectPath}`,
+						`Captions on: ${result.captionCount ?? 0} caption(s) from the transcript → ${result.projectPath}`,
 					);
 				} else if (command.kind === "export") {
 					output.info(`Exported ${result.format ?? ""} → ${result.outputPath}`);
@@ -512,7 +513,8 @@ export function runCli(command: CliCommand): void {
 			}
 
 			// Give the renderer a beat to resolve the invoke before exiting.
-			setTimeout(() => app.exit(result.success ? 0 : 1), 50);
+			// and stop the Whisper helper `captions` started, which would outlive this process.
+			setTimeout(() => void shutdownStt().finally(() => app.exit(result.success ? 0 : 1)), 50);
 		})
 		.catch((error) => {
 			output.error(error instanceof Error ? (error.stack ?? error.message) : String(error));

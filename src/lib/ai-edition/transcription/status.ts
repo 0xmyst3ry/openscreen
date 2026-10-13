@@ -127,6 +127,27 @@ export function isPermanentFailure(kind: TranscriptionFailureKind): kind is Pers
 export type PersistableFailureKind = Exclude<TranscriptionFailureKind, "error">;
 
 /**
+ * The document with a deterministic failure remembered on its asset, so the next open
+ * shows "no audio" at once instead of re-extracting the audio to find out again. A
+ * transient failure is not remembered: the document comes back unchanged.
+ */
+export function withTranscriptionFailure(
+	document: AxcutDocument,
+	assetId: string,
+	failure: TranscriptionFailure,
+	at = new Date().toISOString(),
+): AxcutDocument {
+	const kind = failure.kind;
+	if (!isPermanentFailure(kind)) return document;
+	return {
+		...document,
+		assets: document.assets.map((a) =>
+			a.id === assetId ? { ...a, transcriptionFailure: { kind, message: failure.message, at } } : a,
+		),
+	};
+}
+
+/**
  * Map an exception out of `transcribeAsset` onto a failure the UI can explain.
  * The deterministic cases come from whichever layer decoded the audio, and there
  * are two of them: `extractMono16kWebDemuxer` in the renderer, and — since

@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { VOCABULARY_MAX_CHARS, withVocabulary } from "@/lib/ai-edition/document/transcript";
 import {
 	type AxcutTranscript,
 	createEmptyDocument,
 	parseDocumentFile,
 } from "@/lib/ai-edition/schema";
-import {
-	addSelectedAssetToTimeline,
-	detectedLanguageForTranscript,
-	VOCABULARY_MAX_CHARS,
-	withVocabulary,
-} from "./MediaStage";
+import { addSelectedAssetToTimeline, detectedLanguageForTranscript } from "./MediaStage";
 
 function transcript(language: string, text = ""): AxcutTranscript {
 	return {

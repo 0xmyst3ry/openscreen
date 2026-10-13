@@ -13,7 +13,8 @@ import {
 } from "@/lib/captioning";
 import type { SttRendererStatus } from "@/lib/captioning/transcribe";
 import { STT_NATIVE_EXTRACTION_UNAVAILABLE } from "../../../../electron/stt/transcriptionContract";
-import type { AxcutDocument, AxcutTranscript, AxcutTranscriptSegment, AxcutWord } from "../schema";
+import type { AxcutDocument, AxcutTranscript } from "../schema";
+import { transcriptFromSegments } from "../transcription/fromStt";
 
 /**
  * What the caller can show while a transcription runs. `completedSec` /
@@ -119,54 +120,13 @@ export async function transcribeAsset(
 		});
 	});
 
-	const segments: AxcutTranscriptSegment[] = [];
-	const words: AxcutWord[] = [];
-
-	for (let segIndex = 0; segIndex < result.segments.length; segIndex++) {
-		const seg = result.segments[segIndex];
-		const segId = `seg_${segIndex + 1}`;
-		const wordIds: string[] = [];
-
-		const tokens = seg.text.trim().split(/\s+/).filter(Boolean);
-		if (tokens.length === 0) continue;
-
-		// Never end before the start: the schema rejects it, and one such word made the whole
-		// project unreadable (see `raiseInvertedTranscriptEnds`, which repairs old files).
-		const segEndSec = Math.max(seg.endSec, seg.startSec);
-		const wordDuration = (segEndSec - seg.startSec) / tokens.length;
-		for (let w = 0; w < tokens.length; w++) {
-			const wordId = `word_${words.length + 1}`;
-			const startSec = seg.startSec + w * wordDuration;
-			const endSec = startSec + wordDuration;
-			words.push({
-				id: wordId,
-				segmentId: segId,
-				startSec,
-				endSec,
-				text: tokens[w],
-			});
-			wordIds.push(wordId);
-		}
-
-		segments.push({
-			id: segId,
-			kind: "speech" as const,
-			startSec: seg.startSec,
-			endSec: segEndSec,
-			text: seg.text,
-			wordIds,
-		});
-	}
-
-	return {
+	// Prefer the model-reported language (covers both forced picks and auto-detect),
+	// then the input option.
+	return transcriptFromSegments(
 		assetId,
-		// Prefer the model-reported language (covers both forced picks and
-		// auto-detect); fall back to the input option, then "auto" when
-		// nothing was detected (very rare on tiny.en — usually a no-audio run).
-		language: result.detectedLanguage ?? options.language ?? "auto",
-		segments,
-		words,
-	};
+		result.segments,
+		result.detectedLanguage ?? options.language,
+	);
 }
 
 // `withTranscript` used to live here. It moved to `document/transcript.ts`, next to

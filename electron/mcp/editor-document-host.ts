@@ -19,12 +19,16 @@ import {
 	type AiEditionMcpHostRequest,
 	type AiEditionMcpHostResponse,
 	type AiEditionMcpHostSnapshot,
+	type AiEditionMcpTranscription,
 } from "../../src/native/contracts";
 import type { McpApplyResult, McpDocumentHost } from "./openscreen-mcp-server";
 
 // Long enough for a save of a large project to land, short enough that a hung
 // renderer does not hold the client's call open indefinitely.
 const REQUEST_TIMEOUT_MS = 30_000;
+// A transcription runs Whisper over the whole recording, on the CPU at worst. The editor
+// going away answers sooner: every pending request is dropped then.
+const TRANSCRIBE_TIMEOUT_MS = 60 * 60_000;
 
 const TIMED_OUT = Symbol("timed-out");
 
@@ -35,7 +39,8 @@ interface Pending {
 
 type RequestBody =
 	| { op: "snapshot" }
-	| { op: "apply"; document: unknown; expectedRevision: number };
+	| { op: "apply"; document: unknown; expectedRevision: number }
+	| { op: "transcribe"; projectId: string; assetId: string; language?: string };
 
 export class EditorDocumentHost implements McpDocumentHost {
 	private editor: WebContents | null = null;
@@ -46,10 +51,10 @@ export class EditorDocumentHost implements McpDocumentHost {
 			if (active === true) {
 				this.editor = event.sender;
 				event.sender.once("destroyed", () => {
-					if (this.editor === event.sender) this.editor = null;
+					if (this.editor === event.sender) this.leave();
 				});
 			} else if (this.editor === event.sender) {
-				this.editor = null;
+				this.leave();
 			}
 		});
 		ipcMain.on(AI_EDITION_MCP_RESPONSE_CHANNEL, (event: IpcMainEvent, message: unknown) => {
@@ -64,7 +69,17 @@ export class EditorDocumentHost implements McpDocumentHost {
 		});
 	}
 
-	private request(body: RequestBody): Promise<unknown> {
+	/** The editor stopped answering: what it was asked will never be answered. */
+	private leave(): void {
+		this.editor = null;
+		for (const [requestId, pending] of this.pending) {
+			clearTimeout(pending.timer);
+			this.pending.delete(requestId);
+			pending.resolve(undefined);
+		}
+	}
+
+	private request(body: RequestBody, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
 		const editor = this.editor;
 		if (!editor || editor.isDestroyed()) return Promise.resolve(undefined);
 		const requestId = randomUUID();
@@ -72,7 +87,7 @@ export class EditorDocumentHost implements McpDocumentHost {
 			const timer = setTimeout(() => {
 				this.pending.delete(requestId);
 				resolve(TIMED_OUT);
-			}, REQUEST_TIMEOUT_MS);
+			}, timeoutMs);
 			this.pending.set(requestId, { resolve, timer });
 			try {
 				editor.send(AI_EDITION_MCP_REQUEST_CHANNEL, {
@@ -103,5 +118,19 @@ export class EditorDocumentHost implements McpDocumentHost {
 		if (result === TIMED_OUT) return "timeout";
 		if (typeof result !== "string") return "no-editor";
 		return result as McpApplyResult;
+	}
+
+	async transcribe(
+		projectId: string,
+		assetId: string,
+		language: string | undefined,
+	): Promise<AiEditionMcpTranscription | "no-editor" | "timeout"> {
+		const result = await this.request(
+			{ op: "transcribe", projectId, assetId, ...(language ? { language } : {}) },
+			TRANSCRIBE_TIMEOUT_MS,
+		);
+		if (result === TIMED_OUT) return "timeout";
+		if (!result || typeof result !== "object" || !("status" in result)) return "no-editor";
+		return result as AiEditionMcpTranscription;
 	}
 }

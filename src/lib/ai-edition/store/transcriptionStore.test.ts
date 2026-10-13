@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toastText } from "@/i18n/toastText";
 import type { AxcutDocument, AxcutTranscript } from "../schema";
+import { answerMcpHostRequest } from "./mcpDocumentHost";
 import { useProjectStore } from "./projectStore";
 import { useTranscriptionStore, whenTranscriptionIdle } from "./transcriptionStore";
 
@@ -450,6 +451,70 @@ describe("useTranscriptionStore", () => {
 
 		expect(transcribeMocks.transcribeAsset).toHaveBeenCalledTimes(1);
 		expect(useProjectStore.getState().document?.transcripts).toHaveLength(1);
+	});
+
+	it("ensureTranscript waits for the editor's own run, and the MCP host reports it", async () => {
+		const firstRun = deferred();
+		transcribeMocks.transcribeAsset.mockImplementation(
+			async (_doc: AxcutDocument, assetId: string) => {
+				await firstRun.promise;
+				return transcriptFor(assetId);
+			},
+		);
+		loadDocument(makeDoc(["asset_1"]));
+		useTranscriptionStore.getState().sync(useProjectStore.getState().document);
+		await Promise.resolve();
+		expect(useTranscriptionStore.getState().jobs.asset_1?.status).toBe("running");
+
+		const answered = answerMcpHostRequest({
+			requestId: "r",
+			op: "transcribe",
+			projectId: "proj_1",
+			assetId: "asset_1",
+		});
+		firstRun.release();
+
+		await expect(answered).resolves.toEqual({ status: "transcribed", language: "en", words: 1 });
+		expect(transcribeMocks.transcribeAsset).toHaveBeenCalledTimes(1);
+	});
+
+	it("ensureTranscript keeps a transcript unless a language is asked for", async () => {
+		transcribeMocks.transcribeAsset.mockImplementation(
+			async (_doc: AxcutDocument, assetId: string) => transcriptFor(assetId),
+		);
+		loadDocument({ ...makeDoc(["asset_1"]), transcripts: [transcriptFor("asset_1")] });
+
+		await useTranscriptionStore.getState().ensureTranscript("asset_1");
+		expect(transcribeMocks.transcribeAsset).not.toHaveBeenCalled();
+
+		await useTranscriptionStore.getState().ensureTranscript("asset_1", "fr");
+		expect(transcribeMocks.transcribeAsset).toHaveBeenCalledWith(
+			expect.anything(),
+			"asset_1",
+			expect.objectContaining({ language: "fr" }),
+		);
+	});
+
+	it("the MCP host reports the failure of the run it asked for", async () => {
+		transcribeMocks.transcribeAsset.mockRejectedValue(new Error("No decodable audio in x"));
+		loadDocument(makeDoc(["asset_1"]));
+
+		await expect(
+			answerMcpHostRequest({
+				requestId: "r",
+				op: "transcribe",
+				projectId: "proj_1",
+				assetId: "asset_1",
+			}),
+		).resolves.toMatchObject({ status: "failed", failure: { kind: "no-audio" } });
+		await expect(
+			answerMcpHostRequest({
+				requestId: "r",
+				op: "transcribe",
+				projectId: "another",
+				assetId: "asset_1",
+			}),
+		).resolves.toEqual({ status: "unavailable" });
 	});
 
 	it("still honours a manual request without the auto pass", async () => {

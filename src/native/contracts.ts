@@ -339,7 +339,24 @@ export interface AiEditionMcpStatus {
  */
 export type AiEditionMcpHostRequest =
 	| { requestId: string; op: "snapshot" }
-	| { requestId: string; op: "apply"; document: unknown; expectedRevision: number };
+	| { requestId: string; op: "apply"; document: unknown; expectedRevision: number }
+	| {
+			requestId: string;
+			op: "transcribe";
+			projectId: string;
+			assetId: string;
+			/** Absent: keep a transcript the asset has. */
+			language?: string;
+	  };
+
+/**
+ * How the editor's own transcription of an asset ended, for the MCP `transcribe` tool.
+ * `unavailable`: the editor no longer holds that project, or the run was dropped.
+ */
+export type AiEditionMcpTranscription =
+	| { status: "transcribed"; language: string; words: number }
+	| { status: "failed"; failure: { kind: string; message: string } }
+	| { status: "unavailable" };
 
 export interface AiEditionMcpHostSnapshot {
 	document: unknown;
@@ -350,7 +367,7 @@ export type AiEditionMcpApplyResult = "applied" | "conflict" | "save-failed" | "
 
 export interface AiEditionMcpHostResponse {
 	requestId: string;
-	result: AiEditionMcpHostSnapshot | null | AiEditionMcpApplyResult;
+	result: AiEditionMcpHostSnapshot | null | AiEditionMcpApplyResult | AiEditionMcpTranscription;
 }
 
 /** Editor → main: `true` when an editor starts answering MCP requests, `false` when it stops. */

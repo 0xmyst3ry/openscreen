@@ -49,8 +49,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import {
+	applyTranscriptionResult,
+	withTranscript,
+} from "../../src/lib/ai-edition/document/transcript";
 import { type AxcutDocument, documentSchema } from "../../src/lib/ai-edition/schema";
-import type { SegmentationSupport } from "../../src/native/contracts";
+import {
+	segmentsFromStt,
+	transcriptFromSegments,
+} from "../../src/lib/ai-edition/transcription/fromStt";
+import {
+	classifyTranscriptionError,
+	withTranscriptionFailure,
+} from "../../src/lib/ai-edition/transcription/status";
+import type { AiEditionMcpTranscription, SegmentationSupport } from "../../src/native/contracts";
 import {
 	type AgentToolExecution,
 	consentRequired,
@@ -70,6 +82,7 @@ import {
 	type ProjectSummary,
 	type ProjectVersion,
 } from "../ai-edition/document-service";
+import type { SttTranscribeRequest, SttTranscribeResponse } from "../stt/transcriptionContract";
 import type { MediaTools } from "./media-tools";
 import {
 	IMPORT_MEDIA_TOOL,
@@ -107,6 +120,16 @@ export interface McpDocumentHost {
 	/** `null` when no editor window is open or it has no project loaded. */
 	snapshot(): Promise<McpDocumentSnapshot | null>;
 	apply(document: AxcutDocument, expectedRevision: number): Promise<McpApplyResult>;
+	/**
+	 * The editor's own transcription of an asset of the project it holds (`projectId`): a
+	 * job of its own already under way is waited for rather than run twice. Absent where
+	 * there is no editor to ask.
+	 */
+	transcribe?(
+		projectId: string,
+		assetId: string,
+		language: string | undefined,
+	): Promise<AiEditionMcpTranscription | "no-editor" | "timeout">;
 }
 
 /** Every project on disk — the subset of `DocumentService` the server needs. */
@@ -147,10 +170,34 @@ export interface McpToolDeps extends ImportMediaDeps {
 	cursor?: CursorTelemetryReader;
 	/** Whether this machine can cut out the camera background; absent where nothing can ask. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** The main process's on-device Whisper (`SttManager.transcribe`). Absent: no transcribe tool. */
+	transcribe?(request: SttTranscribeRequest): Promise<SttTranscribeResponse>;
 	version: string;
 }
 
 export const LIST_PROJECTS_TOOL = "listProjects";
+export const TRANSCRIBE_TOOL = "transcribe";
+
+const transcribeArgs = z.object({
+	assetId: z
+		.string()
+		.min(1)
+		.optional()
+		.describe("The asset to transcribe, from getCurrentDocument. Default: the primary asset."),
+	language: z
+		.string()
+		.regex(/^(auto|[a-z]{2,3})$/, 'an ISO 639-1 code such as "en", or "auto"')
+		.optional()
+		.describe(
+			'Transcribe again in this language (ISO 639-1, such as "en" or "fr"), or "auto" to let Whisper detect it. Omit it to keep a transcript the asset already has.',
+		),
+});
+
+const TRANSCRIBE_DESCRIPTION =
+	"Transcribe one asset's speech with OpenScreen's on-device Whisper, as the editor does when it opens a project, and store the transcript in the project: getTranscript, getTranscriptWords, setWordText, removeWords and the captions all read it. A take from stopRecording has none until this runs. Without `language`, an asset that already has a transcript keeps it, and a transcription the editor is already running is waited for rather than run twice; with `language`, the asset is transcribed again in it, and the word corrections that still match are carried over. The project's vocabulary (setVocabulary) primes Whisper. It runs on this computer and can take minutes on a long recording, more the first time, when the speech model downloads. Media with no audio fails with failure.kind `no-audio`, which the asset then remembers (assets[].transcriptionFailure in getCurrentDocument). The result gives the language and the word count; it needs no checkpoint, and restoreCheckpoint keeps a transcript made after its checkpoint.";
+
+const TRANSCRIBE_NOTE =
+	"Speech: transcribe makes an asset's transcript with OpenScreen's on-device Whisper. Everything that reads speech needs it (getTranscript, getTranscriptWords, removeWords, the captions); a fresh take has none until you call it.";
 
 /** The in-app server's edit switch, as AI settings label it (`mcpServer.editsLabel`). */
 export const MCP_EDITS_SETTING = "'MCP edits' under MCP server in AI settings";
@@ -234,6 +281,8 @@ export function mcpInstructions(options: {
 	/** The media tools' preamble. Both servers register them; only the app's channel for
 	 *  `openscreen mcp` (app-channel.ts), which no agent reads, goes without. */
 	media?: string;
+	/** The transcribe tool is served. */
+	transcribe?: boolean;
 }): string {
 	const { transport, editsAllowed, media } = options;
 	const preamble = [
@@ -245,6 +294,7 @@ export function mcpInstructions(options: {
 					`startRecording, exportVideo and createProject are refused too while ${MCP_EDITS_SETTING} is off.`,
 				]
 			: []),
+		...(options.transcribe ? [TRANSCRIBE_NOTE] : []),
 		"",
 	].join("\n");
 	return (
@@ -396,7 +446,7 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		return {
 			ok: true,
 			resultJson: JSON.stringify({ ok: true, restored: id }),
-			document: checkpoint.document,
+			document: keepTranscriptsMadeSince(checkpoint.document, document),
 			sidecars: [...checkpoint.sidecars].map(([path, content]) => ({ path, content })),
 		};
 	}
@@ -486,8 +536,9 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 			if ((await deps.projects.projectOpenInEditor()) === projectId) {
 				return textResult(new ProjectOpenInEditorError(projectId).message, true);
 			}
-			// A restore IS the way back, so it needs no checkpoint of its own.
-			if (name !== "restoreCheckpoint" && !hasCheckpoint(projectId)) {
+			// A restore IS the way back, so it needs no checkpoint of its own; a transcript is
+			// no edit to take back (restoreCheckpoint keeps it), so it needs none either.
+			if (name !== "restoreCheckpoint" && name !== TRANSCRIBE_TOOL && !hasCheckpoint(projectId)) {
 				return textResult(CHECKPOINT_REQUIRED_MESSAGES[deps.transport], true);
 			}
 			// Refused if anything read the project since (the editor opening it would
@@ -556,7 +607,139 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		return runOnFile(projectId, read, name, args, call);
 	}
 
-	return (name, args, options = {}) => {
+	/** Whisper runs one transcription at a time; this runner's wait their turn here. */
+	let whisperQueue: Promise<unknown> = Promise.resolve();
+
+	/** Lands a change computed outside the queue, as an edit of the project as it is by then. */
+	function landEdit(projectId: string, editsAllowed: boolean, edit: RunnerEdit) {
+		return runner(TRANSCRIBE_TOOL, { projectId }, { editsAllowed, edit });
+	}
+
+	/**
+	 * The transcribe tool. Whisper takes minutes, so it runs OUTSIDE the queue: other calls
+	 * go on meanwhile, and only the landing of the transcript is queued, as an edit of the
+	 * project as it is by then. The project open in the editor is transcribed by the editor's
+	 * own job instead, so the two never run the same transcription side by side.
+	 */
+	async function transcribe(rawArgs: unknown, editsAllowed: boolean): Promise<CallToolResult> {
+		const { projectId, args } = splitProjectId(rawArgs);
+		const parsed = transcribeArgs.safeParse(args ?? {});
+		if (!parsed.success) return textResult(JSON.stringify({ error: parsed.error.message }), true);
+		if (!editsAllowed) {
+			return textResult(consentRequired(TRANSCRIBE_TOOL, args, MCP_EDITS_SETTING).resultJson, true);
+		}
+		const { language } = parsed.data;
+		const snapshot = await deps.host.snapshot();
+		const openId = openProjectId(snapshot);
+		const targetId = projectId ?? openId;
+		if (!targetId) return textResult(NO_PROJECT_MESSAGES[deps.transport], true);
+		const onEditor = openId === targetId;
+		let document: AxcutDocument;
+		if (onEditor) {
+			const read = documentSchema.safeParse(snapshot?.document);
+			if (!read.success) {
+				return textResult("The project open in the editor could not be read.", true);
+			}
+			document = read.data;
+		} else {
+			const read = await deps.projects.getProjectForUpdate(targetId).catch((error) => {
+				if (error instanceof DocumentNotFoundError) return null;
+				throw error;
+			});
+			if (!read) {
+				return textResult(
+					`No project has the id "${targetId}". Call listProjects for the valid ids.`,
+					true,
+				);
+			}
+			document = read.document;
+		}
+		const assetId =
+			parsed.data.assetId ?? document.project.primaryAssetId ?? document.assets[0]?.id;
+		const asset = document.assets.find((a) => a.id === assetId);
+		if (!asset) {
+			return textResult(
+				JSON.stringify({
+					error: `Unknown asset: ${assetId ?? "(none)"}. The project has: ${document.assets.map((a) => a.id).join(", ") || "no assets"}.`,
+				}),
+				true,
+			);
+		}
+		if (onEditor && deps.host.transcribe) {
+			return editorTranscription(
+				await deps.host.transcribe(targetId, asset.id, language),
+				asset.id,
+			);
+		}
+		const existing = document.transcripts.find((t) => t.assetId === asset.id);
+		if (language === undefined && existing) {
+			return textResult(JSON.stringify({ ...transcriptSummary(existing), unchanged: true }));
+		}
+		// An editor this process cannot reach would save over the transcript: say so now,
+		// not after minutes of Whisper.
+		if ((await deps.projects.projectOpenInEditor()) === targetId) {
+			return textResult(new ProjectOpenInEditorError(targetId).message, true);
+		}
+		const whisper = deps.transcribe;
+		if (!whisper) return textResult("Transcription is not available here.", true);
+		const started = whisperQueue.then(() =>
+			whisper({
+				sourcePath: asset.originalPath,
+				language: language === "auto" ? undefined : language,
+				prompt: document.project.vocabulary,
+			}),
+		);
+		whisperQueue = started.catch(() => undefined);
+		let response: SttTranscribeResponse;
+		try {
+			response = await started;
+		} catch (error) {
+			const failure = classifyTranscriptionError(error);
+			// Remembered on the asset as the editor remembers it: best effort, the answer stands.
+			await landEdit(targetId, editsAllowed, async (current) => {
+				const next = withTranscriptionFailure(current, asset.id, failure);
+				return { ok: true, resultJson: "", ...(next === current ? {} : { document: next }) };
+			});
+			return textResult(
+				JSON.stringify({
+					error: `The transcription failed: ${failure.message}`,
+					failure: { kind: failure.kind, message: failure.message },
+				}),
+				true,
+			);
+		}
+		const transcript = transcriptFromSegments(
+			asset.id,
+			segmentsFromStt(response).segments,
+			response.detectedLanguage ?? language,
+		);
+		return landEdit(targetId, editsAllowed, async (current) => {
+			if (!current.assets.some((a) => a.id === asset.id)) {
+				return {
+					ok: false,
+					resultJson: JSON.stringify({
+						error: `Asset ${asset.id} was removed from the project while it was transcribed.`,
+					}),
+				};
+			}
+			const landed = applyTranscriptionResult(current, transcript);
+			return {
+				ok: true,
+				document: landed.document,
+				resultJson: JSON.stringify({
+					...transcriptSummary(transcript),
+					...(landed.dropped > 0 ? { correctionsLost: landed.dropped } : {}),
+				}),
+			};
+		});
+	}
+
+	const runner: McpToolRunner = (name, args, options = {}) => {
+		if (name === TRANSCRIBE_TOOL && !options.edit) {
+			return transcribe(args, options.editsAllowed ?? deps.editsAllowed()).catch((error) =>
+				textResult(`Tool failed: ${errorMessage(error)}`, true),
+			);
+		}
 		// The setting is read when the call's turn comes: it may change while it waits.
 		const runNow = async () => {
 			const editsAllowed = options.editsAllowed ?? deps.editsAllowed();
@@ -573,6 +756,71 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		queue = next.catch(() => undefined);
 		return next.catch((error) => textResult(`Tool failed: ${errorMessage(error)}`, true));
 	};
+	return runner;
+}
+
+/** What a transcription made, in the terms a caller acts on. */
+function transcriptSummary(transcript: AxcutDocument["transcripts"][number]) {
+	return {
+		assetId: transcript.assetId,
+		language: transcript.language,
+		words: transcript.words.length,
+		...(transcript.words.length === 0 ? { note: "No speech was found in this media." } : {}),
+	};
+}
+
+/** The editor's answer about a transcription it ran or waited for, as this tool's result. */
+function editorTranscription(
+	outcome: AiEditionMcpTranscription | "no-editor" | "timeout",
+	assetId: string,
+): CallToolResult {
+	if (outcome === "timeout") {
+		return textResult(
+			"OpenScreen did not finish this transcription in time; it may still be running in the editor. Call getCurrentDocument later: assets[].hasTranscript says when it has landed.",
+			true,
+		);
+	}
+	if (outcome === "no-editor" || outcome.status === "unavailable") {
+		return textResult(
+			"The editor closed the project before its transcription finished. Call transcribe again with its projectId.",
+			true,
+		);
+	}
+	if (outcome.status === "failed") {
+		return textResult(
+			JSON.stringify({
+				error: `The transcription failed: ${outcome.failure.message}`,
+				failure: outcome.failure,
+			}),
+			true,
+		);
+	}
+	return textResult(
+		JSON.stringify({
+			assetId,
+			language: outcome.language,
+			words: outcome.words,
+			...(outcome.words === 0 ? { note: "No speech was found in this media." } : {}),
+		}),
+	);
+}
+
+/**
+ * A transcript is the media read, not an edit to take back: a restore keeps the one an
+ * asset was given since the checkpoint, where the checkpoint had none for it.
+ */
+function keepTranscriptsMadeSince(
+	checkpoint: AxcutDocument,
+	current: AxcutDocument,
+): AxcutDocument {
+	let restored = checkpoint;
+	for (const transcript of current.transcripts) {
+		const { assetId } = transcript;
+		if (!restored.assets.some((a) => a.id === assetId)) continue;
+		if (restored.transcripts.some((t) => t.assetId === assetId)) continue;
+		restored = withTranscript(restored, transcript);
+	}
+	return restored;
 }
 
 export function createOpenScreenMcpServer(
@@ -588,6 +836,7 @@ export function createOpenScreenMcpServer(
 				transport: deps.transport,
 				editsAllowed: deps.editsAllowed(),
 				media: media?.preamble,
+				transcribe: deps.transcribe !== undefined,
 			}),
 		},
 	);
@@ -630,6 +879,17 @@ export function createOpenScreenMcpServer(
 				},
 			},
 			(args: unknown) => runTool(tool.name, args),
+		);
+	}
+	if (deps.transcribe) {
+		server.registerTool(
+			TRANSCRIBE_TOOL,
+			{
+				description: TRANSCRIBE_DESCRIPTION,
+				inputSchema: transcribeArgs.extend({ projectId: projectIdArg }),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			(args: unknown) => runTool(TRANSCRIBE_TOOL, args),
 		);
 	}
 	for (const tool of checkpointTools(media !== undefined)) {
