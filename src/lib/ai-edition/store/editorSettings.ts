@@ -428,7 +428,7 @@ const MIN_CROP_SIZE = 0.01;
  * full-frame crop has no room to sit in, so it reports centred — the one case where the
  * answer is arbitrary, and the one case where nothing depends on it.
  */
-function panOfCropRegion(crop: CropRegion): CropPan {
+export function panOfCropRegion(crop: CropRegion): CropPan {
 	// Guarded at 1 and not at some epsilon below it: the zoom slider is integer percent, so
 	// the smallest window short of full frame is 100/101 and leaves ~0.0099 of room — a
 	// perfectly ordinary divisor that a wider guard would throw away as if it were centred.

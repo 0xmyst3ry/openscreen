@@ -20,6 +20,7 @@ import type {
 	AiEditionChatMessage,
 	AiEditionChatResult,
 	AiEditionToolCallSummary,
+	SegmentationSupport,
 } from "../../src/native/contracts";
 import {
 	applyCompaction,
@@ -319,6 +320,8 @@ export interface ChatRunEnv {
 	/** Reads recorded cursor telemetry for an asset. Built in `electron/ipc/
 	 *  handlers.ts`, where the path allow-list lives. */
 	cursor?: CursorTelemetryReader;
+	/** Whether this machine can cut out the camera background, asked of the compositor. */
+	cameraSegmentation?: () => SegmentationSupport;
 	/** Runtime-only model retry override used by bounded measurement harnesses. */
 	maxRetries?: number;
 }
@@ -464,6 +467,7 @@ export async function runChat(
 		sink: agentSink,
 		editsAllowed,
 		cursor: env.cursor,
+		cameraSegmentation: env.cameraSegmentation,
 	});
 
 	// The project was deleted while the agent ran: its sessions are gone, so a

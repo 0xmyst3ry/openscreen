@@ -48,6 +48,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { type AxcutDocument, documentSchema } from "../../src/lib/ai-edition/schema";
+import type { SegmentationSupport } from "../../src/native/contracts";
 import {
 	type AgentToolExecution,
 	consentRequired,
@@ -131,6 +132,8 @@ export interface McpToolDeps {
 	/** The MCP server's own edit switch ("MCP edits"), separate from the in-app agent's. */
 	editsAllowed(): boolean;
 	cursor?: CursorTelemetryReader;
+	/** Whether this machine can cut out the camera background; absent where nothing can ask. */
+	cameraSegmentation?: () => SegmentationSupport;
 	version: string;
 }
 
@@ -502,6 +505,7 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		return runDocumentTool(document, name, args, editsAllowed, {
 			cursor: deps.cursor,
 			availableByAssetId,
+			cameraSegmentation: deps.cameraSegmentation,
 		});
 	}
 

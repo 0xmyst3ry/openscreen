@@ -5058,6 +5058,7 @@ export function registerIpcHandlers(
 		projects: aiEditionDocuments,
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
+		cameraSegmentation: () => loudnessService.probeSegmentation(),
 		version: app.getVersion(),
 	};
 	// One runner, so one queue and one checkpoint store, for the in-app server and every
@@ -5243,6 +5244,7 @@ export function registerIpcHandlers(
 		runAiEditionChat: (projectId, sessionId, message, document, sink) =>
 			runChat(projectId, sessionId, message, getAiEditionLlmConfig(), document, sink, {
 				cursor: agentCursorTelemetryReader,
+				cameraSegmentation: () => loudnessService.probeSegmentation(),
 			}),
 		undoAiEditionToolBatch: (_projectId, _sessionId) => ({
 			success: false,

@@ -31,6 +31,7 @@ import {
 	ZOOM_DEPTH_LEGEND,
 } from "../../../src/lib/ai-edition/timeline/zoom-scale";
 import { ZOOM_TRANSITION_LEGEND } from "../../../src/lib/ai-edition/timeline/zoom-transitions";
+import type { SegmentationSupport } from "../../../src/native/contracts";
 import {
 	AGENT_EDITS_SETTING,
 	type AgentToolExecution,
@@ -65,6 +66,7 @@ import {
 	setWordTextArgs,
 	setZoomArgs,
 } from "../agent-tools";
+import { setEditorSettingsArgs } from "../editor-settings-tool";
 import {
 	createOpenScreenChatModel,
 	messageContentToText,
@@ -132,7 +134,7 @@ const BASE_SYSTEM_PROMPT = [
 	"- Cutting specific spoken words (fillers, a repeated or flubbed phrase, a false start, a duplicate take) is removeWords: read getTranscriptWords, choose the occurrences from their surrounding speech, then pass that assetId and ONLY those word IDs. Word IDs restart for each asset, so keep the read's assetId. Consecutive words become one cut. Do not cut every occurrence of a word just because its text matches one you were asked to remove.",
 	"- Changing where a clip starts or ends within its source is setClipRange — the clip's in/out, distinct from a trim.",
 	`- addZoom takes a virtual-timeline span (depth is an ordinal 1–6 selecting from a fixed table — ${ZOOM_DEPTH_LEGEND} — never a multiplier; focus in 0–1 frame fractions). addSpeed changes pacing over a span. addAnnotation puts text, an arrow or a privacy blur on screen: a blur is how an email address, a token or any private detail the recording shows is hidden. addCameraFullscreen enlarges the webcam, and only does something where assets[].hasCameraTrack is true.`,
-	"- setAspectRatio picks the shape of the whole video, for where it will be shown; auto follows the recording.",
+	"- setEditorSettings sets the look of the whole video: the background (wallpaper, its motion and blur), padding, rounded corners, shadow, a device frame, motion blur, depth of field, the shape of the video (aspectRatio: auto follows the recording) and how a recording of another shape fills it, the camera's layout (picture-in-picture, side by side, stacked, its shape, size, position, framing and background cutout), the cursor, and the master volume. getCurrentDocument returns all of them under settings, in the shape this tool takes, and settingsContext.inactive names each one the editor hides in the current state and why: setting one of those changes nothing, so say so instead of reporting the look as changed. setAspectRatio is the same write for the shape alone.",
 	"- A zoom animates in just before its span and out just after it (zoomInFromSec, zoomOutUntilSec in getCurrentDocument). Leave those windows untrimmed, or the export jumps at the cut.",
 	"- addAudio lays an imported voiceover or music file over a span. It plays an asset the project already has (kind 'audio'); importing or recording one is the editor's job, not a tool you have — so when the project has none, say so rather than naming an id that does not exist.",
 	"- moveClip changes the order of placed clips, one call per clip that moves, preserving ids, source ranges, trims and anchored effects. replaceTimeline rebuilds the timeline from kept intervals and sorts them, so it cannot reorder anything.",
@@ -181,7 +183,7 @@ const CUT_TRANSITIONS_RESULT = `When the result cuts a zoom's move in or out, it
 
 export const TOOL_DESCRIPTIONS: Record<string, string> = {
 	getCurrentDocument:
-		"Read a compact snapshot of the current project: assets (with durations), timeline clips and trim ranges (source-time), and the zoom / speed / annotation / camera-fullscreen / audio regions (virtual, edited-timeline time), each with the settings its writes take: a zoom's level, focus mode and hidden cursor, an annotation's type, box, look and arrow or blur data, an audio track's level and fades. Call this before editing if the snapshot in the system prompt may be stale. The AxcutDocument is the single source of truth — your edits should preserve the user's placed clips and any timeline state they have already set up.",
+		"Read a compact snapshot of the current project: assets (with durations), timeline clips and trim ranges (source-time), and the zoom / speed / annotation / camera-fullscreen / audio regions (virtual, edited-timeline time), each with the settings its writes take: a zoom's level, focus mode and hidden cursor, an annotation's type, box, look and arrow or blur data, an audio track's level and fades. It also gives the project's look under `settings`, in the shape setEditorSettings takes, with `settingsContext`: the formats, wallpapers and cursor themes on offer, and under `inactive` each setting the editor hides in the current state and why. Call this before editing if the snapshot in the system prompt may be stale. The AxcutDocument is the single source of truth — your edits should preserve the user's placed clips and any timeline state they have already set up.",
 	getTranscript:
 		"Read the transcript segments (speech and silence, with start/end seconds and text) for an asset. Omit assetId to read the primary asset's transcript.",
 	getCursorTrack:
@@ -214,7 +216,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 	setAnnotation:
 		"Change an existing annotation by id: its span (virtual-timeline seconds), its type, its centre (x/y, percent of its box), its size (width/height, arrow and blur only), its text and look (text only: fontSize, color, background, bold, animation), or its figureData / blurData, of which only the keys you pass change. Only the fields you pass are changed. A type change converts it as the editor's type switch does: it stays where it is on screen, a text turned into an arrow or a blur takes the default box, and the text is kept to come back to. A text box is refitted to its text around its centre. Arguments that belong to another kind (width on a text, blurData on an arrow) are refused. A new span that would run into another annotation is refused, naming it.",
 	setAspectRatio:
-		"Set the shape of the exported video: 16:9 for X, YouTube or a slide, 9:16 for a vertical story or short, 1:1 or 4:5 for a square feed, auto to follow the recording. Annotations on the frame keep their place and shape.",
+		"Set the shape of the exported video: 16:9 for X, YouTube or a slide, 9:16 for a vertical story or short, 1:1 or 4:5 for a square feed, auto to follow the recording, or one of the clips' own shapes (getCurrentDocument's settingsContext.originalAspectRatios). Annotations on the frame keep their place and shape. The same as setEditorSettings with aspectRatio alone.",
+	setEditorSettings:
+		'Change the project\'s look: pass only the settings to change, named as getCurrentDocument returns them under `settings`. Background: wallpaper (a bundled path from settingsContext.bundledWallpapers, a CSS colour or gradient, or a base64 PNG/JPEG data URL; never a file path or web URL; an embedded image reads back as a marker, leave the key out to keep it), wallpaperMotion (moves a gradient or image only), backgroundBlur 0–1. Frame: aspectRatio ("auto", a preset, or an originalAspectRatios token; a fixed format picked for the first time fills the frame with a window that follows the cursor, which formatFollowCursor turns off when settingsContext.formatFill is "available"), padding 0–100 %, borderRadius 0–64 px, shadowIntensity 0–1, frame (none, window, laptop, phone, monitor) and frameTheme (light, dark), motionBlurAmount 0–1, depthOfField (blurs 3D-tilted zooms only). Camera: webcamLayoutPreset, webcamMirrored, webcamReactiveZoom (shrinks on zoom), webcamMaskShape (square or rectangle, the camera\'s own proportions; an untouched roundness follows it), webcamRoundness 0–1, webcamSizePreset 15–60, webcamAnchor (a corner or an edge middle), webcamCropRegion (the framing: a square share of the picture, width = height ≥ 1/3) and webcamCropPan (where that window sits, 0–1 per axis, 0.5 centred), webcamBackgroundMode (none, transparent, blur, custom: needs settingsContext.cameraSegmentation ready), webcamBlurIntensity 0–1, webcamWallpaper (as wallpaper). Cursor, under `cursor`: show, autoHide, theme (settingsContext.cursorThemes), asArrow (the recorded cursor kinds drawn as the arrow instead), size 1.5–6, smoothing 0–1, motionBlur 0–1, clickBounce 0–2, clickImpact, clickSound (only heard when the take recorded clicks) and clickSoundGainDb −24–0, model3d. Also autoFocusAll (every zoom follows the cursor) and audioGainDb −12–12 dB, the master volume. A value out of range or a key not listed is refused with the reason, and nothing changes. The result lists what was applied, including what the editor changes with it, and `inactive` for any of those the current state leaves without effect.',
 	addCameraFullscreen:
 		"Add a camera-fullscreen region over a span of the edited timeline (virtual seconds): the webcam fills the frame for that span. This only does something when the footage under that span comes from an asset with a linked webcam — check assets[].hasCameraTrack (or hasAnyCamera) in getCurrentDocument first. On footage with no camera the call is refused rather than storing a region that would render nothing; say so instead of retrying.",
 	setCameraFullscreen:
@@ -259,6 +263,8 @@ export interface CursorTelemetryReader {
 export interface ToolRuntime {
 	cursor?: CursorTelemetryReader;
 	availableByAssetId?: Record<string, boolean>;
+	/** Asks the compositor whether this machine can cut out the camera background. */
+	cameraSegmentation?: () => SegmentationSupport;
 }
 
 /**
@@ -339,6 +345,7 @@ export async function runDocumentTool(
 	return executeAgentTool(document, name, JSON.stringify(args ?? {}), {
 		editsAllowed,
 		cursorTelemetry: { availableByAssetId: runtime.availableByAssetId, load },
+		cameraSegmentation: runtime.cameraSegmentation,
 	});
 }
 
@@ -423,6 +430,7 @@ export const TOOL_ARG_SCHEMAS: ReadonlyArray<readonly [string, z.ZodObject]> = [
 	["removeModifier", removeModifierArgs],
 	["removeClip", removeClipArgs],
 	["setAspectRatio", setAspectRatioArgs],
+	["setEditorSettings", setEditorSettingsArgs],
 ];
 
 /**
@@ -460,6 +468,8 @@ export interface InvokeArgs {
 	/** Injected by `chat-service` from the Electron layer. Absent in tests and in
 	 *  the workbench unless one is supplied on purpose. */
 	cursor?: CursorTelemetryReader;
+	/** Injected the same way: whether this machine can cut out the camera background. */
+	cameraSegmentation?: () => SegmentationSupport;
 }
 
 /** One cheap probe per asset, run before the tools are built so the very first
@@ -534,6 +544,7 @@ export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeRes
 	const tools = buildTools(holder, sink, editsAllowed, {
 		cursor: args.cursor,
 		availableByAssetId,
+		cameraSegmentation: args.cameraSegmentation,
 	});
 	const agent = createAgent({
 		model: chatModel,
