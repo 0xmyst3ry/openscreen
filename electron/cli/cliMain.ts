@@ -167,6 +167,15 @@ function printSources(output: CliOutput, sources: CliSourcesResult): void {
 	for (const mic of sources.microphones) {
 		lines.push(`  - ${mic.label}`);
 	}
+	lines.push("Cameras:");
+	if (sources.cameraLabelsUnavailable) {
+		lines.push("  (labels unavailable — grant camera permission to see device names)");
+	} else if (sources.cameras.length === 0) {
+		lines.push("  (none)");
+	}
+	for (const camera of sources.cameras) {
+		lines.push(`  - ${camera.label}`);
+	}
 	output.info(lines.join("\n"));
 }
 

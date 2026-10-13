@@ -30,6 +30,8 @@ import {
 	GIF_SIZE_PRESETS,
 	type GifFrameRate,
 	type GifSizePreset,
+	MP4_FRAME_RATES,
+	type Mp4FrameRate,
 } from "@/lib/exporter";
 import { calculateMp4ExportSettings, wouldUpscale } from "@/lib/exporter/mp4ExportSettings";
 import { outputFrameCount } from "@/lib/exporter/outputFrameCount";
@@ -161,7 +163,7 @@ export function ExportDialog({ open, onClose, document }: ExportDialogProps) {
 	const cpuCompositor = useIsCpuCompositor();
 	const [format, setFormat] = useState<ExportFormat>("mp4");
 	const [quality, setQuality] = useState<ExportQuality>("good");
-	const [fps, setFps] = useState<24 | 30 | 60>(60);
+	const [fps, setFps] = useState<Mp4FrameRate>(60);
 	const [gifFrameRate, setGifFrameRate] = useState<GifFrameRate>(15);
 	const [gifSize, setGifSize] = useState<GifSizePreset>("medium");
 	const [gifLoop, setGifLoop] = useState(true);
@@ -593,7 +595,7 @@ export function ExportDialog({ open, onClose, document }: ExportDialogProps) {
 						<div style={{ marginTop: 12 }}>
 							<div className={styles.groupLabel}>{t("exportDialog.frameRate")}</div>
 							<div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-								{([24, 30, 60] as const).map((r) => (
+								{MP4_FRAME_RATES.map((r) => (
 									<button
 										type="button"
 										key={r}

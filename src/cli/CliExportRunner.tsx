@@ -39,8 +39,6 @@ import type { CompositorClipInput } from "@/native/contracts";
 import { buildSceneDescription, resolveVisibleClips } from "@/native/sceneDescription";
 import { type ExportProject, loadDocumentProject } from "./exportProject";
 
-const MP4_EXPORT_FPS = 60;
-
 function probeVideoDimensions(
 	url: string,
 ): Promise<{ width: number; height: number; durationMs: number }> {
@@ -102,19 +100,19 @@ function buildNativeClipList(axcutDocument: AxcutDocument): CompositorClipInput[
 	});
 }
 
-/** Mirrors ExportDialog.gifOutputDims: cap height at the preset, keep even. */
+/** Mirrors ExportDialog.gifOutputDims: from the "Source" size, cap height at the preset, keep even. */
 function gifOutputDims(
 	preset: GifSizePreset,
-	tierDims: { width: number; height: number } | null,
+	sourceDims: { width: number; height: number } | null,
 ): { width?: number; height?: number } {
-	if (!tierDims) return {};
+	if (!sourceDims) return {};
 	const maxHeight = GIF_SIZE_PRESETS[preset].maxHeight;
-	if (!Number.isFinite(maxHeight) || tierDims.height <= maxHeight) {
-		return { width: tierDims.width, height: tierDims.height };
+	if (!Number.isFinite(maxHeight) || sourceDims.height <= maxHeight) {
+		return { width: sourceDims.width, height: sourceDims.height };
 	}
-	const scale = maxHeight / tierDims.height;
+	const scale = maxHeight / sourceDims.height;
 	const even = (n: number) => Math.max(2, Math.round(n * scale) & ~1);
-	return { width: even(tierDims.width), height: even(tierDims.height) };
+	return { width: even(sourceDims.width), height: even(sourceDims.height) };
 }
 
 /**
@@ -253,6 +251,8 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	const quality = request.quality ?? editor.exportQuality;
 	const gifFrameRate = request.gifFrameRate ?? editor.gifFrameRate;
 	const gifSizePreset = request.gifSizePreset ?? editor.gifSizePreset;
+	const gifLoop = request.gifLoop ?? editor.gifLoop;
+	const mp4FrameRate = request.mp4FrameRate;
 	const outPath =
 		request.outPath ?? replaceExtension(request.projectPath, format === "gif" ? ".gif" : ".mp4");
 	// Use the same per-clip auto-zoom suggestions as the editor, including its default span and
@@ -276,13 +276,15 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 		axcutDocument,
 		getEditorSettings(axcutDocument).aspectRatio,
 	);
-	const outDims = calculateMp4ExportSettings({
-		quality,
-		sourceWidth: smallestSource.width,
-		sourceHeight: smallestSource.height,
-		aspectRatioValue,
-		frameRate: MP4_EXPORT_FPS,
-	});
+	const dimsFor = (tier: typeof quality) =>
+		calculateMp4ExportSettings({
+			quality: tier,
+			sourceWidth: smallestSource.width,
+			sourceHeight: smallestSource.height,
+			aspectRatioValue,
+			frameRate: mp4FrameRate,
+		});
+	const outDims = dimsFor(quality);
 
 	const builtClips = buildNativeClipList(axcutDocument);
 	if (builtClips.length === 0) {
@@ -301,7 +303,7 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 
 	// Progress: native pushes raw encoded-frame counts; totals and pacing are
 	// computed here, mirroring the ExportDialog.
-	const outFps = format === "gif" ? gifFrameRate : MP4_EXPORT_FPS;
+	const outFps = format === "gif" ? gifFrameRate : mp4FrameRate;
 	// Speed-adjusted, not source seconds — see `outputFrameCount`. Counting raw duration
 	// is what made a 1.25x timeline stop the bar at 80% (OpenScreen#371).
 	const totalFrames = outputFrameCount(clips, sceneDesc.speedRegions, outFps);
@@ -319,11 +321,12 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 
 	try {
 		if (format === "gif") {
-			const dims = gifOutputDims(gifSizePreset, outDims);
+			// From the "Source" size as the dialog does, never the MP4 quality tier.
+			const dims = gifOutputDims(gifSizePreset, dimsFor("source"));
 			await exportGifNative(clips, outPath, sceneJson, {
 				...dims,
 				fps: gifFrameRate,
-				loopCount: editor.gifLoop ? 0 : 1,
+				loopCount: gifLoop ? 0 : 1,
 			});
 			return {
 				success: true,
@@ -340,7 +343,7 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 		await exportMultiNative(clips, outPath, sceneJson, {
 			width: outDims.width,
 			height: outDims.height,
-			fps: MP4_EXPORT_FPS,
+			fps: mp4FrameRate,
 			codec: "h264",
 			bitrate: outDims.bitrate,
 		});

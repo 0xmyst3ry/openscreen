@@ -42,6 +42,8 @@ const request = {
 	mic: false,
 	micDevice: null,
 	systemAudio: false,
+	camera: false,
+	cameraDevice: null as string | null,
 	cursorMode: "editable-overlay" as const,
 	durationMs: null,
 	projectOut: null,
@@ -62,6 +64,29 @@ describe("CliRecordRunner", () => {
 			getSources: vi.fn(async () => [screenSource]),
 			selectSource: vi.fn(async () => screenSource),
 		} as unknown as typeof window.electronAPI;
+	});
+
+	it("turns the camera on when asked, and fails when it cannot", async () => {
+		vi.mocked(window.electronAPI.cliGetRequest).mockResolvedValueOnce({ ...request, camera: true });
+		recorder.setWebcamEnabled.mockClear();
+		render(<CliRecordRunner />);
+		await waitFor(() =>
+			expect(window.electronAPI.cliDone).toHaveBeenCalledWith(
+				expect.objectContaining({
+					success: false,
+					error: expect.stringContaining("camera could not be turned on"),
+				}),
+			),
+		);
+		expect(recorder.setWebcamEnabled).toHaveBeenCalledWith(true);
+		expect(recorder.startRecordingImmediately).not.toHaveBeenCalled();
+	});
+
+	it("leaves the camera off unless asked", async () => {
+		recorder.setWebcamEnabled.mockClear();
+		render(<CliRecordRunner />);
+		await waitFor(() => expect(recorder.startRecordingImmediately).toHaveBeenCalledTimes(1));
+		expect(recorder.setWebcamEnabled).toHaveBeenCalledWith(false);
 	});
 
 	it("fails immediately when selectSource returns null", async () => {

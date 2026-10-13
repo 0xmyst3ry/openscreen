@@ -28,6 +28,12 @@ import {
 } from "../../src/lib/ai-edition/timeline/apply-auto-zooms";
 import type { CliDoneResult, CliRecordRequest, CliRequest } from "../../src/lib/cliContracts";
 import { HIDDEN_WINDOWS_NOTE } from "../../src/lib/cliSourcePick";
+import {
+	GIF_SIZE_PRESETS,
+	type GifSizePreset,
+	MP4_FRAME_RATES,
+	VALID_GIF_FRAME_RATES,
+} from "../../src/lib/exporter/types";
 import type { CursorRecordingData, CursorRecordingSample } from "../../src/native/contracts";
 import { runDocumentTool } from "../ai-edition/deep-agent/service";
 import type { DocumentService } from "../ai-edition/document-service";
@@ -45,7 +51,14 @@ import { mediaPathProblem } from "./project-tools";
 /** What startRecording asks a recorder for. */
 export type RecordRequest = Pick<
 	CliRecordRequest,
-	"displayIndex" | "windowTitle" | "mic" | "micDevice" | "systemAudio"
+	| "displayIndex"
+	| "windowTitle"
+	| "mic"
+	| "micDevice"
+	| "systemAudio"
+	| "camera"
+	| "cameraDevice"
+	| "cursorMode"
 >;
 
 /** A take turned into a project, ready for the document tools. */
@@ -180,6 +193,10 @@ export function pointerSamples(
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 
+const GIF_SIZES = Object.keys(GIF_SIZE_PRESETS) as [GifSizePreset, ...GifSizePreset[]];
+const MP4_OPTIONS = ["quality", "fps"] as const;
+const GIF_OPTIONS = ["gifFrameRate", "gifSize", "gifLoop"] as const;
+
 /** Where a take is made and where it lands, on each server. */
 const TAKE_NOTES: Record<McpTransport, string> = {
 	http: "Recording is the app's own: startRecording hands over to OpenScreen's recording bar, as the editor's Record button does, so the editor closes for the take, and stopRecording opens the take in the editor, where the user sees each edit land and can undo it. Its zooms on the clicks follow Record mode's Auto-zoom after recording, as for any take.",
@@ -208,7 +225,7 @@ export interface MediaTools {
 }
 
 const START_RECORDING_NOTES: Record<McpTransport, string> = {
-	http: "It goes through OpenScreen's recording bar, as the editor's Record button does: the editor closes for the take, so this is refused while the editor has unsaved changes, and the bar's countdown and camera settings apply. Where OpenScreen leaves the choice to the system's picker (Linux, macOS 15.2 or later), that picker asks the user what to record, whatever window or display says. The bar records with these settings, and gets the user's own back once the take ends.",
+	http: "It goes through OpenScreen's recording bar, as the editor's Record button does: the editor closes for the take, so this is refused while the editor has unsaved changes, and the bar's countdown applies. Where OpenScreen leaves the choice to the system's picker (Linux, macOS 15.2 or later), that picker asks the user what to record, whatever window or display says. The bar records with these settings, and gets the user's own back once the take ends.",
 	stdio: "On Linux the desktop's own picker asks the user which window to record.",
 };
 
@@ -310,8 +327,19 @@ async function finish(run: Run): Promise<CliDoneResult> {
 	}
 }
 
+/** The webcam recorded with a take, as the editor links it to the take's asset. */
+interface TakeCamera {
+	path: string;
+	offsetMs: number;
+}
+
 /** The take as a project, laid out as the editor lays out a fresh recording. */
-async function createProjectFromVideo(deps: MediaToolDeps, videoPath: string, title: string) {
+async function createProjectFromVideo(
+	deps: MediaToolDeps,
+	videoPath: string,
+	title: string,
+	camera: TakeCamera | null,
+) {
 	const video = await deps.openVideo(videoPath);
 	video.close();
 	const { durationSec, width, height } = video;
@@ -323,6 +351,19 @@ async function createProjectFromVideo(deps: MediaToolDeps, videoPath: string, ti
 		path: videoPath,
 	});
 	const assetId = document.project.primaryAssetId;
+	// Its size decides the picture-in-picture's box, as the editor stamps it when it links the
+	// camera (projectStore.ts). A camera that cannot be read costs the box its size, not the take.
+	const cameraSize = camera
+		? await deps.openVideo(camera.path).then(
+				(opened) => {
+					opened.close();
+					return opened.width > 0 && opened.height > 0
+						? { width: opened.width, height: opened.height }
+						: {};
+				},
+				() => ({}),
+			)
+		: {};
 	document = {
 		...document,
 		assets: document.assets.map((asset) =>
@@ -336,6 +377,18 @@ async function createProjectFromVideo(deps: MediaToolDeps, videoPath: string, ti
 							height,
 							fps: asset.video?.fps ?? 0,
 						},
+						...(camera
+							? {
+									cameraTrack: {
+										sourcePath: camera.path,
+										startMs: 0,
+										// An integer, as the schema wants: the native paths measure it in fractions.
+										offsetMs: Math.round(camera.offsetMs),
+										visible: true,
+										...cameraSize,
+									},
+								}
+							: {}),
 					}
 				: asset,
 		),
@@ -369,7 +422,6 @@ function runnerRecorder(deps: MediaToolDeps): TakeRecorder {
 				{
 					kind: "record",
 					...request,
-					cursorMode: "editable-overlay",
 					durationMs: null,
 					projectOut: null,
 				},
@@ -402,6 +454,9 @@ function runnerRecorder(deps: MediaToolDeps): TakeRecorder {
 							deps,
 							result.screenVideoPath,
 							title || `Recording ${new Date(startedAt).toLocaleString()}`,
+							result.webcamVideoPath
+								? { path: result.webcamVideoPath, offsetMs: result.webcamOffsetMs ?? 0 }
+								: null,
 						);
 						return {
 							projectId: project.document.project.id,
@@ -486,7 +541,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		server.registerTool(
 			"listSources",
 			{
-				description: `List the displays and windows OpenScreen can record, and the microphones. Pass a display's index or part of a window's title to startRecording. ${HIDDEN_WINDOWS_NOTE}`,
+				description: `List the displays and windows OpenScreen can record, the microphones and the cameras. Pass startRecording a display's index or part of a window's title, and part of a microphone's or a camera's name. ${HIDDEN_WINDOWS_NOTE}`,
 				inputSchema: z.object({}),
 				annotations: READ_ONLY,
 			},
@@ -495,12 +550,13 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 				if (!result.success || !result.sources) {
 					return text(`Could not list the sources: ${result.error ?? "unknown error"}`, true);
 				}
-				const { displays, windows, microphones } = result.sources;
+				const { displays, windows, microphones, cameras } = result.sources;
 				return text(
 					JSON.stringify({
 						displays: displays.map(({ index, name }) => ({ index, name })),
 						windows: windows.map((window) => window.name),
 						microphones: microphones.map((mic) => mic.label),
+						cameras: cameras.map((camera) => camera.label),
 					}),
 				);
 			},
@@ -509,7 +565,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		server.registerTool(
 			"startRecording",
 			{
-				description: `Start recording one window (preferred: nothing else on the desktop is captured) or one display. Returns once capture has started; then drive the app and call stopRecording. The pointer is recorded as data, so the export draws a clean cursor and the zooms planned from the clicks. ${START_RECORDING_NOTES[transport]}`,
+				description: `Start recording one window (preferred: nothing else on the desktop is captured) or one display. Returns once capture has started; then drive the app and call stopRecording. By default the pointer is recorded as data, so the export draws a clean cursor and the zooms planned from the clicks. A webcam recorded with it shows as a picture-in-picture in the project. Hiding the desktop icons follows the user's own Record mode setting. ${START_RECORDING_NOTES[transport]}`,
 				inputSchema: z.object({
 					window: z
 						.string()
@@ -528,6 +584,18 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						.union([z.boolean(), z.string()])
 						.optional()
 						.describe("true for the default microphone, or part of a microphone's name."),
+					camera: z
+						.union([z.boolean(), z.string()])
+						.optional()
+						.describe(
+							"Also record the webcam: true for the default camera, or part of a camera's name.",
+						),
+					cursor: z
+						.enum(["editable-overlay", "system"])
+						.optional()
+						.describe(
+							"editable-overlay (default): the pointer is recorded as data, drawn clean by the export, with zooms on its clicks. system: the system's own pointer is burned into the video, with no zooms on clicks and no setPointerTrack.",
+						),
 				}),
 				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			},
@@ -548,6 +616,9 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						mic: args.microphone !== undefined && args.microphone !== false,
 						micDevice: typeof args.microphone === "string" ? args.microphone : null,
 						systemAudio: args.systemAudio === true,
+						camera: args.camera !== undefined && args.camera !== false,
+						cameraDevice: typeof args.camera === "string" ? args.camera : null,
+						cursorMode: args.cursor ?? "editable-overlay",
 					});
 				} catch (error) {
 					take = null;
@@ -620,7 +691,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 			"exportVideo",
 			{
 				description:
-					"Render a project to an MP4 (H.264, 60 fps) or a GIF with OpenScreen's compositor: the background, cursor, zooms, cuts, speed changes and annotations as edited. Returns the file's path; call getFrames with the projectId to check it at the ruler seconds you edited with. The video's shape follows the project's format (setAspectRatio).",
+					"Render a project to an MP4 (H.264) or a GIF with OpenScreen's compositor: the background, cursor, zooms, cuts, speed changes and annotations as edited. Returns the file's path; call getFrames with the projectId to check it at the ruler seconds you edited with. The video's shape follows the project's format (setAspectRatio). The options are the Export dialog's: quality and fps for an MP4; gifFrameRate, gifSize and gifLoop for a GIF.",
 				inputSchema: z.object({
 					projectId: z.string(),
 					path: z.string().describe(EXPORT_PATH_DESCRIPTIONS[transport]),
@@ -628,8 +699,26 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						.enum(["medium", "good", "source"])
 						.optional()
 						.describe(
-							"The height: medium is 720 pixels, good is 1080 (default), source keeps the recording's. The width follows the format.",
+							"MP4 only. The height: medium is 720 pixels, good is 1080 (default), source keeps the recording's. The width follows the format.",
 						),
+					fps: z
+						.literal(MP4_FRAME_RATES)
+						.optional()
+						.describe("MP4 only. Frames per second. Default 60."),
+					gifFrameRate: z
+						.literal(VALID_GIF_FRAME_RATES)
+						.optional()
+						.describe("GIF only. Frames per second. Default 15."),
+					gifSize: z
+						.enum(GIF_SIZES)
+						.optional()
+						.describe(
+							`GIF only. The largest height in pixels, never upscaled: ${GIF_SIZES.map((size) => `${size} ${Number.isFinite(GIF_SIZE_PRESETS[size].maxHeight) ? GIF_SIZE_PRESETS[size].maxHeight : "keeps the recording's"}`).join(", ")}. Default medium.`,
+						),
+					gifLoop: z
+						.boolean()
+						.optional()
+						.describe("GIF only. Loop forever (default) or play once."),
 				}),
 				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			},
@@ -643,6 +732,17 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 				const extension = path.extname(outPath).toLowerCase();
 				if (extension !== ".mp4" && extension !== ".gif") {
 					return text(`The path must end in .mp4 or .gif, got "${args.path}".`, true);
+				}
+				const gif = extension === ".gif";
+				// The dialog offers each format its own options only: one for the other would do nothing.
+				const misplaced = (gif ? MP4_OPTIONS : GIF_OPTIONS).filter(
+					(option) => args[option] !== undefined,
+				);
+				if (misplaced.length > 0) {
+					return text(
+						`${misplaced.join(", ")}: not for ${gif ? "a GIF" : "an MP4"}. The path's extension picks the format.`,
+						true,
+					);
 				}
 				const progressToken = extra._meta?.progressToken;
 				exporting = true;
@@ -660,10 +760,15 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 							// Read by id, as the editor opens a project: nothing of the app's own state moves.
 							projectId: args.projectId,
 							outPath,
-							format: extension === ".gif" ? "gif" : "mp4",
+							format: gif ? "gif" : "mp4",
+							// The Export dialog's defaults, not whatever an older editor stored.
 							quality: args.quality ?? "good",
-							gifFrameRate: null,
-							gifSizePreset: null,
+							mp4FrameRate: args.fps ?? 60,
+							gifFrameRate: args.gifFrameRate ?? 15,
+							gifSizePreset: args.gifSize ?? "medium",
+							gifLoop: args.gifLoop ?? true,
+							// No zooms or voiceover added at export: they are edits of the project
+							// (addZoom, setPointerTrack, addAudio), or the video is not what getFrames reads.
 							autoZoom: false,
 							audioPath: null,
 							audioMode: "mix",

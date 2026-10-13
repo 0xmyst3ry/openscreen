@@ -31,6 +31,8 @@ import {
 class FakeRunners {
 	readonly started: CliRequest[] = [];
 	recordStarts = true;
+	/** The webcam the next take records beside the screen, if any. */
+	webcam: { path: string; offsetMs: number } | null = null;
 	results: Partial<Record<CliRequest["kind"], CliDoneResult>> = {};
 	/** Set: exports stay running until `releaseExport` is called. */
 	holdExport = false;
@@ -55,7 +57,13 @@ class FakeRunners {
 			webContents: {
 				send: (channel: string) => {
 					if (channel === "cli-stop-recording") {
-						finish({ success: true, screenVideoPath: this.videoPath });
+						finish({
+							success: true,
+							screenVideoPath: this.videoPath,
+							...(this.webcam
+								? { webcamVideoPath: this.webcam.path, webcamOffsetMs: this.webcam.offsetMs }
+								: {}),
+						});
 					}
 				},
 			},
@@ -271,6 +279,55 @@ describe("recording", () => {
 			checkpointId: take.checkpointId,
 		});
 		expect(restored.isError).toBeFalsy();
+	});
+
+	it("records the webcam asked for beside the screen, linked to the take as the editor links it", async () => {
+		const webcamPath = path.join(dir, "recordings", "take-webcam.mp4");
+		runners.webcam = { path: webcamPath, offsetMs: -192.8 };
+		await call("startRecording", { display: 1, camera: "BRIO", cursor: "system" });
+		expect(runners.started[0]).toMatchObject({
+			kind: "record",
+			displayIndex: 1,
+			camera: true,
+			cameraDevice: "BRIO",
+			cursorMode: "system",
+		});
+		const take = JSON.parse(textOf(await call("stopRecording")));
+		const document = await documents.getProject(take.projectId);
+		expect(document.assets[0].cameraTrack).toEqual({
+			sourcePath: webcamPath,
+			startMs: 0,
+			offsetMs: -193,
+			visible: true,
+			width: 1920,
+			height: 1080,
+		});
+	});
+
+	it("records no webcam unless asked, and the default camera for true", async () => {
+		await call("startRecording", {});
+		await call("stopRecording");
+		await call("startRecording", { camera: true });
+		expect(runners.started.filter((request) => request.kind === "record")).toMatchObject([
+			{ camera: false, cameraDevice: null, cursorMode: "editable-overlay" },
+			{ camera: true, cameraDevice: null },
+		]);
+	});
+
+	it("lists the cameras beside the microphones", async () => {
+		runners.results.sources = {
+			success: true,
+			sources: {
+				displays: [{ index: 0, id: "screen:1", name: "Display 1" }],
+				windows: [],
+				microphones: [{ label: "USB Mic" }],
+				microphoneLabelsUnavailable: false,
+				cameras: [{ label: "Logitech BRIO", deviceId: "cam-1" }],
+				cameraLabelsUnavailable: false,
+			},
+		};
+		const listed = JSON.parse(textOf(await call("listSources")));
+		expect(listed).toMatchObject({ microphones: ["USB Mic"], cameras: ["Logitech BRIO"] });
 	});
 
 	it("says where the take is when it cannot become a project", async () => {
@@ -548,7 +605,53 @@ describe("exportVideo", () => {
 			outPath,
 			format: "mp4",
 			quality: "good",
+			mp4FrameRate: 60,
 		});
+	});
+
+	it("passes the Export dialog's options, and its defaults for those left out", async () => {
+		const { projectId } = await recordTake();
+		await call("exportVideo", { projectId, path: path.join(dir, "a.mp4"), fps: 30 });
+		expect(runners.started.at(-1)).toMatchObject({ format: "mp4", mp4FrameRate: 30 });
+		await call("exportVideo", {
+			projectId,
+			path: path.join(dir, "a.gif"),
+			gifFrameRate: 25,
+			gifSize: "small",
+			gifLoop: false,
+		});
+		expect(runners.started.at(-1)).toMatchObject({
+			format: "gif",
+			gifFrameRate: 25,
+			gifSizePreset: "small",
+			gifLoop: false,
+		});
+		await call("exportVideo", { projectId, path: path.join(dir, "b.gif") });
+		expect(runners.started.at(-1)).toMatchObject({
+			gifFrameRate: 15,
+			gifSizePreset: "medium",
+			gifLoop: true,
+		});
+	});
+
+	it("refuses a choice the dialog does not offer, or an option of the other format", async () => {
+		const { projectId } = await recordTake();
+		const exports = () => runners.started.filter((request) => request.kind === "export").length;
+		const before = exports();
+		expect((await call("exportVideo", { projectId, path: "a.mp4", fps: 50 })).isError).toBe(true);
+		expect((await call("exportVideo", { projectId, path: "a.gif", gifSize: "huge" })).isError).toBe(
+			true,
+		);
+		const gifOnMp4 = await call("exportVideo", { projectId, path: "a.mp4", gifLoop: false });
+		expect(textOf(gifOnMp4)).toContain("gifLoop: not for an MP4");
+		const mp4OnGif = await call("exportVideo", {
+			projectId,
+			path: "a.gif",
+			quality: "source",
+			fps: 24,
+		});
+		expect(textOf(mp4OnGif)).toContain("quality, fps: not for a GIF");
+		expect(exports()).toBe(before);
 	});
 
 	it("runs one export at a time, and closes each runner once it is done", async () => {
@@ -734,7 +837,16 @@ describe("the media tools in the app", () => {
 		const started = await callOn(app, "startRecording", { window: "My App", microphone: "USB" });
 		expect(started.isError).toBeFalsy();
 		expect(asked).toEqual([
-			{ displayIndex: 0, windowTitle: "My App", mic: true, micDevice: "USB", systemAudio: false },
+			{
+				displayIndex: 0,
+				windowTitle: "My App",
+				mic: true,
+				micDevice: "USB",
+				systemAudio: false,
+				camera: false,
+				cameraDevice: null,
+				cursorMode: "editable-overlay",
+			},
 		]);
 		const take = JSON.parse(textOf(await callOn(app, "stopRecording", { title: "Demo" })));
 		expect(take).toMatchObject({
@@ -776,7 +888,14 @@ describe("the media tools in the app", () => {
 		// Reading stays open: listing what could be recorded changes nothing.
 		runners.results.sources = {
 			success: true,
-			sources: { displays: [], windows: [], microphones: [], microphoneLabelsUnavailable: false },
+			sources: {
+				displays: [],
+				windows: [],
+				microphones: [],
+				microphoneLabelsUnavailable: false,
+				cameras: [],
+				cameraLabelsUnavailable: false,
+			},
 		};
 		expect((await callOn(app, "listSources")).isError).toBeFalsy();
 	});

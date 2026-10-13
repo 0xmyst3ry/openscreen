@@ -24,7 +24,11 @@ async function pickSource(request: CliRecordRequest): Promise<ProcessedDesktopSo
 	return pickRecordingSource(sources, request);
 }
 
-async function resolveMicDeviceId(deviceNameFilter: string | null): Promise<{
+/** The microphone or camera whose label contains `deviceNameFilter`; none asked = the default. */
+async function resolveDeviceId(
+	kind: "audioinput" | "videoinput",
+	deviceNameFilter: string | null,
+): Promise<{
 	deviceId: string | undefined;
 	deviceName: string | undefined;
 }> {
@@ -33,7 +37,9 @@ async function resolveMicDeviceId(deviceNameFilter: string | null): Promise<{
 	// Labels require an active permission grant; a short-lived stream unlocks them.
 	let probeStream: MediaStream | null = null;
 	try {
-		probeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		probeStream = await navigator.mediaDevices.getUserMedia(
+			kind === "audioinput" ? { audio: true } : { video: true },
+		);
 	} catch {
 		// Enumeration below may still work with empty labels.
 	}
@@ -41,14 +47,15 @@ async function resolveMicDeviceId(deviceNameFilter: string | null): Promise<{
 		const devices = await navigator.mediaDevices.enumerateDevices();
 		const needle = deviceNameFilter.toLowerCase();
 		const match = devices.find(
-			(device) => device.kind === "audioinput" && device.label.toLowerCase().includes(needle),
+			(device) => device.kind === kind && device.label.toLowerCase().includes(needle),
 		);
 		if (!match) {
 			const labels = devices
-				.filter((d) => d.kind === "audioinput" && d.label)
+				.filter((d) => d.kind === kind && d.label)
 				.map((d) => `  - ${d.label}`)
 				.join("\n");
-			throw new Error(`No microphone label contains "${deviceNameFilter}". Devices:\n${labels}`);
+			const what = kind === "audioinput" ? "microphone" : "camera";
+			throw new Error(`No ${what} label contains "${deviceNameFilter}". Devices:\n${labels}`);
 		}
 		return { deviceId: match.deviceId, deviceName: match.label };
 	} finally {
@@ -61,6 +68,7 @@ async function resolveMicDeviceId(deviceNameFilter: string | null): Promise<{
 function buildDefaultProject(session: {
 	screenVideoPath: string;
 	webcamVideoPath?: string;
+	webcamOffsetMs?: number;
 	cursorCaptureMode?: string;
 }) {
 	return {
@@ -68,6 +76,9 @@ function buildDefaultProject(session: {
 		media: {
 			screenVideoPath: session.screenVideoPath,
 			...(session.webcamVideoPath ? { webcamVideoPath: session.webcamVideoPath } : {}),
+			...(session.webcamVideoPath && session.webcamOffsetMs !== undefined
+				? { webcamOffsetMs: session.webcamOffsetMs }
+				: {}),
 			...(session.cursorCaptureMode ? { cursorCaptureMode: session.cursorCaptureMode } : {}),
 		},
 		// A new project: it takes the current default format rather than the v2 reading of none.
@@ -163,7 +174,7 @@ export function CliRecordRunner() {
 
 				setMicrophoneEnabled(Boolean(request.mic));
 				if (request.mic) {
-					const mic = await resolveMicDeviceId(request.micDevice);
+					const mic = await resolveDeviceId("audioinput", request.micDevice);
 					setMicrophoneDeviceId(mic.deviceId);
 					setMicrophoneDeviceName(mic.deviceName);
 					if (mic.deviceName) {
@@ -173,9 +184,24 @@ export function CliRecordRunner() {
 					setMicrophoneDeviceId(undefined);
 					setMicrophoneDeviceName(undefined);
 				}
-				await setWebcamEnabled(false);
-				setWebcamDeviceId(undefined);
-				setWebcamDeviceName(undefined);
+				if (request.camera) {
+					const camera = await resolveDeviceId("videoinput", request.cameraDevice);
+					setWebcamDeviceId(camera.deviceId);
+					setWebcamDeviceName(camera.deviceName);
+					// The HUD's own check: access granted, and a camera to open.
+					if (!(await setWebcamEnabled(true))) {
+						throw new Error(
+							"The camera could not be turned on: camera access is denied, or no camera is connected",
+						);
+					}
+					if (camera.deviceName) {
+						window.electronAPI.cliLog("info", `Camera: ${camera.deviceName}`);
+					}
+				} else {
+					await setWebcamEnabled(false);
+					setWebcamDeviceId(undefined);
+					setWebcamDeviceName(undefined);
+				}
 				setSystemAudioEnabled(request.systemAudio);
 				setCursorCaptureMode(request.cursorMode);
 				setStatus("Starting recording…");
@@ -193,7 +219,7 @@ export function CliRecordRunner() {
 		const request = requestReady;
 		if (!request || configuredRef.current || phaseRef.current !== "init") return;
 		const micReady = recorder.microphoneEnabled === Boolean(request.mic);
-		const webcamReady = !recorder.webcamEnabled;
+		const webcamReady = recorder.webcamEnabled === Boolean(request.camera);
 		const systemAudioReady = recorder.systemAudioEnabled === request.systemAudio;
 		const cursorReady = recorder.cursorCaptureMode === request.cursorMode;
 		if (!micReady || !webcamReady || !systemAudioReady || !cursorReady) return;
@@ -290,6 +316,7 @@ export function CliRecordRunner() {
 					success: true,
 					screenVideoPath: session.screenVideoPath,
 					webcamVideoPath: session.webcamVideoPath,
+					webcamOffsetMs: session.webcamOffsetMs,
 					cursorDataPath: `${session.screenVideoPath}.cursor.json`,
 					durationMs,
 					...(request?.projectOut ? { projectData: buildDefaultProject(session) } : {}),

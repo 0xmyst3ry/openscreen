@@ -11,8 +11,62 @@
 import path from "node:path";
 import { clipAwaitsProbedDuration } from "../../src/lib/ai-edition/document/timeline";
 import { type AxcutDocument, documentSchema } from "../../src/lib/ai-edition/schema";
+import type { CliSourcesResult } from "../../src/lib/cliContracts";
+import type { RecordingPreferences } from "../app-settings";
 import type { RecordedTake, RecordRequest, RunningTake, TakeRecorder } from "./media-tools";
 import type { McpDocumentHost } from "./openscreen-mcp-server";
+
+/** The recording bar's settings a client's take sets, and puts back once it is captured. */
+export const TAKE_PREF_KEYS = [
+	"micEnabled",
+	"micDeviceId",
+	"micDeviceName",
+	"camEnabled",
+	"camDeviceId",
+	"camDeviceName",
+	"systemAudioEnabled",
+	"cursorCaptureMode",
+] as const;
+export type TakePrefs = Pick<RecordingPreferences, (typeof TAKE_PREF_KEYS)[number]>;
+
+/** The take settings among `prefs`: what puts the user's own back. */
+export function pickTakePrefs(prefs: TakePrefs): TakePrefs {
+	return Object.fromEntries(TAKE_PREF_KEYS.map((key) => [key, prefs[key]])) as TakePrefs;
+}
+
+/**
+ * The recording bar's settings for a client's take. A device asked for by name is looked up
+ * in `listed` (listSources' list), its id beside its name as the bar records with both; none
+ * asked for leaves the choice to the system, as the bar does with no device picked. Throws
+ * when no listed device has the name.
+ */
+export function takePrefs(request: RecordRequest, listed: CliSourcesResult | null): TakePrefs {
+	const find = (
+		kind: "microphone" | "camera",
+		devices: { label: string; deviceId?: string }[] | undefined,
+		name: string | null,
+	) => {
+		if (!name) return { id: null, name: null };
+		const needle = name.toLowerCase();
+		const match = devices?.find((device) => device.label.toLowerCase().includes(needle));
+		if (!match) {
+			throw new Error(`No ${kind}'s name contains "${name}". Call listSources for their names.`);
+		}
+		return { id: match.deviceId ?? null, name: match.label };
+	};
+	const mic = find("microphone", listed?.microphones, request.mic ? request.micDevice : null);
+	const cam = find("camera", listed?.cameras, request.camera ? request.cameraDevice : null);
+	return {
+		micEnabled: request.mic,
+		micDeviceId: mic.id,
+		micDeviceName: mic.name,
+		camEnabled: request.camera,
+		camDeviceId: cam.id,
+		camDeviceName: cam.name,
+		systemAudioEnabled: request.systemAudio,
+		cursorCaptureMode: request.cursorMode,
+	};
+}
 
 // ponytail: fixed deadlines. A take only starts once the countdown, and the system's
 // picker where it asks, are through; a long take takes a while to save.
@@ -34,7 +88,7 @@ export interface AppRecorderDeps {
 	editorHasUnsavedChanges(): boolean;
 	/**
 	 * Points the recording bar at the request, as Record mode does before it hands over:
-	 * its source, microphone, system audio and cursor. Returns what puts back the settings
+	 * its source, microphone, camera, system audio and cursor. Returns what puts back the settings
 	 * the user had. Throws when the request matches no source or microphone.
 	 */
 	prepare(request: RecordRequest): Promise<() => void>;

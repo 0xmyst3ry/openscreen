@@ -1,6 +1,6 @@
 // Hidden-window runner for `openscreen sources`: enumerates capturable
-// displays/windows (via the same get-sources IPC the GUI picker uses) and
-// microphone inputs, then hands the payload to the CLI controller to print.
+// displays/windows (via the same get-sources IPC the GUI picker uses),
+// microphones and cameras, then hands the payload to the CLI controller to print.
 
 import { useEffect, useRef, useState } from "react";
 import type { CliSourcesResult } from "@/lib/cliContracts";
@@ -13,10 +13,10 @@ import type { CliSourcesResult } from "@/lib/cliContracts";
 // reason, which is worse than failing outright, because a script waits forever
 // rather than seeing an error.
 //
-// Displays and windows are what the command is for; microphone labels are a
-// nicety on top. So the audio path is best-effort and bounded, and giving up
+// Displays and windows are what the command is for; microphone and camera labels
+// are a nicety on top. So the audio path is best-effort and bounded, and giving up
 // reports exactly what a denied permission already reported.
-const MICROPHONE_TIMEOUT_MS = 5_000;
+const DEVICE_TIMEOUT_MS = 5_000;
 
 // Enumeration walks every display and window and grabs a thumbnail of each, so
 // it is allowed to be slow on a loaded machine. It is not allowed to be
@@ -41,17 +41,16 @@ async function withTimeout<T>(work: Promise<T>, fallback: T, what: string, ms: n
 	}
 }
 
-async function enumerateMicrophones(): Promise<{
-	microphones: { label: string }[];
-	microphoneLabelsUnavailable: boolean;
+/** One kind of capture device, microphones or cameras, by label. */
+async function enumerateInputs(kind: "audioinput" | "videoinput"): Promise<{
+	devices: { label: string; deviceId: string }[];
+	labelsUnavailable: boolean;
 }> {
 	const listInputs = async () =>
-		(await navigator.mediaDevices.enumerateDevices()).filter(
-			(device) => device.kind === "audioinput",
-		);
+		(await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === kind);
 
 	// null, not []: an empty list is an affirmative claim that this host has no
-	// microphones, and with it `microphoneLabelsUnavailable` computes to false
+	// devices, and with it `labelsUnavailable` computes to false
 	// below — the exact opposite of what giving up should report, and
 	// indistinguishable from a genuinely mic-less machine for anyone reading the
 	// -o file. The sentinel keeps "we stopped asking" separate from "there are
@@ -65,10 +64,10 @@ async function enumerateMicrophones(): Promise<{
 		listInputs().catch(() => null),
 		null,
 		"device enumeration",
-		MICROPHONE_TIMEOUT_MS,
+		DEVICE_TIMEOUT_MS,
 	);
 	if (initialInputs === null) {
-		return { microphones: [], microphoneLabelsUnavailable: true };
+		return { devices: [], labelsUnavailable: true };
 	}
 	let inputs = initialInputs;
 
@@ -76,7 +75,7 @@ async function enumerateMicrophones(): Promise<{
 	// stream unlocks them without leaving anything recording.
 	if (inputs.length > 0 && inputs.every((device) => !device.label)) {
 		const probe = navigator.mediaDevices
-			.getUserMedia({ audio: true })
+			.getUserMedia(kind === "audioinput" ? { audio: true } : { video: true })
 			.then((stream) => {
 				// Released here rather than in a finally, so that a stream arriving
 				// after we have stopped waiting still does not hold the device open.
@@ -85,7 +84,7 @@ async function enumerateMicrophones(): Promise<{
 			})
 			.catch(() => false); // Permission denied — report devices without labels.
 
-		if (await withTimeout(probe, false, "microphone permission probe", MICROPHONE_TIMEOUT_MS)) {
+		if (await withTimeout(probe, false, `${kind} permission probe`, DEVICE_TIMEOUT_MS)) {
 			// The .catch restores what the try/catch around this call used to give:
 			// withTimeout is a Promise.race, so it adopts a rejection and its
 			// `fallback` never applies on that path. Without it a rejecting
@@ -97,15 +96,15 @@ async function enumerateMicrophones(): Promise<{
 				listInputs().catch(() => inputs),
 				inputs,
 				"device re-enumeration",
-				MICROPHONE_TIMEOUT_MS,
+				DEVICE_TIMEOUT_MS,
 			);
 		}
 	}
 
 	const labeled = inputs.filter((device) => device.label);
 	return {
-		microphones: labeled.map((device) => ({ label: device.label, deviceId: device.deviceId })),
-		microphoneLabelsUnavailable: inputs.length > 0 && labeled.length === 0,
+		devices: labeled.map((device) => ({ label: device.label, deviceId: device.deviceId })),
+		labelsUnavailable: inputs.length > 0 && labeled.length === 0,
 	};
 }
 
@@ -140,8 +139,16 @@ async function enumerateSources(): Promise<CliSourcesResult> {
 		.filter((source) => source.id.startsWith("window:"))
 		.map((source) => ({ id: source.id, name: source.name }));
 
-	const { microphones, microphoneLabelsUnavailable } = await enumerateMicrophones();
-	return { displays, windows, microphones, microphoneLabelsUnavailable };
+	const microphones = await enumerateInputs("audioinput");
+	const cameras = await enumerateInputs("videoinput");
+	return {
+		displays,
+		windows,
+		microphones: microphones.devices,
+		microphoneLabelsUnavailable: microphones.labelsUnavailable,
+		cameras: cameras.devices,
+		cameraLabelsUnavailable: cameras.labelsUnavailable,
+	};
 }
 
 export function CliSourcesRunner() {

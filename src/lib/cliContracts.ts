@@ -2,7 +2,7 @@
 // process (electron/cli/) and the hidden renderer runners (src/cli/). Keep this
 // file dependency-free so both build targets can import it.
 
-import type { ExportQuality, GifFrameRate, GifSizePreset } from "./exporter/types";
+import type { ExportQuality, GifFrameRate, GifSizePreset, Mp4FrameRate } from "./exporter/types";
 
 export type CliCursorCaptureMode = "editable-overlay" | "system";
 
@@ -23,8 +23,12 @@ export interface CliExportRequest {
 	format: "mp4" | "gif" | null;
 	/** null = use the quality stored in the project. */
 	quality: ExportQuality | null;
+	/** MP4 frame rate, as the Export dialog offers it. */
+	mp4FrameRate: Mp4FrameRate;
 	gifFrameRate: GifFrameRate | null;
 	gifSizePreset: GifSizePreset | null;
+	/** null = use the loop setting stored in the project. */
+	gifLoop: boolean | null;
 	/**
 	 * Reference preview box used to scale annotation text and border radii the
 	 * same way the editor's on-screen preview does. The composition is fitted
@@ -54,6 +58,10 @@ export interface CliRecordRequest {
 	/** Microphone device label substring; null = system default. */
 	micDevice: string | null;
 	systemAudio: boolean;
+	/** Record the webcam beside the screen, as the HUD's camera toggle does. */
+	camera: boolean;
+	/** Camera device label substring; null = system default. */
+	cameraDevice: string | null;
 	cursorMode: CliCursorCaptureMode;
 	/** Auto-stop after this many milliseconds; null = stop via signal/stdin. */
 	durationMs: number | null;
@@ -86,6 +94,10 @@ export interface CliSourcesResult {
 	microphones: { label: string; deviceId?: string }[];
 	/** True when microphone labels required a permission the user hasn't granted. */
 	microphoneLabelsUnavailable: boolean;
+	/** `deviceId`: the renderer's id for it, as the HUD records with it beside the label. */
+	cameras: { label: string; deviceId?: string }[];
+	/** True when camera labels required a permission the user hasn't granted. */
+	cameraLabelsUnavailable: boolean;
 }
 
 export interface CliProgressEvent {
@@ -108,6 +120,8 @@ export interface CliDoneResult {
 	/** Record: produced artifacts. */
 	screenVideoPath?: string;
 	webcamVideoPath?: string;
+	/** Record: the webcam's shift against the screen, as `ProjectMedia.webcamOffsetMs`. */
+	webcamOffsetMs?: number;
 	cursorDataPath?: string;
 	projectPath?: string;
 	durationMs?: number;
