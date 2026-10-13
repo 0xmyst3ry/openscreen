@@ -123,6 +123,31 @@ describe("setEditorSettings", () => {
 		const vertical = set(document, { aspectRatio: "9:16" });
 		expect(JSON.parse(vertical.resultJson).applied).toEqual(["aspectRatio", "formatFollowCursor"]);
 		expect(getEditorSettings(vertical.document as AxcutDocument).formatFollowCursor).toBe(true);
+		// Two shapes on the timeline: auto is not offered, as in the picker.
+		const mixed = documentSchema.parse({
+			...document,
+			assets: [
+				...document.assets,
+				{ ...document.assets[0], id: "asset_2", video: { width: 1080, height: 1920 } },
+			],
+			timeline: {
+				...document.timeline,
+				clips: [
+					...document.timeline.clips,
+					{
+						...document.timeline.clips[0],
+						id: "clip_2",
+						assetId: "asset_2",
+						timelineStartSec: 30,
+						timelineEndSec: 60,
+					},
+				],
+			},
+		});
+		expect(
+			set(set(mixed, { aspectRatio: "9:16" }).document as AxcutDocument, { aspectRatio: "auto" })
+				.ok,
+		).toBe(false);
 		// The alias takes the same shapes.
 		expect(
 			executeAgentTool(document, "setAspectRatio", JSON.stringify({ aspectRatio: "683:384" })).ok,
