@@ -8,7 +8,12 @@ import {
 } from "../../src/lib/ai-edition/schema";
 import { ZOOM_DEPTH_SCALES } from "../../src/lib/ai-edition/timeline/zoom-scale";
 import { zoomScaleLimit } from "../../src/native/sceneDescription";
-import { executeAgentTool, isMutatingTool, MUTATING_TOOL_NAMES } from "./agent-tools";
+import {
+	type AgentToolOptions,
+	executeAgentTool,
+	isMutatingTool,
+	MUTATING_TOOL_NAMES,
+} from "./agent-tools";
 import { measureTextInShippedFonts } from "./text-measure";
 
 /** ponytail: every fixture in this file starts from the SAME instant.
@@ -192,6 +197,9 @@ describe("the mutating-tool table", () => {
 				"addTrims",
 				"addZoom",
 				"addZooms",
+				"addAutoZooms",
+				"duplicateClip",
+				"insertClip",
 				"moveClip",
 				"removeClip",
 				"removeModifier",
@@ -2491,7 +2499,7 @@ describe("addAudio / setAudio", () => {
 	it("refuses a video asset, pointing at the tool that does place footage", () => {
 		const result = place(withAudioAsset(), { assetId: "asset_1", startSec: 0, endSec: 4 });
 		expect(result.ok).toBe(false);
-		expect(result.resultJson).toContain("replaceTimeline");
+		expect(result.resultJson).toContain("insertClip");
 	});
 
 	it("setAudio re-levels and re-lanes the track it names", () => {
@@ -3473,5 +3481,218 @@ describe("region tools reach the inspector's settings (#1180)", () => {
 		expect(
 			run(fixtureDocument(), "addAnnotation", { startSec: 1, endSec: 3, type: "image" }).ok,
 		).toBe(false);
+	});
+});
+
+describe("clip structure (#1180)", () => {
+	/** Two recordings, one not probed yet, and a music file; one clip of the first, cut once. */
+	function twoTakes(): AxcutDocument {
+		const base = createEmptyDocument({
+			title: "Takes",
+			projectId: "proj_takes",
+			createdAt: FIXTURE_CREATED_AT,
+		});
+		return documentSchema.parse({
+			...base,
+			project: { ...base.project, primaryAssetId: "asset_1" },
+			assets: [
+				{
+					id: "asset_1",
+					kind: "video",
+					label: "Take 1",
+					originalPath: "C:/v/1.mp4",
+					durationSec: 20,
+				},
+				{
+					id: "asset_2",
+					kind: "video",
+					label: "Take 2",
+					originalPath: "C:/v/2.mp4",
+					durationSec: 8,
+				},
+				{ id: "asset_3", kind: "video", label: "Unprobed", originalPath: "C:/v/3.mp4" },
+				{
+					id: "audio_1",
+					kind: "audio",
+					label: "Music",
+					originalPath: "C:/v/m.mp3",
+					durationSec: 30,
+				},
+			],
+			timeline: {
+				...base.timeline,
+				clips: [
+					{
+						id: "clip_1",
+						assetId: "asset_1",
+						sourceStartSec: 0,
+						sourceEndSec: 10,
+						timelineStartSec: 0,
+						timelineEndSec: 10,
+						wordRefs: [],
+						origin: "user",
+						reason: "",
+					},
+				],
+				trimRanges: [
+					{
+						id: "trim_1",
+						assetId: "asset_1",
+						clipId: "clip_1",
+						startSec: 2,
+						endSec: 3,
+						reason: "",
+						origin: "user",
+					},
+				],
+			},
+		});
+	}
+
+	const run = (document: AxcutDocument, name: string, args: unknown) =>
+		executeAgentTool(document, name, JSON.stringify(args));
+
+	it("insertClip places another asset's footage before the clip it names", () => {
+		const result = run(twoTakes(), "insertClip", { assetId: "asset_2", beforeClipId: "clip_1" });
+		expect(result.ok).toBe(true);
+		const clips = (result.document as AxcutDocument).timeline.clips;
+		const { clipId } = JSON.parse(result.resultJson);
+		expect(clips.map((c) => c.id)).toEqual([clipId, "clip_1"]);
+		expect(clips[0]).toMatchObject({ assetId: "asset_2", sourceStartSec: 0, sourceEndSec: 8 });
+		// Back to back: the clip after it moved along the ruler.
+		expect(clips[1]).toMatchObject({ timelineStartSec: 8, timelineEndSec: 18 });
+	});
+
+	it("insertClip folds footage that continues the clip before it into that clip", () => {
+		const result = run(twoTakes(), "insertClip", {
+			assetId: "asset_1",
+			sourceStartSec: 10,
+			sourceEndSec: 15,
+		});
+		expect(JSON.parse(result.resultJson)).toMatchObject({
+			clipId: null,
+			joinedIntoNeighbour: true,
+		});
+		expect((result.document as AxcutDocument).timeline.clips).toMatchObject([
+			{ id: "clip_1", sourceStartSec: 0, sourceEndSec: 15 },
+		]);
+	});
+
+	it("insertClip refuses what is not footage, and says what to use", () => {
+		expect(run(twoTakes(), "insertClip", { assetId: "audio_1" }).resultJson).toContain("addAudio");
+		const unknown = run(twoTakes(), "insertClip", { assetId: "nope" });
+		expect(unknown.ok).toBe(false);
+		expect(unknown.resultJson).toContain("asset_2 (Take 2)");
+		const nowhere = run(twoTakes(), "insertClip", { assetId: "asset_2", beforeClipId: "clip_x" });
+		expect(nowhere.ok).toBe(false);
+	});
+
+	it("insertClip asks for an end when the asset's length is unknown, and clamps to a known one", () => {
+		const unprobed = run(twoTakes(), "insertClip", { assetId: "asset_3" });
+		expect(unprobed.ok).toBe(false);
+		expect(unprobed.resultJson).toContain("sourceEndSec");
+		expect(run(twoTakes(), "insertClip", { assetId: "asset_3", sourceEndSec: 4 }).ok).toBe(true);
+		const clamped = run(twoTakes(), "insertClip", { assetId: "asset_2", sourceEndSec: 99 });
+		expect(JSON.parse(clamped.resultJson).sourceEndSec).toBe(8);
+		expect(run(twoTakes(), "insertClip", { assetId: "asset_2", sourceStartSec: 9 }).ok).toBe(false);
+	});
+
+	it("duplicateClip puts the copy right after the original, with its own copy of the cuts", () => {
+		const result = run(twoTakes(), "duplicateClip", { clipId: "clip_1" });
+		const payload = JSON.parse(result.resultJson);
+		const document = result.document as AxcutDocument;
+		expect(document.timeline.clips.map((c) => c.id)).toEqual(["clip_1", payload.clipId]);
+		expect(payload.copiedTrimIds).toHaveLength(1);
+		expect(document.timeline.trimRanges.map((t) => t.clipId)).toEqual(["clip_1", payload.clipId]);
+		expect(run(twoTakes(), "duplicateClip", { clipId: "clip_x" }).ok).toBe(false);
+	});
+
+	it("setClipRange crops a clip without touching its range, and the snapshot reads it back", () => {
+		const crop = { x: 0.1, y: 0.2, width: 0.5, height: 0.6 };
+		const result = run(twoTakes(), "setClipRange", { clipId: "clip_1", cropRegion: crop });
+		const document = result.document as AxcutDocument;
+		expect(document.timeline.clips[0]).toMatchObject({
+			sourceStartSec: 0,
+			sourceEndSec: 10,
+			cropRegion: crop,
+		});
+		const snapshot = JSON.parse(run(document, "getCurrentDocument", {}).resultJson);
+		expect(snapshot.clips[0].cropRegion).toEqual(crop);
+		// Absent, not null, on a clip that shows the whole frame.
+		const plain = JSON.parse(run(twoTakes(), "getCurrentDocument", {}).resultJson);
+		expect(plain.clips[0]).not.toHaveProperty("cropRegion");
+	});
+
+	it("setClipRange clears a crop with null or with the whole frame", () => {
+		const cropped = run(twoTakes(), "setClipRange", {
+			clipId: "clip_1",
+			cropRegion: { x: 0, y: 0, width: 0.5, height: 0.5 },
+		}).document as AxcutDocument;
+		for (const cropRegion of [null, { x: 0, y: 0, width: 1, height: 1 }]) {
+			const cleared = run(cropped, "setClipRange", { clipId: "clip_1", cropRegion });
+			expect((cleared.document as AxcutDocument).timeline.clips[0].cropRegion).toBeUndefined();
+		}
+	});
+
+	it("setClipRange refuses a crop outside the frame, and a call that changes nothing", () => {
+		const outside = run(twoTakes(), "setClipRange", {
+			clipId: "clip_1",
+			cropRegion: { x: 0.6, y: 0, width: 0.6, height: 1 },
+		});
+		expect(outside.ok).toBe(false);
+		expect(outside.resultJson).toContain("inside the frame");
+		expect(run(twoTakes(), "setClipRange", { clipId: "clip_1" }).ok).toBe(false);
+	});
+
+	it("setClipRange moves one edge and keeps the other", () => {
+		const result = run(twoTakes(), "setClipRange", { clipId: "clip_1", sourceEndSec: 6 });
+		expect((result.document as AxcutDocument).timeline.clips[0]).toMatchObject({
+			sourceStartSec: 0,
+			sourceEndSec: 6,
+		});
+	});
+
+	describe("addAutoZooms", () => {
+		const suggestion = {
+			span: { start: 3500, end: 5500 },
+			focus: { cx: 0.4, cy: 0.6 },
+			depth: 3 as const,
+		};
+		const withPlan = (autoZooms: AgentToolOptions["autoZooms"]) =>
+			executeAgentTool(twoTakes(), "addAutoZooms", "{}", { autoZooms });
+
+		it("adds the planned zooms, as the wand does", () => {
+			const result = withPlan({ suggestions: [suggestion], telemetry: { asset_1: "ok" } });
+			expect(result.ok).toBe(true);
+			expect(JSON.parse(result.resultJson)).toMatchObject({
+				added: 1,
+				zooms: [{ startSec: 3.5, endSec: 5.5, focus: { cx: 0.4, cy: 0.6 } }],
+				telemetry: { asset_1: "ok" },
+			});
+			expect((result.document as AxcutDocument).zoomRanges).toMatchObject([
+				{ focusMode: "auto", depth: 3, clipId: "clip_1" },
+			]);
+		});
+
+		it("answers added 0 without writing when no click calls for a zoom", () => {
+			const result = withPlan({ suggestions: [], telemetry: { asset_1: "no-sidecar" } });
+			expect(result.ok).toBe(true);
+			expect(result.document).toBeUndefined();
+			expect(JSON.parse(result.resultJson)).toMatchObject({
+				added: 0,
+				telemetry: { asset_1: "no-sidecar" },
+			});
+		});
+
+		it("refuses, as a limit of its own, when the clicks could not be read", () => {
+			for (const plan of [
+				undefined,
+				{ suggestions: [], telemetry: { asset_1: "unavailable" as const } },
+			]) {
+				const result = withPlan(plan);
+				expect(result.ok).toBe(false);
+				expect(result.resultJson).toContain("could not be read");
+			}
+		});
 	});
 });
