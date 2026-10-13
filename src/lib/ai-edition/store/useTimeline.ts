@@ -27,6 +27,7 @@ import {
 	clearEditRegions,
 	countEditRegions,
 	duplicateClip as duplicateClipInDocument,
+	insertAssetClip,
 	moveClip as moveClipInDocument,
 	PLACEHOLDER_DURATION_SEC,
 	type RegionKind,
@@ -34,8 +35,8 @@ import {
 	removeClip as removeClipInDocument,
 	removeRegion as removeRegionInDocument,
 	resequenceClips,
+	setClipCrop,
 	setClipSourceRange,
-	withClipsChanged,
 } from "../document/timeline";
 import type { AxcutAudioTrack, AxcutClipCropRegion, AxcutDocument } from "../schema";
 import { appendAutoZoomSuggestions } from "../timeline/apply-auto-zooms";
@@ -80,8 +81,6 @@ interface RegionHandle {
 	kind: RegionKind;
 	id: string;
 }
-
-type Clip = AxcutDocument["timeline"]["clips"][number];
 
 /**
  * Patch the region `id` belongs to: every fragment of it across clip junctions, or the
@@ -1223,18 +1222,7 @@ export function useTimeline() {
 			const doc = useProjectStore.getState().document;
 			if (!doc) return;
 			const ranged = setClipSourceRange(doc, clipId, sourceStartSec, sourceEndSec);
-			const next: AxcutDocument =
-				cropRegion === undefined
-					? ranged
-					: {
-							...ranged,
-							timeline: {
-								...ranged.timeline,
-								clips: ranged.timeline.clips.map((c) =>
-									c.id === clipId ? { ...c, cropRegion: cropRegion ?? undefined } : c,
-								),
-							},
-						};
+			const next = cropRegion === undefined ? ranged : setClipCrop(ranged, clipId, cropRegion);
 			await saveDocument(next, { history: true });
 		},
 		[saveDocument],
@@ -1339,22 +1327,15 @@ export function useTimeline() {
 			// durationSec we use it; otherwise we fall back to the placeholder
 			// and let the background probe correct it.
 			const knownDuration = asset.durationSec ?? PLACEHOLDER_DURATION_SEC;
-			const newClip: Clip = {
+			const newClip = {
 				id: createId("clip"),
 				assetId,
 				sourceStartSec: 0,
 				sourceEndSec: knownDuration,
-				timelineStartSec: 0,
-				timelineEndSec: knownDuration,
-				wordRefs: [],
-				origin: "user",
+				origin: "user" as const,
 				reason: "Inserted from media panel",
 			};
-			const oldClips = currentDoc.timeline.clips;
-			const arr = [...oldClips];
-			const at = Math.max(0, Math.min(arr.length, index));
-			arr.splice(at, 0, newClip);
-			const finalDoc = withClipsChanged(currentDoc, arr);
+			const finalDoc = insertAssetClip(currentDoc, index, newClip);
 			if (!(await saveDocument(finalDoc, { history: true }))) return;
 			setClipSelection(newClip.id);
 
