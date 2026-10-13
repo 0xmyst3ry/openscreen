@@ -132,6 +132,6 @@ export interface CliDoneResult {
 	projectData?: unknown;
 	/** Sources: enumeration payload printed by the main process. */
 	sources?: CliSourcesResult;
-	/** Captions: number of caption annotations generated. */
+	/** Captions: how many captions the transcript now shows. */
 	captionCount?: number;
 }

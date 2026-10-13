@@ -84,7 +84,7 @@ Usage:
   openscreen record [options]                        Record the screen headlessly
   openscreen sources [--json] [-o <file>]            List displays, windows, microphones and cameras
   openscreen pack <project.openscreen> --out <dir>   Copy project + media into one portable folder
-  openscreen captions <project.openscreen>           Add auto-captions (on-device Whisper) to a project
+  openscreen captions <project.openscreen>           Transcribe (on-device Whisper) and turn captions on
                      [--min-words <1-12>] [--max-words <1-12>]
   openscreen info <project.openscreen> [--json]      Inspect a project file
   openscreen mcp                                     Serve the agent tools over MCP on stdio
