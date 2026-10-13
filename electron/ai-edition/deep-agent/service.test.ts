@@ -429,6 +429,22 @@ describe("the prompt when the user has turned project edits off", () => {
 		// selection rules the model needs to describe the edit it is proposing.
 		expect(buildSystemPrompt({ editsAllowed: false }).startsWith(SYSTEM_PROMPT)).toBe(true);
 	});
+
+	it("names the switch in force: the agent's by default, the caller's when it has its own", () => {
+		expect(buildSystemPrompt({ editsAllowed: false })).toContain("'Agent edits' in AI settings");
+		const mcp = buildSystemPrompt({ editsAllowed: false, editsSetting: "'MCP edits' over there" });
+		expect(mcp).toContain("'MCP edits' over there");
+		expect(mcp).not.toContain("Agent edits");
+	});
+});
+
+describe("the prompt for a caller that can export", () => {
+	it("no longer gives exporting as the example of a missing tool", () => {
+		expect(SYSTEM_PROMPT).toMatch(/deleting an asset\/recording, exporting\)/);
+		const prompt = buildSystemPrompt({ editsAllowed: true, canExport: true });
+		expect(prompt).not.toMatch(/exporting/);
+		expect(prompt).toMatch(/deleting an asset\/recording\)/);
+	});
 });
 
 describe("the tools when the user has turned project edits off", () => {

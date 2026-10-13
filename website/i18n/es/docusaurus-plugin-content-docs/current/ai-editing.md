@@ -49,7 +49,7 @@ El panel que lo rodea:
 - **Selector de modelo**: lista en vivo de los modelos del proveedor conectado, con un control de esfuerzo de razonamiento cuando el proveedor lo admite.
 - **Medidor de contexto**: tokens estimados usados frente al presupuesto, con una acción **Compactar contexto** que resume los turnos anteriores en lugar de descartarlos.
 - **Rebobinar a este mensaje**: revierte las ediciones del agente y todos los turnos posteriores a ese punto, y restaura a la vez el proyecto, la conversación y el estado del agente.
-- **Ediciones del proyecto**: un interruptor en **Ajustes de IA**. Cuando está desactivado, se rechaza toda edición que el agente intente: puede seguir leyendo el proyecto y describiendo el cambio que haría, pero no aplica nada hasta que vuelvas a activar el interruptor.
+- **Ediciones del agente**: un interruptor en **Ajustes de IA**. Cuando está desactivado, se rechaza toda edición que el agente intente: puede seguir leyendo el proyecto y describiendo el cambio que haría, pero no aplica nada hasta que vuelvas a activar el interruptor.
 
 `Ctrl/Cmd + Z` deshace una edición del agente exactamente igual que una manual.
 
@@ -65,9 +65,14 @@ Si ya usas un agente de código con IA como Claude Code o Codex, puede manejar l
 
 1. **Configuración de IA** → **Servidor MCP** → actívalo. Solo escucha en tu propio equipo (`127.0.0.1`), en el puerto que se muestra.
 2. Copia el comando de **Claude Code** o de **Codex** que aparece ahí y ejecútalo en una terminal. El comando de Claude Code lleva el token de acceso. Codex, en cambio, lo lee de la variable de entorno `OPENSCREEN_MCP_TOKEN`: defínela en el shell desde el que inicias Codex.
-3. Mantén un proyecto abierto en el editor de OpenScreen y luego pídele la edición a tu agente.
+3. Pídele la edición a tu agente, sobre el proyecto abierto en el editor de OpenScreen o sobre cualquier otro proyecto de tu lista.
 
-Las herramientas son las que usa el agente integrado, y actúan sobre el proyecto abierto en el editor. Los clientes MCP solo pueden **leer** el proyecto hasta que también actives **Ediciones del proyecto** en la sección Servidor MCP; este interruptor es independiente del del agente integrado, y empieza desactivado. Una vez activado, cada edición se guarda en cuanto se aplica y se deshace con `Ctrl/Cmd + Z`. A los clientes se les indica que guarden un punto de restauración antes de una serie de ediciones, así que puedes pedirles que dejen el proyecto como estaba en un solo paso, que el propio `Ctrl/Cmd + Z` puede deshacer. **Regenerar** el token desconecta a todos los clientes configurados con el anterior.
+Las herramientas son las que usa el agente integrado. Actúan sobre el proyecto abierto en el editor, salvo que el cliente indique otro: puede listar todos los proyectos y leer o editar cualquiera de ellos. Los clientes MCP solo pueden **leer** hasta que también actives **Ediciones por MCP** en la sección Servidor MCP; este interruptor es independiente de **Ediciones del agente**, el del agente integrado, y empieza desactivado. Una vez activado, cada edición se guarda en cuanto se aplica:
+
+- **En el proyecto abierto en el editor**, una edición se deshace con `Ctrl/Cmd + Z`. A los clientes se les indica que guarden un punto de restauración antes de una serie de ediciones, así que puedes pedirles que dejen el proyecto como estaba en un solo paso, que el propio `Ctrl/Cmd + Z` puede deshacer.
+- **En cualquier otro proyecto**, una edición se guarda en su archivo, fuera del alcance de `Ctrl/Cmd + Z`. Un cliente debe guardar un punto de restauración de ese proyecto antes de su primera edición, y volver a él es la única forma de deshacerla.
+
+Los puntos de restauración se guardan en la memoria de OpenScreen: se pierden cuando se cierra o cuando el servidor se reinicia, lo que ocurre al cambiar el puerto o regenerar el token. **Regenerar** el token desconecta a todos los clientes configurados con el anterior.
 
 ## Dejar que un agente haga todo el video {#letting-an-agent-make-the-whole-video}
 
@@ -88,7 +93,8 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 
 El ejecutable de cada sistema aparece en [Ejecutar la CLI](./cli.md#running-the-cli).
 
-- **Sin puerto, sin token, sin ajuste.** El agente inicia el proceso él mismo, con tus permisos, como ejecutaría `openscreen record`. Así puede grabar tu pantalla y editar sin el interruptor **Ediciones del proyecto**.
-- **Cada toma se convierte en un proyecto nuevo** en tu lista de proyectos, con zooms en sus clics, como una grabación hecha en la app: los clics cercanos en el tiempo y en la pantalla comparten un zoom, y los primeros segundos y el final se quedan en la pantalla completa. No lo edites en el editor mientras el agente siga trabajando en él: el editor conserva su propia copia.
+- **Sin puerto, sin token, sin ajuste.** El agente inicia el proceso él mismo, con tus permisos, como ejecutaría `openscreen record`. Así puede grabar tu pantalla y editar sin el interruptor **Ediciones por MCP**.
+- **Cada toma se convierte en un proyecto nuevo** en tu lista de proyectos, con zooms en sus clics, como una grabación hecha en la app: los clics cercanos en el tiempo y en la pantalla comparten un zoom, y los primeros segundos y el final se quedan en la pantalla completa. Cada edición del agente se guarda en el archivo del proyecto. Se deshace con el punto de restauración que toma el agente, que dura hasta que termina su sesión.
+- **Un proyecto abierto en el editor de OpenScreen queda fuera de su alcance.** El agente puede leerlo, pero sus ediciones se rechazan hasta que cierres el proyecto ahí, porque el editor guardaría su propia copia encima.
 - **Una toma controlada por un script** (Playwright, por ejemplo) nunca mueve el puntero de la pantalla. El agente le pasa a OpenScreen su propio registro de las acciones con `setPointerTrack`, y el video obtiene igualmente un cursor y sus zooms.
 - **La skill `openscreen-demo`** le enseña a un agente todo el trabajo, desde el storyboard hasta el video terminado. Después adjunta el video a un pull request, para que los revisores vean el cambio ahí mismo, o redacta un post en X que solo publica cuando dices que sí. Agrégala con `npx skills add getopenscreen/openscreen --skill openscreen-demo`. La receta es [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).

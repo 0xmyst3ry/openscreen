@@ -23,6 +23,7 @@ import {
 	MCP_ENDPOINT_PATH,
 	type McpApplyResult,
 	type McpDocumentHost,
+	mcpInstructions,
 	type RunningMcpServer,
 	startMcpHttpServer,
 } from "./openscreen-mcp-server";
@@ -145,6 +146,7 @@ async function connect(
 		port: 0,
 		token: TOKEN,
 		deps: {
+			transport: "http",
 			host: editor,
 			projects,
 			editsAllowed: () => options.editsAllowed ?? true,
@@ -211,6 +213,40 @@ describe("the MCP tool surface", () => {
 	it("hands the client the in-app agent's guidance as server instructions", async () => {
 		const mcp = await connect(new FakeEditor());
 		expect(mcp.getInstructions()).toContain("Time-bases (do not mix them up)");
+	});
+
+	it("tells the client what is true here: an editor, its undo, no media, and its own switch", async () => {
+		const mcp = await connect(new FakeEditor(), { editsAllowed: false });
+		const instructions = mcp.getInstructions() ?? "";
+		expect(instructions).toContain(
+			"Without a projectId they act on the project open in the editor",
+		);
+		expect(instructions).toContain("Nothing here records, exports or imports media.");
+		expect(instructions).toContain("OpenScreen quits or its MCP server restarts");
+		expect(instructions).toContain("turn on 'MCP edits' under MCP server in AI settings");
+		expect(instructions).not.toContain("Agent edits");
+		const { tools } = await mcp.listTools();
+		const restore = tools.find((t) => t.name === "restoreCheckpoint");
+		expect(restore?.description).toContain("one undo step");
+		expect(restore?.description).not.toContain("pointer track");
+	});
+});
+
+describe("the instructions, composed per transport", () => {
+	const media = "MEDIA BLOCK";
+	it("puts the media block first, then the same checkpoint rule on both transports", () => {
+		const stdio = mcpInstructions({ transport: "stdio", editsAllowed: true, media });
+		const http = mcpInstructions({ transport: "http", editsAllowed: true });
+		expect(stdio.startsWith(media)).toBe(true);
+		for (const instructions of [stdio, http]) {
+			expect(instructions).toContain("Before a series of edits, call createCheckpoint");
+			expect(instructions).toContain("Time-bases (do not mix them up)");
+		}
+		// Only the in-app server has an editor, its undo stack, and no export.
+		expect(stdio).not.toMatch(/project open in the editor|undo step|Nothing here records/);
+		expect(stdio).not.toContain("exporting)");
+		expect(http).toContain("exporting)");
+		expect(stdio).toContain("lost when it exits");
 	});
 });
 
@@ -303,6 +339,9 @@ describe("calling a tool", () => {
 			arguments: { assetId: "asset_1", startSec: 5, endSec: 6 },
 		});
 		expect(result.isError).toBe(true);
+		// The MCP server's switch, not the in-app agent's.
+		expect(resultText(result)).toContain("'MCP edits' under MCP server in AI settings");
+		expect(resultText(result)).not.toContain("Agent edits");
 		expect(editor.applied).toHaveLength(0);
 	});
 
@@ -367,10 +406,11 @@ describe("checkpoints", () => {
 		const checkpointId = await checkpoint(mcp);
 		const result = await mcp.callTool({ name: "restoreCheckpoint", arguments: { checkpointId } });
 		expect(result.isError).toBe(true);
+		expect(resultText(result)).toContain("'MCP edits'");
 		expect(editor.applied).toHaveLength(0);
 	});
 
-	it("refuses an unknown checkpoint", async () => {
+	it("refuses an unknown checkpoint, saying when they are lost", async () => {
 		const editor = new FakeEditor();
 		const mcp = await connect(editor);
 		const result = await mcp.callTool({
@@ -378,6 +418,7 @@ describe("checkpoints", () => {
 			arguments: { checkpointId: "cp_nope" },
 		});
 		expect(result.isError).toBe(true);
+		expect(resultText(result)).toContain("its port or token changed");
 		expect(editor.applied).toHaveLength(0);
 	});
 
@@ -726,7 +767,13 @@ describe("the HTTP guard", () => {
 		running = await startMcpHttpServer({
 			port: 0,
 			token: TOKEN,
-			deps: { host: new FakeEditor(), projects, editsAllowed: () => true, version: "0.0.0" },
+			deps: {
+				transport: "http",
+				host: new FakeEditor(),
+				projects,
+				editsAllowed: () => true,
+				version: "0.0.0",
+			},
 		});
 		return fetch(`http://127.0.0.1:${running.port}${path}`, {
 			method: "POST",

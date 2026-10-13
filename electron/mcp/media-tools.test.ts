@@ -117,6 +117,7 @@ beforeEach(async () => {
 	openVideoFails = false;
 
 	const toolDeps: McpToolDeps = {
+		transport: "stdio",
 		host: { snapshot: async () => null, apply: async () => "no-editor" },
 		projects: documents,
 		editsAllowed: () => true,
@@ -174,6 +175,49 @@ async function recordTake(title = "Demo") {
 		recordingStartedAt: number;
 	};
 }
+
+describe("what `openscreen mcp` tells its client", () => {
+	it("composes the media block with the checkpoint rule, and nothing true only in the app", () => {
+		const instructions = client.getInstructions() ?? "";
+		expect(instructions.startsWith(MEDIA_PREAMBLE)).toBe(true);
+		expect(instructions).toContain("Before a series of edits, call createCheckpoint");
+		expect(instructions).toContain("lost when it exits");
+		expect(instructions).not.toMatch(
+			/project open in the editor|Project edits|Agent edits|Nothing here records|undo step|exporting\)/,
+		);
+	});
+
+	it("describes projectId and restoreCheckpoint as they work here", async () => {
+		const { tools } = await client.listTools();
+		const byName = new Map(tools.map((tool) => [tool.name, tool]));
+		const projectId = byName.get("addTrim")?.inputSchema.properties?.projectId as {
+			description?: string;
+		};
+		expect(projectId.description).toContain("Pass it on every call");
+		const restore = byName.get("restoreCheckpoint")?.description ?? "";
+		expect(restore).toContain("pointer track");
+		expect(restore).not.toContain("undo step");
+	});
+
+	it("answers in its own terms: no editor to fall back on, no Ctrl/Cmd+Z, its own lifetime", async () => {
+		const noProject = await call("getCurrentDocument");
+		expect(textOf(noProject)).toContain("this server has no editor");
+		expect(textOf(noProject)).not.toContain("No project is open");
+
+		const other = await documents.createProject("Other");
+		const unguarded = await call("setAspectRatio", {
+			projectId: other.project.id,
+			aspectRatio: "1:1",
+		});
+		expect(textOf(unguarded)).toContain("straight to the project's file");
+
+		const unknown = await call("restoreCheckpoint", {
+			projectId: other.project.id,
+			checkpointId: "cp_nope",
+		});
+		expect(textOf(unknown)).toContain("lost when it exits");
+	});
+});
 
 describe("frameTimes", () => {
 	it("centres `count` frames in equal slices, and clamps asked-for times inside the video", () => {
@@ -335,6 +379,79 @@ describe("setPointerTrack", () => {
 		// The later call wins the sidecar, and its zoom keeps clear of the earlier one's.
 		const click = (await readSidecar(take.videoPath)).find((s) => s.interactionType === "click");
 		expect(click?.cx).toBe(0.6);
+	});
+
+	/** The sidecar beside the take, byte for byte; `null` when there is none. */
+	const sidecarFile = (video: string) =>
+		fs.readFile(`${video}.cursor.json`, "utf8").catch(() => null);
+	const clickAt = (take: { recordingStartedAt: number }, x: number) => [
+		{ at: take.recordingStartedAt + 5_000, x, y: 0.5, click: true },
+	];
+
+	it("refuses a project open in the app's editor before writing anything", async () => {
+		const take = await recordTake();
+		const before = await sidecarFile(take.videoPath);
+		documents.markOpenInEditor(take.projectId);
+		const refused = await call("setPointerTrack", {
+			projectId: take.projectId,
+			events: clickAt(take, 0.2),
+		});
+		expect(refused.isError).toBe(true);
+		expect(textOf(refused)).toContain("open in the OpenScreen editor");
+		expect(await sidecarFile(take.videoPath)).toBe(before);
+		expect((await documents.getProject(take.projectId)).zoomRanges).toHaveLength(take.autoZooms);
+	});
+
+	it("refuses a project with no checkpoint before writing anything", async () => {
+		const take = await recordTake();
+		const before = await sidecarFile(take.videoPath);
+		// Twenty newer checkpoints push out the one stopRecording made.
+		const other = await documents.createProject("Other");
+		for (let i = 0; i < 20; i++) {
+			await call("createCheckpoint", { projectId: other.project.id });
+		}
+		const refused = await call("setPointerTrack", {
+			projectId: take.projectId,
+			events: clickAt(take, 0.2),
+		});
+		expect(refused.isError).toBe(true);
+		expect(textOf(refused)).toContain("createCheckpoint");
+		expect(await sidecarFile(take.videoPath)).toBe(before);
+	});
+
+	it("is undone by restoreCheckpoint, the take's own pointer track included", async () => {
+		const take = await recordTake();
+		const before = await sidecarFile(take.videoPath);
+		const set = await call("setPointerTrack", {
+			projectId: take.projectId,
+			events: clickAt(take, 0.2),
+		});
+		expect(set.isError).toBeFalsy();
+		expect(await sidecarFile(take.videoPath)).not.toBe(before);
+
+		const restored = await call("restoreCheckpoint", {
+			projectId: take.projectId,
+			checkpointId: take.checkpointId,
+		});
+		expect(restored.isError).toBeFalsy();
+		expect(await sidecarFile(take.videoPath)).toBe(before);
+		expect((await documents.getProject(take.projectId)).zoomRanges).toHaveLength(take.autoZooms);
+	});
+
+	it("takes away a track the take never had, and each checkpoint gets back its own", async () => {
+		await fs.rm(`${videoPath}.cursor.json`);
+		const take = await recordTake();
+		await call("setPointerTrack", { projectId: take.projectId, events: clickAt(take, 0.2) });
+		const first = await sidecarFile(take.videoPath);
+		const second = JSON.parse(
+			textOf(await call("createCheckpoint", { projectId: take.projectId })),
+		).checkpointId;
+		await call("setPointerTrack", { projectId: take.projectId, events: clickAt(take, 0.8) });
+
+		await call("restoreCheckpoint", { projectId: take.projectId, checkpointId: take.checkpointId });
+		expect(await sidecarFile(take.videoPath)).toBeNull();
+		await call("restoreCheckpoint", { projectId: take.projectId, checkpointId: second });
+		expect(await sidecarFile(take.videoPath)).toBe(first);
 	});
 
 	it("refuses a project whose take this server did not record", async () => {

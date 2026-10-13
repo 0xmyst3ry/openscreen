@@ -17,8 +17,8 @@ export interface McpSettings {
 	enabled: boolean;
 	port: number;
 	/**
-	 * Whether MCP clients may run the tools that change the project. Off by
-	 * default and separate from the in-app agent's "Project edits": turning the
+	 * Whether MCP clients may run the tools that change the project ("MCP edits"). Off by
+	 * default and separate from the in-app agent's "Agent edits": turning the
 	 * server on gives a client read access, and writing is a second decision.
 	 */
 	allowEdits: boolean;

@@ -49,7 +49,7 @@ Le panneau qui l'entoure :
 - **Sélecteur de modèle** : liste en direct des modèles du fournisseur connecté, avec un réglage de l'effort de raisonnement quand le fournisseur en propose un.
 - **Jauge de contexte** : estimation des jetons utilisés par rapport au budget, avec une action **Compacter le contexte** qui résume les échanges précédents au lieu de les abandonner.
 - **Revenir à ce message** : annule les modifications de l'agent et tous les échanges qui ont suivi ce point, en restaurant ensemble le projet, la conversation et l'état de l'agent.
-- **Modifications du projet** : un interrupteur dans les **Paramètres IA**. Quand il est désactivé, chaque modification que tente l'agent est refusée : il peut toujours lire le projet et décrire le changement qu'il ferait, mais il n'applique rien tant que vous n'avez pas réactivé l'interrupteur.
+- **Modifications par l'agent** : un interrupteur dans les **Paramètres IA**. Quand il est désactivé, chaque modification que tente l'agent est refusée : il peut toujours lire le projet et décrire le changement qu'il ferait, mais il n'applique rien tant que vous n'avez pas réactivé l'interrupteur.
 
 `Ctrl/Cmd + Z` annule une modification de l'agent exactement comme une modification manuelle.
 
@@ -65,9 +65,14 @@ Si vous utilisez déjà un agent de code IA comme Claude Code ou Codex, il peut 
 
 1. **Paramètres IA** → **Serveur MCP** → activez-le. Il n'écoute que sur votre propre machine (`127.0.0.1`), sur le port affiché.
 2. Copiez la commande **Claude Code** ou **Codex** affichée à cet endroit et lancez-la dans un terminal. La commande Claude Code contient le jeton d'accès. Codex, lui, le lit dans la variable d'environnement `OPENSCREEN_MCP_TOKEN` : définissez-la dans le shell depuis lequel vous lancez Codex.
-3. Gardez un projet ouvert dans l'éditeur d'OpenScreen, puis demandez la modification à votre agent.
+3. Demandez la modification à votre agent, sur le projet ouvert dans l'éditeur d'OpenScreen ou sur n'importe quel autre projet de votre liste.
 
-Les outils sont ceux qu'utilise l'agent intégré, et ils agissent sur le projet ouvert dans l'éditeur. Les clients MCP ne peuvent que **lire** le projet tant que vous n'avez pas aussi activé **Modifications du projet** dans la section Serveur MCP ; cet interrupteur est distinct de celui de l'agent intégré, et il est désactivé au départ. Une fois activé, chaque modification est enregistrée dès qu'elle est appliquée et s'annule avec `Ctrl/Cmd + Z`. Les clients ont pour consigne d'enregistrer un point de restauration avant une série de modifications : vous pouvez donc leur demander de remettre le projet dans son état d'avant en une seule étape, que `Ctrl/Cmd + Z` peut lui-même annuler. **Régénérer** le jeton déconnecte tous les clients configurés avec l'ancien.
+Les outils sont ceux qu'utilise l'agent intégré. Ils agissent sur le projet ouvert dans l'éditeur, sauf si le client en désigne un autre : il peut lister tous les projets et lire ou modifier n'importe lequel. Les clients MCP ne peuvent que **lire** tant que vous n'avez pas aussi activé **Modifications par MCP** dans la section Serveur MCP ; cet interrupteur est distinct de **Modifications par l'agent**, celui de l'agent intégré, et il est désactivé au départ. Une fois activé, chaque modification est enregistrée dès qu'elle est appliquée :
+
+- **Sur le projet ouvert dans l'éditeur**, une modification s'annule avec `Ctrl/Cmd + Z`. Les clients ont pour consigne d'enregistrer un point de restauration avant une série de modifications : vous pouvez donc leur demander de remettre le projet dans son état d'avant en une seule étape, que `Ctrl/Cmd + Z` peut lui-même annuler.
+- **Sur tout autre projet**, une modification est enregistrée dans son fichier, hors de portée de `Ctrl/Cmd + Z`. Un client doit enregistrer un point de restauration de ce projet avant sa première modification, et y revenir est la seule façon de l'annuler.
+
+Les points de restauration sont gardés dans la mémoire d'OpenScreen : ils sont perdus quand il quitte ou quand le serveur redémarre, ce que provoque un changement de port ou la régénération du jeton. **Régénérer** le jeton déconnecte tous les clients configurés avec l'ancien.
 
 ## Laisser un agent faire toute la vidéo {#letting-an-agent-make-the-whole-video}
 
@@ -88,7 +93,8 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 
 L'exécutable de chaque système est indiqué dans [Lancer la CLI](./cli.md#running-the-cli).
 
-- **Ni port, ni jeton, ni réglage.** L'agent lance lui-même le processus, avec vos droits, comme il lancerait `openscreen record`. Il peut donc enregistrer votre écran et faire des modifications sans l'interrupteur **Modifications du projet**.
-- **Chaque prise devient un nouveau projet** dans votre liste de projets, zoomé sur ses clics comme un enregistrement fait dans l'application : des clics rapprochés dans le temps et à l'écran partagent un zoom, et les premières secondes comme la fin restent sur l'écran entier. Ne le modifiez pas dans l'éditeur tant que l'agent y travaille encore : l'éditeur garde sa propre copie.
+- **Ni port, ni jeton, ni réglage.** L'agent lance lui-même le processus, avec vos droits, comme il lancerait `openscreen record`. Il peut donc enregistrer votre écran et faire des modifications sans l'interrupteur **Modifications par MCP**.
+- **Chaque prise devient un nouveau projet** dans votre liste de projets, zoomé sur ses clics comme un enregistrement fait dans l'application : des clics rapprochés dans le temps et à l'écran partagent un zoom, et les premières secondes comme la fin restent sur l'écran entier. Chaque modification de l'agent est enregistrée dans le fichier du projet. Elle s'annule avec le point de restauration que prend l'agent, qui dure jusqu'à la fin de sa session.
+- **Un projet ouvert dans l'éditeur d'OpenScreen est hors de portée.** L'agent peut le lire, mais ses modifications sont refusées tant que vous ne l'avez pas fermé dans l'éditeur, qui enregistrerait sinon sa propre copie par-dessus.
 - **Une prise pilotée par un script** (Playwright, par exemple) ne déplace jamais le pointeur de l'écran. L'agent transmet à OpenScreen son propre journal des actions avec `setPointerTrack`, et la vidéo a malgré tout un curseur et ses zooms.
 - **La skill `openscreen-demo`** enseigne à un agent tout le travail, du storyboard jusqu'à la vidéo finie. Il joint ensuite la vidéo à une pull request, pour que les relecteurs voient le changement sur place, ou rédige un post sur X qu'il ne publie qu'une fois que vous avez dit oui. Ajoutez-la avec `npx skills add getopenscreen/openscreen --skill openscreen-demo`. La recette est [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).

@@ -49,7 +49,7 @@ O painel em volta dele:
 - **Seletor de modelo** — lista ao vivo dos modelos do provedor conectado, com um controle de esforço de raciocínio quando o provedor oferece um.
 - **Medidor de contexto** — estimativa dos tokens usados em relação ao limite, com a ação **Compactar contexto**, que resume os turnos anteriores em vez de descartá-los.
 - **Rebobinar até esta mensagem** — desfaz as edições do agente e todos os turnos seguintes a partir desse ponto, restaurando juntos o projeto, a conversa e o estado do agente.
-- **Edições do projeto** — um interruptor em **Configurações de IA**. Quando ele está desativado, toda edição que o agente tenta é recusada: o agente ainda pode ler o projeto e descrever a alteração que faria, e não aplica nada até você reativar o interruptor.
+- **Edições do agente** — um interruptor em **Configurações de IA**. Quando ele está desativado, toda edição que o agente tenta é recusada: o agente ainda pode ler o projeto e descrever a alteração que faria, e não aplica nada até você reativar o interruptor.
 
 `Ctrl/Cmd + Z` desfaz uma edição do agente exatamente como uma edição manual.
 
@@ -65,9 +65,14 @@ Se você já usa um agente de código com IA, como o Claude Code ou o Codex, ele
 
 1. **Configurações de IA** → **Servidor MCP** → ative-o. Ele só escuta no seu próprio computador (`127.0.0.1`), na porta exibida.
 2. Copie o comando do **Claude Code** ou do **Codex** exibido ali e execute-o em um terminal. O comando do Claude Code leva o token de acesso. Já o Codex o lê da variável de ambiente `OPENSCREEN_MCP_TOKEN`: defina-a no shell a partir do qual você inicia o Codex.
-3. Mantenha um projeto aberto no editor do OpenScreen e depois peça a edição ao seu agente.
+3. Peça a edição ao seu agente, no projeto aberto no editor do OpenScreen ou em qualquer outro projeto da sua lista.
 
-As ferramentas são as que o agente integrado usa, e elas agem sobre o projeto aberto no editor. Os clientes MCP só podem **ler** o projeto até você também ativar **Edições do projeto** na seção Servidor MCP; esse interruptor é separado do interruptor do agente integrado e começa desativado. Depois de ativado, cada edição é salva assim que é aplicada e se desfaz com `Ctrl/Cmd + Z`. Os clientes são instruídos a salvar um ponto de restauração antes de uma série de edições, então você pode pedir a eles que deixem o projeto como estava em um único passo, que o próprio `Ctrl/Cmd + Z` pode desfazer. **Gerar novo** token desconecta todos os clientes configurados com o antigo.
+As ferramentas são as que o agente integrado usa. Elas agem sobre o projeto aberto no editor, a menos que o cliente indique outro: ele pode listar todos os projetos e ler ou editar qualquer um deles. Os clientes MCP só podem **ler** até você também ativar **Edições via MCP** na seção Servidor MCP; esse interruptor é separado de **Edições do agente**, o do agente integrado, e começa desativado. Depois de ativado, cada edição é salva assim que é aplicada:
+
+- **No projeto aberto no editor**, uma edição se desfaz com `Ctrl/Cmd + Z`. Os clientes são instruídos a salvar um ponto de restauração antes de uma série de edições, então você pode pedir a eles que deixem o projeto como estava em um único passo, que o próprio `Ctrl/Cmd + Z` pode desfazer.
+- **Em qualquer outro projeto**, uma edição é salva no arquivo dele, fora do alcance de `Ctrl/Cmd + Z`. Um cliente precisa salvar um ponto de restauração desse projeto antes da primeira edição, e voltar a ele é a única forma de desfazê-la.
+
+Os pontos de restauração ficam na memória do OpenScreen: eles se perdem quando ele é fechado ou quando o servidor reinicia, o que acontece ao mudar a porta ou gerar um novo token. **Gerar novo** token desconecta todos os clientes configurados com o antigo.
 
 ## Como deixar um agente fazer o vídeo inteiro {#letting-an-agent-make-the-whole-video}
 
@@ -88,7 +93,8 @@ codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscr
 
 O executável de cada sistema está listado em [Como executar a CLI](./cli.md#running-the-cli).
 
-- **Sem porta, sem token, sem configuração.** O agente inicia o processo por conta própria, com as suas permissões, como faria ao rodar `openscreen record`. Por isso ele pode gravar a sua tela e editar sem o interruptor **Edições do projeto**.
-- **Cada tomada vira um novo projeto** na sua lista de projetos, com zooms nos seus cliques, como uma gravação feita no app: cliques próximos no tempo e na tela dividem um zoom, e os primeiros segundos e o final ficam na tela inteira. Não o edite no editor enquanto o agente ainda estiver trabalhando nele: o editor mantém a própria cópia.
+- **Sem porta, sem token, sem configuração.** O agente inicia o processo por conta própria, com as suas permissões, como faria ao rodar `openscreen record`. Por isso ele pode gravar a sua tela e editar sem o interruptor **Edições via MCP**.
+- **Cada tomada vira um novo projeto** na sua lista de projetos, com zooms nos seus cliques, como uma gravação feita no app: cliques próximos no tempo e na tela dividem um zoom, e os primeiros segundos e o final ficam na tela inteira. Cada edição do agente é salva no arquivo do projeto. Ela se desfaz com o ponto de restauração que o agente cria, que dura até o fim da sessão dele.
+- **Um projeto aberto no editor do OpenScreen fica fora do alcance.** O agente pode lê-lo, mas as edições dele são recusadas até você fechar o projeto ali, porque o editor salvaria a própria cópia por cima.
 - **Uma tomada conduzida por um script** (o Playwright, por exemplo) nunca move o ponteiro da tela. O agente passa ao OpenScreen o próprio registro das ações com `setPointerTrack`, e o vídeo ganha um cursor e seus zooms do mesmo jeito.
 - **A skill `openscreen-demo`** ensina a um agente o trabalho inteiro, do storyboard até o vídeo pronto. Depois ele anexa o vídeo a um pull request, para que os revisores vejam a mudança ali mesmo, ou redige um post no X que só publica depois que você disser sim. Adicione-a com `npx skills add getopenscreen/openscreen --skill openscreen-demo`. A receita é [`skills/openscreen-demo/SKILL.md`](https://github.com/getopenscreen/openscreen/blob/main/skills/openscreen-demo/SKILL.md).
