@@ -64,12 +64,14 @@ openscreen record --display 1 --cursor system
 | `--mic` | 錄製預設麥克風 |
 | `--mic-device <name>` | 錄製名稱包含 `<name>` 的麥克風，不分大小寫。隱含 `--mic` |
 | `--system-audio` | 錄製系統音訊 |
+| `--camera` | 在錄製螢幕的同時錄製預設網路攝影機 |
+| `--camera-device <name>` | 錄製名稱包含 `<name>` 的攝影機，不區分大小寫。隱含 `--camera` |
 | `--cursor <editable-overlay\|system>` | `editable-overlay`（預設）會隱藏系統指標，並將它記錄為資料，讓編輯器可以重新設定樣式。`system` 會將指標直接繪入影片 |
 | `--duration <seconds>` | 經過這段時間後自動停止 |
 | `--project <out.openscreen>` | 完成後寫出一個參照這段錄影的專案檔，可直接用於 `export` 或編輯器。副檔名必須是 `.openscreen` |
 | `--json` | 在 stdout 上輸出 NDJSON 事件 |
 
-沒有網路攝影機選項：CLI 錄影只包含螢幕畫面與音訊。
+使用 `--camera` 時，網路攝影機會與螢幕一同錄製，`--project` 檔案會參照它。
 
 **停止錄影。** 沒有指定 `--duration` 時，可以用 Ctrl+C（SIGINT）、SIGTERM，或在 stdin 輸入 `stop`、`q` 或 `quit` 再按 Enter 來停止錄影。關閉 stdin 並不會停止錄影。強制終止會跳過正常的收尾流程，因此不會寫出 `done` 事件，也不會寫出專案檔。
 
@@ -81,7 +83,7 @@ openscreen record --display 1 --cursor system
 
 ### `openscreen sources` {#openscreen-sources}
 
-列出應用程式能看到的顯示器、視窗與麥克風，讓腳本可以選擇 `--display`、`--window` 與 `--mic-device` 的值。在 Linux 上，`record` 錄製的內容仍由 portal 選擇器決定。
+列出應用程式能看到的顯示器、視窗、麥克風與攝影機，讓腳本可以選擇 `--display`、`--window`、`--mic-device` 與 `--camera-device` 的值。在 Linux 上，`record` 錄製的內容仍由 portal 選擇器決定。
 
 ```bash
 openscreen sources                   # human-readable
@@ -99,12 +101,14 @@ openscreen sources -o sources.json   # payload written to a file
     "displays": [{ "index": 0, "id": "screen:1:0", "name": "Entire screen" }],
     "windows": [{ "id": "window:210:0", "name": "My App" }],
     "microphones": [{ "label": "Built-in Microphone" }],
-    "microphoneLabelsUnavailable": false
+    "microphoneLabelsUnavailable": false,
+    "cameras": [{ "label": "FaceTime HD Camera" }],
+    "cameraLabelsUnavailable": false
   }
 }
 ```
 
-當裝置名稱需要尚未授予的權限，或是無法在幾秒內讀取裝置清單時，`microphoneLabelsUnavailable` 會是 `true`。
+當裝置名稱需要尚未授予的權限，或是無法在幾秒內讀取裝置清單時，`microphoneLabelsUnavailable` 會是 `true`。`cameraLabelsUnavailable` 對攝影機的意義相同。
 
 **為什麼要有 `-o`？** CLI 只會把自己的輸出寫到 stdout；Chromium 的診斷訊息則會寫到 stderr。但包在程序外面的包裝程式就另當別論了。Ubuntu 的 `xvfb-run` 是在沒有螢幕的機器上執行圖形介面程式的常見方式，它會把 stderr 合併到 stdout，於是 Chromium 的啟動警告會出現在 JSON 之前，導致 `openscreen sources --json | jq` 失敗。`-o <file>` 會寫到任何包裝程式都無法重新導向的位置，也能避開 shell 引號與編碼上的差異。
 
@@ -132,16 +136,18 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 |---|---|
 | `-o, --out <path>` | 輸出檔案。副檔名（`.mp4` 或 `.gif`）決定格式。預設：專案的路徑，副檔名改為 `.mp4` 或 `.gif` |
 | `--format <mp4\|gif>` | 覆寫專案中儲存的格式。必須與 `--out` 一致 |
-| `--quality <medium\|good\|source>` | 輸出尺寸：`medium` 為 720p，`good` 為 1080p，`source` 依裁切後最小的片段而定，所以絕不會放大。GIF 也以這個尺寸為起點 |
+| `--quality <medium\|good\|source>` | 輸出尺寸：`medium` 為 720p，`good` 為 1080p，`source` 依裁切後最小的片段而定，所以絕不會放大。僅限 MP4：GIF 與應用程式中一樣以來源尺寸為起點 |
+| `--fps <24\|30\|60>` | MP4 影格率（預設 60） |
 | `--gif-fps <15\|20\|25\|30>` | GIF 影格率 |
-| `--gif-size <medium\|large\|original>` | 套用在上述尺寸上的 GIF 高度上限：720、1080，或不設上限 |
+| `--gif-size <small\|medium\|large\|original>` | 套用在來源尺寸上的 GIF 高度上限：480、720、1080，或不設上限 |
+| `--gif-loop`, `--no-gif-loop` | GIF 無限循環播放，或只播放一次。預設：沿用專案設定 |
 | `--auto-zoom` | 算繪之前，在錄下的點擊處加入縮放，使用的引擎與編輯器的[自動縮放](/features/auto-zoom/)相同。既有的縮放會保留，新的縮放會與它們保持距離 |
 | `--audio <file>` | 將旁白檔（mp3、wav 或 m4a）混入 MP4。僅限 MP4 |
 | `--audio-mode <mix\|replace>` | `mix`（預設）會保留錄影的音訊，以 40% 增益墊在旁白底下；`replace` 則捨棄錄影的音訊 |
 | `--audio-offset <seconds>` | 旁白開始前的延遲（預設為 0） |
 | `--json` | 在 stdout 上輸出 NDJSON 格式的進度與結果 |
 
-CLI 匯出的 MP4 一律是 **H.264、60 fps**。沒有編碼格式或影格率選項。桌面應用程式的[匯出](./export.md)對話框另外提供 24 或 30 fps。
+CLI 匯出的 MP4 一律是 **H.264**，除非以 `--fps` 另行指定，影格率為 60 fps。沒有編碼格式選項。
 
 `--audio` 會在算繪之後才作用：視訊串流會原封不動地複製，再混入一條新的 AAC 音軌，並寫回同一個輸出檔案。
 
@@ -288,8 +294,7 @@ openscreen export demo.openscreen -o demo.mp4 --auto-zoom --audio voice.m4a --au
 
 - **你需要在伺服器上錄影**，而且沒有顯示環境或桌面工作階段。錄影需要真正的桌面，而在 Linux 上，每次執行都必須有人回應 portal 選擇器。
 - **你需要穩定且有版本管理的 API。** CLI 與專案格式在不同版本之間仍可能改變。
-- **你需要從命令列控制編碼格式、影格率或位元率。** CLI 匯出的 MP4 是 H.264、60 fps，而且 MP4 的位元率在應用程式中也無法調整。
-- **你需要在腳本化的錄影中加入網路攝影機。** `record` 沒有攝影機選項。
+- **你需要從命令列控制編碼格式或位元率。** CLI 匯出的 MP4 是 H.264，而且 MP4 的位元率在應用程式中也無法調整。
 - **你需要字幕檔。** 字幕只會燒錄進影片。
 
 若要在編輯器中實際走一遍相同的步驟，請參閱[如何製作產品示範影片](./guides/product-demo-video.md)。關於授權與網路使用的問題，請參閱[常見問題](./faq.md)。

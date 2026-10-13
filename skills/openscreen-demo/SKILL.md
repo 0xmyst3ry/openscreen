@@ -60,7 +60,7 @@ Write a storyboard and show it to the user in a few lines, then carry on unless 
 
 ## 4. Record
 
-1. `startRecording` with `window`. It returns once capture has started. Connected to the server in the app, the take goes through OpenScreen's recording bar: the editor closes, the bar counts down, and `stopRecording` opens the take in the editor.
+1. `startRecording` with `window`. It returns once capture has started. Connected to the server in the app, the take goes through OpenScreen's recording bar: the editor closes, the bar counts down, and `stopRecording` opens the take in the editor. Pass `camera` only when the user wants to appear on screen: the webcam then shows as a picture-in-picture.
 2. Play the storyboard. Move deliberately, and pause about one second after each result appears.
 3. `stopRecording` with a `title`. Keep what it returns: `projectId`, `checkpointId`, `videoPath`, `recordingStartedAt`.
 
@@ -94,7 +94,7 @@ Keep the rest as it is: the background, padding, shadow and cursor style are cho
 
 ## 7. Export and review
 
-1. `exportVideo` with the `projectId` and an absolute path: resolve, say, `demo/demo.mp4` against your working directory first, since the server in the app refuses a relative path. For a pull request video, pass `quality: "medium"` (720p) to keep the file small.
+1. `exportVideo` with the `projectId` and an absolute path: resolve, say, `demo/demo.mp4` against your working directory first, since the server in the app refuses a relative path. For a pull request video, pass `quality: "medium"` (720p) to keep the file small. For a GIF (a README, say), end the path in `.gif` and pass `gifSize: "small"` (480p).
 2. `getFrames` with the `projectId`, at the ruler seconds of your beats.
 3. Check every frame:
    - Is each callout readable and clear of the action?
