@@ -64,12 +64,14 @@ openscreen record --display 1 --cursor system
 | `--mic` | 采集默认麦克风 |
 | `--mic-device <name>` | 采集名称包含 `<name>` 的麦克风，不区分大小写。隐含 `--mic` |
 | `--system-audio` | 采集系统音频 |
+| `--camera` | 在录制屏幕的同时录制默认摄像头 |
+| `--camera-device <name>` | 录制名称包含 `<name>` 的摄像头，不区分大小写。隐含 `--camera` |
 | `--cursor <editable-overlay\|system>` | `editable-overlay`（默认）会隐藏系统指针并将其记录为数据，以便编辑器重新设置样式。`system` 会把指针绘制到视频中 |
 | `--duration <seconds>` | 经过这段时间后自动停止 |
 | `--project <out.openscreen>` | 完成后写出一个引用该录制的项目文件，可直接用于 `export` 或编辑器。必须以 `.openscreen` 结尾 |
 | `--json` | 在 stdout 上输出 NDJSON 事件 |
 
-没有摄像头选项：CLI 录制只包含屏幕和音频。
+使用 `--camera` 时，摄像头会与屏幕一同录制，`--project` 文件会引用它。
 
 **停止录制**。未指定 `--duration` 时，可以按 Ctrl+C（SIGINT）、发送 SIGTERM，或在其 stdin 中输入 `stop`、`q` 或 `quit` 并按回车来停止录制。关闭 stdin 不会停止录制。强制终止进程会跳过正常的收尾流程，因此既不会写出 `done` 事件，也不会写出项目文件。
 
@@ -81,7 +83,7 @@ openscreen record --display 1 --cursor system
 
 ### `openscreen sources` {#openscreen-sources}
 
-列出应用能看到的显示器、窗口和麦克风，方便脚本选择 `--display`、`--window` 和 `--mic-device` 的值。在 Linux 上，`record` 采集什么仍由门户选择器决定。
+列出应用能看到的显示器、窗口、麦克风和摄像头，方便脚本选择 `--display`、`--window`、`--mic-device` 和 `--camera-device` 的值。在 Linux 上，`record` 采集什么仍由门户选择器决定。
 
 ```bash
 openscreen sources                   # human-readable
@@ -99,12 +101,14 @@ openscreen sources -o sources.json   # payload written to a file
     "displays": [{ "index": 0, "id": "screen:1:0", "name": "Entire screen" }],
     "windows": [{ "id": "window:210:0", "name": "My App" }],
     "microphones": [{ "label": "Built-in Microphone" }],
-    "microphoneLabelsUnavailable": false
+    "microphoneLabelsUnavailable": false,
+    "cameras": [{ "label": "FaceTime HD Camera" }],
+    "cameraLabelsUnavailable": false
   }
 }
 ```
 
-当读取设备名称需要尚未授予的权限，或者无法在几秒内读取到设备列表时，`microphoneLabelsUnavailable` 为 `true`。
+当读取设备名称需要尚未授予的权限，或者无法在几秒内读取到设备列表时，`microphoneLabelsUnavailable` 为 `true`。`cameraLabelsUnavailable` 对摄像头的含义相同。
 
 **为什么要有 `-o`**。CLI 只把自己的输出写到 stdout；Chromium 的诊断信息会写到 stderr。但包装该进程的程序就是另一回事了。Ubuntu 的 `xvfb-run` 是在没有屏幕的机器上运行图形界面程序的常用方式，它会把 stderr 合并到 stdout 中，于是 Chromium 的启动警告会出现在 JSON 之前，导致 `openscreen sources --json | jq` 失败。`-o <file>` 会写入任何包装程序都无法重定向的位置，同时还能避开 shell 引号和编码方面的差异。
 
@@ -132,16 +136,18 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 |---|---|
 | `-o, --out <path>` | 输出文件。扩展名（`.mp4` 或 `.gif`）决定格式。默认：项目路径，扩展名换成 `.mp4` 或 `.gif` |
 | `--format <mp4\|gif>` | 覆盖项目中保存的格式。必须与 `--out` 一致 |
-| `--quality <medium\|good\|source>` | 输出尺寸：`medium` 为 720p，`good` 为 1080p，`source` 以裁剪后最小的片段为准，因此绝不会放大。GIF 也以这个尺寸为起点 |
+| `--quality <medium\|good\|source>` | 输出尺寸：`medium` 为 720p，`good` 为 1080p，`source` 以裁剪后最小的片段为准，因此绝不会放大。仅限 MP4：GIF 与应用中一样以源尺寸为起点 |
+| `--fps <24\|30\|60>` | MP4 帧率（默认 60） |
 | `--gif-fps <15\|20\|25\|30>` | GIF 帧率 |
-| `--gif-size <medium\|large\|original>` | 在上述尺寸基础上施加的 GIF 高度上限：720、1080 或不限 |
+| `--gif-size <small\|medium\|large\|original>` | 在源尺寸基础上施加的 GIF 高度上限：480、720、1080 或不限 |
+| `--gif-loop`, `--no-gif-loop` | GIF 无限循环，或只播放一次。默认：沿用项目设置 |
 | `--auto-zoom` | 渲染之前，在录制的点击处添加缩放，使用与编辑器[自动缩放](/features/auto-zoom/)相同的引擎。已有的缩放会保留，新的缩放会与它们保持间隔 |
 | `--audio <file>` | 把一个配音文件（mp3、wav 或 m4a）混入 MP4。仅限 MP4 |
 | `--audio-mode <mix\|replace>` | `mix`（默认）会以 40% 增益把录制原声保留在配音之下；`replace` 则去掉原声 |
 | `--audio-offset <seconds>` | 配音开始前的延迟（默认为 0） |
 | `--json` | 在 stdout 上输出 NDJSON 格式的进度和结果 |
 
-CLI 导出的 MP4 始终是 **60 fps 的 H.264**。没有编码格式或帧率选项。桌面应用的[导出](./export.md)对话框另外还提供 24 或 30 fps。
+CLI 导出的 MP4 始终是 **H.264**，除非用 `--fps` 另行指定，帧率为 60 fps。没有编码格式选项。
 
 `--audio` 在渲染完成后才起作用：视频流会原样复制，然后混合出一条新的 AAC 音轨，并覆盖写入同一个输出文件。
 
@@ -288,8 +294,7 @@ openscreen export demo.openscreen -o demo.mp4 --auto-zoom --audio voice.m4a --au
 
 - **你需要在服务器上录制**，而服务器没有显示器或桌面会话。录制需要真实的桌面环境，而且在 Linux 上，每次运行都得有人回应门户选择器。
 - **你需要稳定且带版本号的 API**。CLI 和项目格式在不同版本之间仍可能变化。
-- **你需要在命令行中控制编码格式、帧率或码率**。CLI 导出的 MP4 固定为 60 fps 的 H.264，而 MP4 的码率在应用中也无法调整。
-- **你需要在脚本录制中包含摄像头**。`record` 没有摄像头选项。
+- **你需要在命令行中控制编码格式或码率**。CLI 导出的 MP4 固定为 H.264，而 MP4 的码率在应用中也无法调整。
 - **你需要字幕文件**。字幕只会烧录进视频。
 
 想在编辑器中亲手完成同样的步骤，请参阅[如何制作产品演示视频](./guides/product-demo-video.md)。关于许可证和网络使用的解答，请参阅[常见问题](./faq.md)。

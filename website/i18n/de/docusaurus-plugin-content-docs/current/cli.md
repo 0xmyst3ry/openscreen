@@ -64,12 +64,14 @@ openscreen record --display 1 --cursor system
 | `--mic` | Das Standardmikrofon aufnehmen |
 | `--mic-device <name>` | Das Mikrofon aufnehmen, dessen Bezeichnung `<name>` enthält, ohne Beachtung der Groß-/Kleinschreibung. Schließt `--mic` ein |
 | `--system-audio` | Systemaudio aufnehmen |
+| `--camera` | Die Standard-Webcam neben dem Bildschirm aufnehmen |
+| `--camera-device <name>` | Die Kamera aufnehmen, deren Name `<name>` enthält, ohne Beachtung der Groß- und Kleinschreibung. Impliziert `--camera` |
 | `--cursor <editable-overlay\|system>` | `editable-overlay` (Standard) blendet den Systemzeiger aus und zeichnet ihn als Daten auf, damit der Editor ihn neu gestalten kann. `system` zeichnet den Zeiger ins Video |
 | `--duration <seconds>` | Nach dieser Dauer automatisch stoppen |
 | `--project <out.openscreen>` | Am Ende eine Projektdatei schreiben, die auf die Aufnahme verweist, bereit für `export` oder den Editor. Muss auf `.openscreen` enden |
 | `--json` | NDJSON-Ereignisse auf stdout |
 
-Eine Webcam-Option gibt es nicht: Eine CLI-Aufnahme enthält nur Bildschirm und Audio.
+Mit `--camera` wird die Webcam neben dem Bildschirm aufgenommen, und die `--project`-Datei verweist auf sie.
 
 **Stoppen.** Ohne `--duration` stoppst du eine Aufnahme mit Ctrl+C (SIGINT), mit SIGTERM oder indem du `stop`, `q` oder `quit` und Enter auf ihrem stdin eingibst. Das Schließen von stdin stoppt sie nicht. Ein erzwungenes Beenden überspringt den normalen Abschluss, es wird also weder ein `done`-Ereignis noch eine Projektdatei geschrieben.
 
@@ -81,7 +83,7 @@ Eine Webcam-Option gibt es nicht: Eine CLI-Aufnahme enthält nur Bildschirm und 
 
 ### `openscreen sources` {#openscreen-sources}
 
-Listet die Bildschirme, Fenster und Mikrofone auf, die die App sieht, damit ein Skript Werte für `--display`, `--window` und `--mic-device` wählen kann. Unter Linux entscheidet trotzdem die Portal-Auswahl, was `record` aufnimmt.
+Listet die Bildschirme, Fenster, Mikrofone und Kameras auf, die die App sieht, damit ein Skript Werte für `--display`, `--window`, `--mic-device` und `--camera-device` wählen kann. Unter Linux entscheidet trotzdem die Portal-Auswahl, was `record` aufnimmt.
 
 ```bash
 openscreen sources                   # human-readable
@@ -99,12 +101,14 @@ Mit `--json` kommen die Nutzdaten im abschließenden `done`-Ereignis an:
     "displays": [{ "index": 0, "id": "screen:1:0", "name": "Entire screen" }],
     "windows": [{ "id": "window:210:0", "name": "My App" }],
     "microphones": [{ "label": "Built-in Microphone" }],
-    "microphoneLabelsUnavailable": false
+    "microphoneLabelsUnavailable": false,
+    "cameras": [{ "label": "FaceTime HD Camera" }],
+    "cameraLabelsUnavailable": false
   }
 }
 ```
 
-`microphoneLabelsUnavailable` ist `true`, wenn die Gerätenamen eine Berechtigung brauchen, die nicht erteilt wurde, oder wenn die Geräteliste nicht innerhalb weniger Sekunden gelesen werden konnte.
+`microphoneLabelsUnavailable` ist `true`, wenn die Gerätenamen eine Berechtigung brauchen, die nicht erteilt wurde, oder wenn die Geräteliste nicht innerhalb weniger Sekunden gelesen werden konnte. `cameraLabelsUnavailable` gilt ebenso für Kameras.
 
 **Wozu `-o` da ist.** Die CLI schreibt nur ihre eigene Ausgabe auf stdout; die Diagnosemeldungen von Chromium gehen auf stderr. Der Wrapper um den Prozess ist eine andere Sache. Ubuntus `xvfb-run`, der übliche Weg, ein GUI-Programm auf einem Rechner ohne Bildschirm auszuführen, führt stderr mit stdout zusammen. Die Startwarnungen von Chromium landen dann vor dem JSON, und `openscreen sources --json | jq` schlägt fehl. `-o <file>` schreibt an eine Stelle, die kein Wrapper umleiten kann, und umgeht Unterschiede bei Shell-Quoting und Zeichenkodierung.
 
@@ -132,16 +136,18 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 |---|---|
 | `-o, --out <path>` | Ausgabedatei. Die Endung, `.mp4` oder `.gif`, legt das Format fest. Standard: der Pfad des Projekts mit `.mp4` oder `.gif` |
 | `--format <mp4\|gif>` | Das im Projekt gespeicherte Format überschreiben. Muss zu `--out` passen |
-| `--quality <medium\|good\|source>` | Ausgabegröße: `medium` ist 720p, `good` ist 1080p, `source` richtet sich nach dem kleinsten Clip nach dem Zuschnitt und skaliert daher nie hoch. Auch ein GIF geht von dieser Größe aus |
+| `--quality <medium\|good\|source>` | Ausgabegröße: `medium` ist 720p, `good` ist 1080p, `source` richtet sich nach dem kleinsten Clip nach dem Zuschnitt und skaliert daher nie hoch. Nur MP4: Ein GIF geht wie in der App von der Quellgröße aus |
+| `--fps <24\|30\|60>` | Bildrate des MP4 (Standard 60) |
 | `--gif-fps <15\|20\|25\|30>` | Bildrate des GIF |
-| `--gif-size <medium\|large\|original>` | Höhenbegrenzung des GIF, angewendet auf diese Größe: 720, 1080 oder keine |
+| `--gif-size <small\|medium\|large\|original>` | Höhenbegrenzung des GIF, angewendet auf die Quellgröße: 480, 720, 1080 oder keine |
+| `--gif-loop`, `--no-gif-loop` | Das GIF läuft endlos in Schleife oder wird einmal abgespielt. Standard: aus dem Projekt |
 | `--auto-zoom` | Vor dem Rendern Zooms auf die aufgezeichneten Klicks setzen, mit derselben Engine wie die [automatischen Zooms](/features/auto-zoom/) des Editors. Vorhandene Zooms bleiben erhalten, und neue halten Abstand zu ihnen |
 | `--audio <file>` | Eine Voice-over-Datei (mp3, wav oder m4a) ins MP4 mischen. Nur MP4 |
 | `--audio-mode <mix\|replace>` | `mix` (Standard) behält den Ton der Aufnahme mit 40 % Pegel unter dem Voice-over; `replace` entfernt ihn |
 | `--audio-offset <seconds>` | Verzögerung, bevor das Voice-over beginnt (Standard 0) |
 | `--json` | NDJSON für Fortschritt und Ergebnis auf stdout |
 
-MP4-Exporte aus der CLI sind immer **H.264 mit 60 fps**. Eine Option für Codec oder Bildrate gibt es nicht. Der [Export](./export.md)-Dialog der Desktop-App bietet zusätzlich 24 oder 30 fps.
+MP4-Exporte aus der CLI sind immer **H.264**, mit 60 fps, sofern `--fps` nichts anderes angibt. Eine Codec-Option gibt es nicht.
 
 `--audio` greift nach dem Rendern: Der Videostream wird unverändert kopiert, und eine neue AAC-Spur wird gemischt und über dieselbe Ausgabedatei geschrieben.
 
@@ -288,8 +294,7 @@ Speichere das Projekt im selben Ordner wie den Clip. Ohne Cursor-Telemetrie hat 
 
 - **Du musst auf einem Server aufnehmen**, ohne Display oder Desktop-Sitzung. Die Aufnahme braucht einen echten Desktop, und unter Linux muss bei jedem Lauf jemand die Portal-Auswahl beantworten.
 - **Du brauchst eine stabile, versionierte API.** Die CLI und das Projektformat können sich zwischen Versionen noch ändern.
-- **Du willst Codec, Bildrate oder Bitrate über die Kommandozeile steuern.** CLI-MP4-Exporte sind H.264 mit 60 fps, und die MP4-Bitrate lässt sich auch in der App nicht einstellen.
-- **Du brauchst die Webcam in einer skriptgesteuerten Aufnahme.** `record` hat keine Kamera-Option.
+- **Du willst Codec oder Bitrate über die Kommandozeile steuern.** CLI-MP4-Exporte sind H.264, und die MP4-Bitrate lässt sich auch in der App nicht einstellen.
 - **Du brauchst Untertiteldateien.** Untertitel werden nur ins Video eingebrannt.
 
 Eine praktische Anleitung mit denselben Schritten im Editor findest du unter [So erstellst du ein Produktdemo-Video](./guides/product-demo-video.md). Antworten zu Lizenz und Netzwerknutzung stehen in der [FAQ](./faq.md).

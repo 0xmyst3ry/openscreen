@@ -64,12 +64,14 @@ openscreen record --display 1 --cursor system
 | `--mic` | 既定のマイクから録音します |
 | `--mic-device <name>` | ラベルに `<name>` を含むマイクから録音します（大文字と小文字は区別しません）。`--mic` も指定したことになります |
 | `--system-audio` | システム音声を録音します |
+| `--camera` | 既定のウェブカメラを画面と一緒に録画します |
+| `--camera-device <name>` | 名前に `<name>` を含むカメラを録画します（大文字と小文字は区別しません）。`--camera` を含意します |
 | `--cursor <editable-overlay\|system>` | `editable-overlay`（既定）はシステムのポインターを隠してデータとして記録し、エディターでスタイルを変えられるようにします。`system` はポインターを映像に描き込みます |
 | `--duration <seconds>` | 指定した時間が経過したら自動的に停止します |
 | `--project <out.openscreen>` | 終了時に、録画を参照するプロジェクトファイルを書き出します。`export` やエディターですぐに使えます。末尾は `.openscreen` でなければなりません |
 | `--json` | stdout に NDJSON のイベントを出力します |
 
-ウェブカメラのオプションはありません。CLI の録画に含まれるのは、画面と音声だけです。
+`--camera` を付けると、ウェブカメラも画面と一緒に録画され、`--project` のファイルから参照されます。
 
 **停止方法。** `--duration` を指定しない場合は、Ctrl+C（SIGINT）、SIGTERM、または stdin に `stop`、`q`、`quit` のいずれかを入力して Enter を押すと、録画が停止します。stdin を閉じても停止しません。強制終了すると通常の終了処理が省かれるため、`done` イベントもプロジェクトファイルも書き出されません。
 
@@ -81,7 +83,7 @@ openscreen record --display 1 --cursor system
 
 ### `openscreen sources` {#openscreen-sources}
 
-アプリから見えるディスプレイ、ウィンドウ、マイクを一覧表示し、スクリプトが `--display`、`--window`、`--mic-device` の値を選べるようにします。Linux では、`record` で何をキャプチャするかは、それでもポータルのピッカーが決めます。
+アプリから見えるディスプレイ、ウィンドウ、マイク、カメラを一覧表示し、スクリプトが `--display`、`--window`、`--mic-device`、`--camera-device` の値を選べるようにします。Linux では、`record` で何をキャプチャするかは、それでもポータルのピッカーが決めます。
 
 ```bash
 openscreen sources                   # human-readable
@@ -99,12 +101,14 @@ openscreen sources -o sources.json   # payload written to a file
     "displays": [{ "index": 0, "id": "screen:1:0", "name": "Entire screen" }],
     "windows": [{ "id": "window:210:0", "name": "My App" }],
     "microphones": [{ "label": "Built-in Microphone" }],
-    "microphoneLabelsUnavailable": false
+    "microphoneLabelsUnavailable": false,
+    "cameras": [{ "label": "FaceTime HD Camera" }],
+    "cameraLabelsUnavailable": false
   }
 }
 ```
 
-`microphoneLabelsUnavailable` は、デバイス名の取得にまだ許可されていない権限が必要な場合や、数秒以内にデバイスの一覧を読み取れなかった場合に `true` になります。
+`microphoneLabelsUnavailable` は、デバイス名の取得にまだ許可されていない権限が必要な場合や、数秒以内にデバイスの一覧を読み取れなかった場合に `true` になります。`cameraLabelsUnavailable` はカメラについて同じことを示します。
 
 **`-o` がある理由。** CLI が stdout に書き込むのは自身の出力だけで、Chromium の診断情報は stderr に送られます。問題は、プロセスを包むラッパーのほうです。画面のないマシンで GUI のバイナリを動かす一般的な方法である Ubuntu の `xvfb-run` は、stderr を stdout にまとめます。そのため、Chromium の起動時の警告が JSON の前に入り込み、`openscreen sources --json | jq` が失敗します。`-o <file>` なら、どのラッパーにもリダイレクトされない場所に書き込めるうえ、シェルのクォートやエンコーディングの違いも避けられます。
 
@@ -132,16 +136,18 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 |---|---|
 | `-o, --out <path>` | 出力ファイル。拡張子（`.mp4` または `.gif`）で形式が決まります。既定値は、プロジェクトのパスの拡張子を `.mp4` または `.gif` にしたものです |
 | `--format <mp4\|gif>` | プロジェクトに保存された形式を上書きします。`--out` と一致している必要があります |
-| `--quality <medium\|good\|source>` | 出力サイズ。`medium` は 720p、`good` は 1080p、`source` はクロップ後のもっとも小さいクリップに合わせるため、アップスケールしません。GIF もこのサイズが出発点になります |
+| `--quality <medium\|good\|source>` | 出力サイズ。`medium` は 720p、`good` は 1080p、`source` はクロップ後のもっとも小さいクリップに合わせるため、アップスケールしません。MP4 のみ。GIF はアプリと同じく元のサイズが出発点になります |
+| `--fps <24\|30\|60>` | MP4 のフレームレート（既定は 60） |
 | `--gif-fps <15\|20\|25\|30>` | GIF のフレームレート |
-| `--gif-size <medium\|large\|original>` | 上記のサイズに適用する GIF の高さの上限。720、1080、上限なしのいずれかです |
+| `--gif-size <small\|medium\|large\|original>` | 元のサイズに適用する GIF の高さの上限。480、720、1080、上限なしのいずれかです |
+| `--gif-loop`, `--no-gif-loop` | GIF を無限にループするか、1 回だけ再生します。既定はプロジェクトの設定です |
 | `--auto-zoom` | レンダリングの前に、記録されたクリックの箇所にズームを追加します。エディターの[自動ズーム](/features/auto-zoom/)と同じエンジンを使います。既存のズームは保持され、新しいズームはそれらを避けて配置されます |
 | `--audio <file>` | ナレーションのファイル（mp3、wav、m4a）を MP4 にミックスします。MP4 のみ |
 | `--audio-mode <mix\|replace>` | `mix`（既定）は録画の音声を 40% のゲインでナレーションの下に残し、`replace` は録画の音声を取り除きます |
 | `--audio-offset <seconds>` | ナレーションが始まるまでの遅延（既定値 0） |
 | `--json` | stdout に NDJSON で進行状況と結果を出力します |
 
-CLI からの MP4 エクスポートは、常に **H.264・60 fps** です。コーデックやフレームレートのオプションはありません。デスクトップアプリの[エクスポート](./export.md)ダイアログでは、24 または 30 fps も選べます。
+CLI からの MP4 エクスポートは常に **H.264** で、`--fps` を指定しない限り 60 fps です。コーデックのオプションはありません。
 
 `--audio` はレンダリングのあとに処理されます。映像ストリームは手を加えずにコピーされ、新しい AAC トラックがミックスされて、同じ出力ファイルに上書きされます。
 
@@ -288,8 +294,7 @@ openscreen export demo.openscreen -o demo.mp4 --auto-zoom --audio voice.m4a --au
 
 - **ディスプレイやデスクトップセッションのないサーバーで録画したい。** 録画には実際のデスクトップが必要で、Linux では実行のたびに誰かがポータルのピッカーに応答しなければなりません。
 - **安定した、バージョン管理された API が必要。** CLI とプロジェクト形式は、リリース間で変わる可能性があります。
-- **コマンドラインからコーデック、フレームレート、ビットレートを制御したい。** CLI の MP4 エクスポートは H.264・60 fps で、MP4 のビットレートはアプリでも調整できません。
-- **スクリプトによる録画でウェブカメラを使いたい。** `record` にはカメラのオプションがありません。
+- **コマンドラインからコーデックやビットレートを制御したい。** CLI の MP4 エクスポートは H.264 で、MP4 のビットレートはアプリでも調整できません。
 - **字幕ファイルが必要。** 字幕は動画に焼き込まれるだけです。
 
 エディターで同じ手順を実際に行う方法は、[プロダクトデモ動画の作り方](./guides/product-demo-video.md)を参照してください。ライセンスとネットワーク利用については、[よくある質問](./faq.md)で回答しています。

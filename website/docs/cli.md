@@ -64,12 +64,14 @@ openscreen record --display 1 --cursor system
 | `--mic` | Capture the default microphone |
 | `--mic-device <name>` | Capture the microphone whose label contains `<name>`, ignoring case. Implies `--mic` |
 | `--system-audio` | Capture system audio |
+| `--camera` | Record the default webcam beside the screen |
+| `--camera-device <name>` | Record the camera whose label contains `<name>`, ignoring case. Implies `--camera` |
 | `--cursor <editable-overlay\|system>` | `editable-overlay` (default) hides the system pointer and records it as data, so the editor can restyle it. `system` draws the pointer into the video |
 | `--duration <seconds>` | Stop automatically after this long |
 | `--project <out.openscreen>` | When done, write a project file that references the recording, ready for `export` or the editor. Must end in `.openscreen` |
 | `--json` | NDJSON events on stdout |
 
-There is no webcam option: a CLI recording contains the screen and audio only.
+With `--camera`, the webcam is recorded beside the screen, and the `--project` file links it.
 
 **Stopping.** Without `--duration`, stop a recording with Ctrl+C (SIGINT), SIGTERM, or by typing `stop`, `q` or `quit` and Enter on its stdin. Closing stdin does not stop it. A forced kill skips the normal finish, so no `done` event and no project file are written.
 
@@ -81,7 +83,7 @@ There is no webcam option: a CLI recording contains the screen and audio only.
 
 ### `openscreen sources`
 
-Lists the displays, windows and microphones the app can see, so a script can choose `--display`, `--window` and `--mic-device` values. On Linux the portal picker still decides what `record` captures.
+Lists the displays, windows, microphones and cameras the app can see, so a script can choose `--display`, `--window`, `--mic-device` and `--camera-device` values. On Linux the portal picker still decides what `record` captures.
 
 ```bash
 openscreen sources                   # human-readable
@@ -99,12 +101,14 @@ With `--json`, the payload arrives inside the final `done` event:
     "displays": [{ "index": 0, "id": "screen:1:0", "name": "Entire screen" }],
     "windows": [{ "id": "window:210:0", "name": "My App" }],
     "microphones": [{ "label": "Built-in Microphone" }],
-    "microphoneLabelsUnavailable": false
+    "microphoneLabelsUnavailable": false,
+    "cameras": [{ "label": "FaceTime HD Camera" }],
+    "cameraLabelsUnavailable": false
   }
 }
 ```
 
-`microphoneLabelsUnavailable` is `true` when device names need a permission that has not been granted, or when the device list could not be read within a few seconds.
+`microphoneLabelsUnavailable` is `true` when device names need a permission that has not been granted, or when the device list could not be read within a few seconds. `cameraLabelsUnavailable` says the same of cameras.
 
 **Why `-o` exists.** The CLI writes only its own output to stdout; Chromium's diagnostics go to stderr. The wrapper around the process is another matter. Ubuntu's `xvfb-run`, the usual way to run a GUI binary on a machine without a screen, merges stderr into stdout, so Chromium's startup warnings land ahead of the JSON and `openscreen sources --json | jq` fails. `-o <file>` writes to a place no wrapper can redirect, and it avoids shell quoting and encoding differences.
 
@@ -132,16 +136,18 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 |---|---|
 | `-o, --out <path>` | Output file. The extension, `.mp4` or `.gif`, sets the format. Default: the project's path with `.mp4` or `.gif` |
 | `--format <mp4\|gif>` | Override the format stored in the project. Must agree with `--out` |
-| `--quality <medium\|good\|source>` | Output size: `medium` is 720p, `good` is 1080p, `source` follows the smallest clip after cropping, so it never upscales. A GIF starts from this size too |
+| `--quality <medium\|good\|source>` | Output size: `medium` is 720p, `good` is 1080p, `source` follows the smallest clip after cropping, so it never upscales. MP4 only: a GIF starts from the source size, as in the app |
+| `--fps <24\|30\|60>` | MP4 frame rate (default 60) |
 | `--gif-fps <15\|20\|25\|30>` | GIF frame rate |
-| `--gif-size <medium\|large\|original>` | GIF height cap applied to that size: 720, 1080, or none |
+| `--gif-size <small\|medium\|large\|original>` | GIF height cap applied to the source size: 480, 720, 1080, or none |
+| `--gif-loop`, `--no-gif-loop` | The GIF loops forever, or plays once. Default: from the project |
 | `--auto-zoom` | Before rendering, add zooms on the recorded clicks, with the same engine as the editor's [automatic zooms](/features/auto-zoom/). Existing zooms are kept, and new ones keep clear of them |
 | `--audio <file>` | Mix a voiceover file (mp3, wav or m4a) into the MP4. MP4 only |
 | `--audio-mode <mix\|replace>` | `mix` (default) keeps the recording's audio under the voiceover at 40% gain; `replace` drops it |
 | `--audio-offset <seconds>` | Delay before the voiceover starts (default 0) |
 | `--json` | NDJSON progress and result on stdout |
 
-MP4 exports from the CLI are always **H.264 at 60 fps**. There is no codec or frame-rate option. The desktop app's [Export](./export.md) dialog also offers 24 or 30 fps.
+MP4 exports from the CLI are always **H.264**, at 60 fps unless `--fps` says otherwise. There is no codec option.
 
 `--audio` works after the render: the video stream is copied untouched, and a new AAC track is mixed and written over the same output file.
 
@@ -288,8 +294,7 @@ Save it in the same folder as the clip. Without cursor telemetry, `--auto-zoom` 
 
 - **You need to record on a server** with no display or desktop session. Recording needs a real desktop, and on Linux someone has to answer the portal picker on each run.
 - **You need a stable, versioned API.** The CLI and the project format can still change between releases.
-- **You need codec, frame-rate or bitrate control from the command line.** CLI MP4 exports are H.264 at 60 fps, and the MP4 bitrate is not adjustable in the app either.
-- **You need the webcam in a scripted recording.** `record` has no camera option.
+- **You need codec or bitrate control from the command line.** CLI MP4 exports are H.264, and the MP4 bitrate is not adjustable in the app either.
 - **You need subtitle files.** Captions are burned into the video only.
 
 For a hands-on walkthrough of the same steps in the editor, see [How to make a product demo video](./guides/product-demo-video.md). Answers on licensing and network use are in the [FAQ](./faq.md).
