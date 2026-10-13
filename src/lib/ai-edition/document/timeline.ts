@@ -1083,7 +1083,8 @@ export function insertAssetClip(
 }
 
 /**
- * The single mutator for a clip's crop: the clip's Edit modal and the agent's `setClipRange`.
+ * The single mutator for a clip's crop alone (the agent's crop-only `setClipRange`); with a range,
+ * `setClipSourceRange` takes the crop in the same pass.
  * `null` clears it back to the full frame rather than storing the identity region. Through
  * `withClipsChanged`, since crop is the one property that keeps two meeting clips apart. An
  * unknown `clipId` is a no-op. Pure.
@@ -1113,19 +1114,31 @@ export function setClipCrop(
  * its source length), lay everything back-to-back, then `rederiveRegionMs` clamps every
  * anchored pill to the clip's kept window (dropping what the trim removed) and refreshes the
  * derived ms of the clips that reflowed. An unknown `clipId` is a no-op.
+ *
+ * `cropRegion` is the Edit modal's crop, set in the same pass: `undefined` leaves it, `null`
+ * clears it. One pass, because the fold decides on range AND crop together: a range applied
+ * first can fold the clip into a neighbour whose crop the new one would have told apart.
  */
 export function setClipSourceRange(
 	document: AxcutDocument,
 	clipId: string,
 	sourceStartSec: number,
 	sourceEndSec: number,
+	cropRegion?: AxcutClipCropRegion | null,
 ): AxcutDocument {
 	const clamp = (n: number) => (Number.isFinite(n) ? Math.max(0, n) : 0);
 	const lo = Math.min(clamp(sourceStartSec), clamp(sourceEndSec));
 	const hi = Math.max(clamp(sourceStartSec), clamp(sourceEndSec));
 	const arr = document.timeline.clips.map((c) =>
 		c.id === clipId
-			? { ...c, sourceStartSec: lo, sourceEndSec: hi, timelineStartSec: 0, timelineEndSec: 0 }
+			? {
+					...c,
+					sourceStartSec: lo,
+					sourceEndSec: hi,
+					timelineStartSec: 0,
+					timelineEndSec: 0,
+					...(cropRegion === undefined ? {} : { cropRegion: cropRegion ?? undefined }),
+				}
 			: c,
 	);
 	return withClipsChanged(document, arr);

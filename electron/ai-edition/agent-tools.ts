@@ -2363,13 +2363,11 @@ export function executeAgentTool(
 				cropRegion.y === 0 &&
 				cropRegion.width === 1 &&
 				cropRegion.height === 1;
-			const afterRange = ranged
-				? setClipSourceRange(document, clipId, sourceStartSec, sourceEndSec)
-				: document;
-			const next =
-				cropRegion === undefined
-					? afterRange
-					: setClipCrop(afterRange, clipId, wholeFrame ? null : cropRegion);
+			const crop = cropRegion === undefined ? undefined : wholeFrame ? null : cropRegion;
+			// One pass for both, as the dialog's Apply: the fold weighs range and crop together.
+			const next = ranged
+				? setClipSourceRange(document, clipId, sourceStartSec, sourceEndSec, crop)
+				: setClipCrop(document, clipId, crop ?? null);
 			const dropped = droppedByEdit(document, next);
 			const casualties = dropped.droppedModifierIds.length + dropped.droppedTrimIds.length;
 			const after = next.timeline.clips.find((c) => c.id === clipId);

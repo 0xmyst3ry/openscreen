@@ -3656,6 +3656,28 @@ describe("clip structure (#1180)", () => {
 		expect(run(twoTakes(), "setClipRange", { clipId: "clip_1" }).ok).toBe(false);
 	});
 
+	it("setClipRange weighs a new range and a new crop together", () => {
+		// clip_2 is moved to meet clip_1 in the media AND given its own crop in one call: the
+		// crop keeps them apart, so neither edit is lost to a fold.
+		const placed = run(twoTakes(), "insertClip", {
+			assetId: "asset_1",
+			sourceStartSec: 12,
+			sourceEndSec: 16,
+		});
+		const { clipId } = JSON.parse(placed.resultJson);
+		const crop = { x: 0, y: 0, width: 0.5, height: 0.5 };
+		const result = run(placed.document as AxcutDocument, "setClipRange", {
+			clipId,
+			sourceStartSec: 10,
+			sourceEndSec: 16,
+			cropRegion: crop,
+		});
+		expect((result.document as AxcutDocument).timeline.clips).toMatchObject([
+			{ id: "clip_1", sourceEndSec: 10 },
+			{ id: clipId, sourceStartSec: 10, sourceEndSec: 16, cropRegion: crop },
+		]);
+	});
+
 	it("setClipRange moves one edge and keeps the other", () => {
 		const result = run(twoTakes(), "setClipRange", { clipId: "clip_1", sourceEndSec: 6 });
 		expect((result.document as AxcutDocument).timeline.clips[0]).toMatchObject({

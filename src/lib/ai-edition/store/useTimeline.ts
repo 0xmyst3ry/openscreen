@@ -35,7 +35,6 @@ import {
 	removeClip as removeClipInDocument,
 	removeRegion as removeRegionInDocument,
 	resequenceClips,
-	setClipCrop,
 	setClipSourceRange,
 } from "../document/timeline";
 import type { AxcutAudioTrack, AxcutClipCropRegion, AxcutDocument } from "../schema";
@@ -1221,8 +1220,7 @@ export function useTimeline() {
 		) => {
 			const doc = useProjectStore.getState().document;
 			if (!doc) return;
-			const ranged = setClipSourceRange(doc, clipId, sourceStartSec, sourceEndSec);
-			const next = cropRegion === undefined ? ranged : setClipCrop(ranged, clipId, cropRegion);
+			const next = setClipSourceRange(doc, clipId, sourceStartSec, sourceEndSec, cropRegion);
 			await saveDocument(next, { history: true });
 		},
 		[saveDocument],
