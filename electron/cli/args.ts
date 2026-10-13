@@ -327,6 +327,13 @@ function parseExport(args: string[], cwd: string): CliCommand {
 	if (request.audioPath && request.format === "gif") {
 		throw new Error("--audio is only supported for MP4 exports");
 	}
+	// The MP4 options: a GIF is sized from the source and has its own frame rate.
+	if (request.format === "gif" && request.quality) {
+		throw new Error("--quality is only supported for MP4 exports");
+	}
+	if (request.format === "gif" && args.includes("--fps")) {
+		throw new Error("--fps is only supported for MP4 exports (use --gif-fps)");
+	}
 	return request;
 }
 
