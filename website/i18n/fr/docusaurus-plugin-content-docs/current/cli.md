@@ -157,7 +157,7 @@ Les exports MP4 de la CLI sont toujours en **H.264**, à 60 fps sauf si `--fps` 
 
 ### `openscreen captions` {#openscreen-captions}
 
-Transcrit l'audio du projet sur votre machine avec Whisper, puis écrit des annotations de sous-titres dans le fichier de projet. Rien n'est mis en ligne, et la langue est détectée automatiquement. La première exécution télécharge le modèle Whisper une seule fois, environ 264 Mo, comme le fait l'application de bureau.
+Transcrit l'audio du projet sur votre machine avec Whisper, puis active les sous-titres du projet, comme le fait le volet Sous-titres de l'éditeur. Rien n'est mis en ligne, et la langue est détectée automatiquement. La première exécution télécharge le modèle Whisper une seule fois, environ 264 Mo, comme le fait l'application de bureau.
 
 ```bash
 openscreen captions demo.openscreen --min-words 2 --max-words 7
@@ -165,7 +165,8 @@ openscreen export demo.openscreen -o demo.mp4   # captions are burned into the v
 ```
 
 - `--min-words` et `--max-words` fixent le nombre de mots par sous-titre. Chacun accepte de 1 à 12, la plage de l’éditeur. Par défaut : 2 et 7.
-- La relancer remplace les sous-titres qu'elle avait ajoutés. Les annotations que vous avez ajoutées vous-même sont conservées.
+- Les sous-titres sont la transcription affichée sur la vidéo : dans l'éditeur, vous modifiez leur style, les corrigez et les traduisez comme n'importe quels autres. La relancer conserve la transcription et ne règle que le nombre de mots par sous-titre.
+- Le projet est enregistré dans le format propre à l'éditeur. Un script qui modifie le JSON du projet comme [ci-dessous](#example-an-automated-product-demo) le fait avant `captions`, et `pack` ne lit pas encore ce format.
 - La vidéo d'écran du projet doit avoir une piste audio, par exemple issue de `record --mic`.
 - Les sous-titres sont incrustés dans l'export. Aucun fichier de sous-titres n'est produit. Voir [Sous-titres et transcription](./captions.md).
 
@@ -241,10 +242,7 @@ Un script ou un agent de code peut produire une démo sous-titrée et zoomée sa
 # 1. Record 20 seconds of one window, with narration from the microphone
 openscreen record --window "MyProduct" --mic --duration 20 --project demo.openscreen --json
 
-# 2. Caption the narration on this machine
-openscreen captions demo.openscreen --json
-
-# 3. Add a manual zoom and a text label by editing the project JSON
+# 2. Add a manual zoom and a text label by editing the project JSON
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync("demo.openscreen", "utf8"));
@@ -257,11 +255,14 @@ node -e '
   fs.writeFileSync("demo.openscreen", JSON.stringify(p, null, 2));
 '
 
+# 3. Caption the narration on this machine (this saves the project in the editor's format)
+openscreen captions demo.openscreen --json
+
 # 4. Render, with automatic zooms added on the recorded clicks
 openscreen export demo.openscreen -o demo.mp4 --auto-zoom --json
 ```
 
-À l'étape 3, `depth` va de 1 à 6 (de 1.25× à 5× ; 3 correspond à 1.8×), et `cx` et `cy` placent le centre du zoom en fractions du cadre.
+À l'étape 2, `depth` va de 1 à 6 (de 1.25× à 5× ; 3 correspond à 1.8×), et `cx` et `cy` placent le centre du zoom en fractions du cadre.
 
 Pour une narration en synthèse vocale à la place, enregistrez sans `--mic` et mixez la voix off à l'export. Tout moteur qui écrit du mp3, du wav ou du m4a convient ; l'exemple utilise `say` de macOS :
 

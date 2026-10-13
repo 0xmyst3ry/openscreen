@@ -157,7 +157,7 @@ MP4-Exporte aus der CLI sind immer **H.264**, mit 60 fps, sofern `--fps` nichts 
 
 ### `openscreen captions` {#openscreen-captions}
 
-Transkribiert den Ton des Projekts mit Whisper auf deinem Rechner und schreibt dann Untertitel-Annotationen in die Projektdatei. Nichts wird hochgeladen, und die Sprache wird automatisch erkannt. Der erste Lauf lädt das Whisper-Modell einmalig herunter, etwa 264 MB, wie in der Desktop-App.
+Transkribiert den Ton des Projekts mit Whisper auf deinem Rechner und schaltet dann die Untertitel des Projekts ein, wie der Bereich **Captions** im Editor. Nichts wird hochgeladen, und die Sprache wird automatisch erkannt. Der erste Lauf lädt das Whisper-Modell einmalig herunter, etwa 264 MB, wie in der Desktop-App.
 
 ```bash
 openscreen captions demo.openscreen --min-words 2 --max-words 7
@@ -165,7 +165,8 @@ openscreen export demo.openscreen -o demo.mp4   # captions are burned into the v
 ```
 
 - `--min-words` und `--max-words` legen die Wörter pro Untertitel fest. Erlaubt sind jeweils 1 bis 12, wie im Editor. Standard: 2 und 7.
-- Ein erneuter Lauf ersetzt die Untertitel, die der Befehl vorher hinzugefügt hat. Annotationen, die du selbst hinzugefügt hast, bleiben erhalten.
+- Die Untertitel sind das Transkript, auf das Video gezeichnet. Im Editor gestaltest, korrigierst und übersetzt du sie daher wie alle anderen. Ein erneuter Lauf behält das Transkript und legt nur die Wörter pro Untertitel fest.
+- Das Projekt wird im eigenen Format des Editors gespeichert. Ein Skript, das die Projekt-JSON wie [unten](#example-an-automated-product-demo) gezeigt bearbeitet, tut das vor `captions`, und `pack` liest dieses Format noch nicht.
 - Das Bildschirmvideo des Projekts muss eine Audiospur haben, zum Beispiel aus `record --mic`.
 - Untertitel werden in den Export eingebrannt. Eine Ausgabe als Untertiteldatei gibt es nicht. Siehe [Untertitel](./captions.md).
 
@@ -241,10 +242,7 @@ Ein Skript oder ein Coding-Agent kann eine untertitelte Demo mit Zooms erstellen
 # 1. Record 20 seconds of one window, with narration from the microphone
 openscreen record --window "MyProduct" --mic --duration 20 --project demo.openscreen --json
 
-# 2. Caption the narration on this machine
-openscreen captions demo.openscreen --json
-
-# 3. Add a manual zoom and a text label by editing the project JSON
+# 2. Add a manual zoom and a text label by editing the project JSON
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync("demo.openscreen", "utf8"));
@@ -257,11 +255,14 @@ node -e '
   fs.writeFileSync("demo.openscreen", JSON.stringify(p, null, 2));
 '
 
+# 3. Caption the narration on this machine (this saves the project in the editor's format)
+openscreen captions demo.openscreen --json
+
 # 4. Render, with automatic zooms added on the recorded clicks
 openscreen export demo.openscreen -o demo.mp4 --auto-zoom --json
 ```
 
-In Schritt 3 reicht `depth` von 1 bis 6 (1.25× bis 5×; 3 entspricht 1.8×), und `cx` und `cy` legen die Zoommitte als Anteile des Bildes fest.
+In Schritt 2 reicht `depth` von 1 bis 6 (1.25× bis 5×; 3 entspricht 1.8×), und `cx` und `cy` legen die Zoommitte als Anteile des Bildes fest.
 
 Soll stattdessen eine Text-to-Speech-Engine sprechen, nimmst du ohne `--mic` auf und mischst das Voice-over beim Export hinzu. Jede Engine, die mp3, wav oder m4a schreibt, funktioniert; hier das `say` von macOS:
 

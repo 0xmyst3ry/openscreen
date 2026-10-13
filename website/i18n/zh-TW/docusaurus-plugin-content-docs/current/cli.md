@@ -157,7 +157,7 @@ CLI 匯出的 MP4 一律是 **H.264**，除非以 `--fps` 另行指定，影格�
 
 ### `openscreen captions` {#openscreen-captions}
 
-用 Whisper 在你的電腦上轉錄專案的音訊，然後將字幕標註寫入專案檔。不會上傳任何內容，語言也會自動偵測。與桌面應用程式一樣，第一次執行時會下載一次 Whisper 模型，大小約 264 MB。
+用 Whisper 在你的電腦上轉錄專案的音訊，然後開啟專案的字幕，就像編輯器的字幕窗格一樣。不會上傳任何內容，語言也會自動偵測。與桌面應用程式一樣，第一次執行時會下載一次 Whisper 模型，大小約 264 MB。
 
 ```bash
 openscreen captions demo.openscreen --min-words 2 --max-words 7
@@ -165,7 +165,8 @@ openscreen export demo.openscreen -o demo.mp4   # captions are burned into the v
 ```
 
 - `--min-words` 與 `--max-words` 設定每則字幕的字數。兩者皆可設為 1 到 12，與編輯器相同。預設值：2 與 7。
-- 再次執行會取代它先前加入的字幕。你自己加入的標註會保留。
+- 字幕就是繪製在影片上的逐字稿，因此在編輯器中，你可以像處理其他字幕一樣調整樣式、修正與翻譯。再次執行會保留逐字稿，只設定每則字幕的字數。
+- 專案會以編輯器本身的格式儲存。像[下方](#example-an-automated-product-demo)所示編輯專案 JSON 的腳本，會在 `captions` 之前進行編輯，而且 `pack` 目前還無法讀取這種格式。
 - 專案的螢幕影片必須有音軌，例如用 `record --mic` 錄製的影片。
 - 字幕會燒錄進匯出的影片，不會輸出字幕檔。請參閱[字幕](./captions.md)。
 
@@ -241,10 +242,7 @@ openscreen info demo.openscreen --json
 # 1. Record 20 seconds of one window, with narration from the microphone
 openscreen record --window "MyProduct" --mic --duration 20 --project demo.openscreen --json
 
-# 2. Caption the narration on this machine
-openscreen captions demo.openscreen --json
-
-# 3. Add a manual zoom and a text label by editing the project JSON
+# 2. Add a manual zoom and a text label by editing the project JSON
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync("demo.openscreen", "utf8"));
@@ -257,11 +255,14 @@ node -e '
   fs.writeFileSync("demo.openscreen", JSON.stringify(p, null, 2));
 '
 
+# 3. Caption the narration on this machine (this saves the project in the editor's format)
+openscreen captions demo.openscreen --json
+
 # 4. Render, with automatic zooms added on the recorded clicks
 openscreen export demo.openscreen -o demo.mp4 --auto-zoom --json
 ```
 
-在步驟 3 中，`depth` 的範圍是 1 到 6（1.25× 到 5×；3 代表 1.8×），`cx` 與 `cy` 則以畫面的比例值指定縮放中心的位置。
+在步驟 2 中，`depth` 的範圍是 1 到 6（1.25× 到 5×；3 代表 1.8×），`cx` 與 `cy` 則以畫面的比例值指定縮放中心的位置。
 
 若要改用文字轉語音引擎來配旁白，請在錄影時不要加上 `--mic`，並在匯出時混入旁白。任何能輸出 mp3、wav 或 m4a 的引擎都可以；以下以 macOS 的 `say` 為例：
 

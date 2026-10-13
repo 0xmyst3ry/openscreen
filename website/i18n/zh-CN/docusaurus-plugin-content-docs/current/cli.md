@@ -157,7 +157,7 @@ CLI 导出的 MP4 始终是 **H.264**，除非用 `--fps` 另行指定，帧率�
 
 ### `openscreen captions` {#openscreen-captions}
 
-在你的电脑上用 Whisper 转录项目的音频，然后把字幕标注写入项目文件。不会上传任何内容，语言会自动检测。与桌面应用一样，首次运行时会下载一次约 264 MB 的 Whisper 模型。
+在你的电脑上用 Whisper 转录项目的音频，然后开启项目的字幕，与编辑器的字幕面板一样。不会上传任何内容，语言会自动检测。与桌面应用一样，首次运行时会下载一次约 264 MB 的 Whisper 模型。
 
 ```bash
 openscreen captions demo.openscreen --min-words 2 --max-words 7
@@ -165,7 +165,8 @@ openscreen export demo.openscreen -o demo.mp4   # captions are burned into the v
 ```
 
 - `--min-words` 和 `--max-words` 设置每条字幕的词数。取值范围均为 1 到 12，与编辑器一致。默认值分别为 2 和 7。
-- 再次运行会替换它之前添加的字幕。你自己添加的标注会保留。
+- 字幕就是绘制在视频上的转录文本，因此在编辑器中，你可以像处理其他字幕一样调整它们的样式、更正和翻译它们。再次运行会保留转录文本，只设置每条字幕的词数。
+- 项目会以编辑器自己的格式保存。像[下文](#example-an-automated-product-demo)所示那样编辑项目 JSON 的脚本，会在 `captions` 之前完成编辑，而且 `pack` 目前还不能读取这种格式。
 - 项目的屏幕视频必须带有音轨，例如由 `record --mic` 录制的视频。
 - 字幕会烧录进导出的视频中，不会输出字幕文件。请参阅[字幕](./captions.md)。
 
@@ -241,10 +242,7 @@ openscreen info demo.openscreen --json
 # 1. Record 20 seconds of one window, with narration from the microphone
 openscreen record --window "MyProduct" --mic --duration 20 --project demo.openscreen --json
 
-# 2. Caption the narration on this machine
-openscreen captions demo.openscreen --json
-
-# 3. Add a manual zoom and a text label by editing the project JSON
+# 2. Add a manual zoom and a text label by editing the project JSON
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync("demo.openscreen", "utf8"));
@@ -257,11 +255,14 @@ node -e '
   fs.writeFileSync("demo.openscreen", JSON.stringify(p, null, 2));
 '
 
+# 3. Caption the narration on this machine (this saves the project in the editor's format)
+openscreen captions demo.openscreen --json
+
 # 4. Render, with automatic zooms added on the recorded clicks
 openscreen export demo.openscreen -o demo.mp4 --auto-zoom --json
 ```
 
-在第 3 步中，`depth` 的取值范围是 1 到 6（对应 1.25× 到 5×；3 对应 1.8×），`cx` 和 `cy` 以画面的比例值指定缩放中心的位置。
+在第 2 步中，`depth` 的取值范围是 1 到 6（对应 1.25× 到 5×；3 对应 1.8×），`cx` 和 `cy` 以画面的比例值指定缩放中心的位置。
 
 如果想改用文字转语音引擎来配音，请在录制时不加 `--mic`，然后在导出时混入配音。任何能输出 mp3、wav 或 m4a 的引擎都可以；下面以 macOS 的 `say` 为例：
 
