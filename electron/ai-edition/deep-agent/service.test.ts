@@ -38,7 +38,9 @@ import {
 	anthropicCachingMiddleware,
 	buildSystemPrompt,
 	buildTools,
+	type CursorTelemetryReader,
 	type OpenScreenAgentSink,
+	runDocumentTool,
 	SYSTEM_PROMPT,
 	TOOL_DESCRIPTIONS,
 } from "./service";
@@ -67,9 +69,13 @@ const ARGS: Record<string, unknown> = {
 	setTrim: { trimRangeId: "trim_1", startSec: 1, endSec: 2 },
 	setClipRange: { clipId: "clip_1", sourceStartSec: 0, sourceEndSec: 10 },
 	moveClip: { clipId: "clip_1", beforeClipId: null },
+	insertClip: { assetId: "asset_1", sourceStartSec: 2, sourceEndSec: 4 },
+	duplicateClip: { clipId: "clip_1" },
 	replaceTimeline: { intervals: [{ startSec: 0, endSec: 10 }] },
 	addZoom: { startSec: 1, endSec: 2 },
 	addZooms: { regions: [{ startSec: 1, endSec: 2 }] },
+	// No cursor reader in these tests: the refusal that says it could not look.
+	addAutoZooms: {},
 	setZoom: { zoomId: "zoom_nope" },
 	addSpeed: { startSec: 1, endSec: 2 },
 	setSpeed: { speedId: "speed_nope" },
@@ -705,5 +711,45 @@ describe("what the descriptions say about a zoom's focus", () => {
 		// it hands over a track instead of a list of moments.
 		expect(TOOL_DESCRIPTIONS.addZoom).not.toMatch(/focus (?:should|must|has to|needs to)/i);
 		expect(SYSTEM_PROMPT).not.toMatch(/cursorAnchor/);
+	});
+});
+
+describe("addAutoZooms reads the clicks through the runtime's cursor reader", () => {
+	const click = (timeMs: number, interactionType?: string) => ({
+		timeMs,
+		cx: 0.4,
+		cy: 0.6,
+		...(interactionType ? { interactionType } : {}),
+	});
+
+	it("plans on the recorded clicks, as the timeline wand does", async () => {
+		const reads: string[] = [];
+		const cursor: CursorTelemetryReader = {
+			read: async ({ assetId, originalPath }) => {
+				reads.push(`${assetId}:${originalPath}`);
+				return {
+					status: "ok",
+					assetId,
+					samples: [click(3700), click(4000, "click"), click(4300, "mouseup"), click(20000)],
+				};
+			},
+		};
+		const result = await runDocumentTool(fixtureDocument(), "addAutoZooms", {}, true, { cursor });
+		expect(reads).toEqual(["asset_1:/tmp/rec.mp4"]);
+		expect(result.ok).toBe(true);
+		const payload = JSON.parse(result.resultJson);
+		expect(payload).toMatchObject({ added: 1, telemetry: { asset_1: "ok" } });
+		expect(result.document?.zoomRanges).toMatchObject([{ focusMode: "auto" }]);
+	});
+
+	it("reports a reader that throws as a read it could not make", async () => {
+		const cursor: CursorTelemetryReader = {
+			read: async () => {
+				throw new Error("disk gone");
+			},
+		};
+		const result = await runDocumentTool(fixtureDocument(), "addAutoZooms", {}, true, { cursor });
+		expect(result.ok).toBe(false);
+		expect(result.resultJson).toContain("could not be read");
 	});
 });

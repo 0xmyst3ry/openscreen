@@ -32,12 +32,15 @@ import {
 import { createId } from "../../src/lib/ai-edition/document/ids";
 import { resolveAspectRatioValue } from "../../src/lib/ai-edition/document/outputFormat";
 import {
+	duplicateClip,
+	insertAssetClip,
 	moveClip,
 	planTimelineReplacement,
 	type RegionKind,
 	removeClip,
 	removeRegion,
 	replaceTimeline,
+	setClipCrop,
 	setClipSourceRange,
 } from "../../src/lib/ai-edition/document/timeline";
 import { setDocumentWordText } from "../../src/lib/ai-edition/document/transcript";
@@ -45,9 +48,11 @@ import {
 	type AxcutAnnotationRegion,
 	type AxcutDocument,
 	blurDataSchema,
+	clipCropRegionSchema,
 	figureDataSchema,
 } from "../../src/lib/ai-edition/schema";
 import { getEditorSettings } from "../../src/lib/ai-edition/store/editorSettings";
+import { appendAutoZoomSuggestions } from "../../src/lib/ai-edition/timeline/apply-auto-zooms";
 import { hasAnyClipWithCamera } from "../../src/lib/ai-edition/timeline/camera";
 import { isGeneratedAssetId } from "../../src/lib/ai-edition/timeline/clip-parts";
 import {
@@ -72,6 +77,7 @@ import {
 	ZOOM_DEPTH_LEGEND,
 	zoomLevelFor,
 } from "../../src/lib/ai-edition/timeline/zoom-scale";
+import type { AutoZoomSuggestion } from "../../src/lib/ai-edition/timeline/zoom-suggestions";
 import {
 	chainedPans,
 	transitionCutsMs,
@@ -664,11 +670,37 @@ export const setTrimArgs = z.object({
 	endSec: secondsSchema,
 });
 
+/** A crop the frame can hold: a non-empty rectangle inside it, in 0–1 fractions. */
+const cropRegionArgs = clipCropRegionSchema.refine(
+	(c) => c.width > 0 && c.height > 0 && c.x + c.width <= 1 + 1e-6 && c.y + c.height <= 1 + 1e-6,
+	"cropRegion must be a non-empty rectangle inside the frame: width and height above 0, x + width and y + height at most 1.",
+);
+
 export const setClipRangeArgs = z.object({
 	clipId: z.string().min(1),
-	sourceStartSec: secondsSchema,
-	sourceEndSec: secondsSchema,
+	sourceStartSec: secondsSchema.optional(),
+	sourceEndSec: secondsSchema.optional(),
+	cropRegion: cropRegionArgs
+		.nullable()
+		.optional()
+		.describe(
+			"The part of the source frame this clip shows, as 0–1 fractions of it ({x, y, width, height}); null shows the whole frame again.",
+		),
 });
+
+/** `beforeClipId`, never an index, for the reason `moveClipArgs` gives. */
+export const insertClipArgs = z.object({
+	assetId: z.string().min(1),
+	beforeClipId: z.string().min(1).nullish(),
+	sourceStartSec: secondsSchema.default(0),
+	sourceEndSec: secondsSchema.optional(),
+});
+
+export const duplicateClipArgs = z.object({
+	clipId: z.string().min(1),
+});
+
+export const addAutoZoomsArgs = z.object({});
 
 export const setAspectRatioArgs = z.object({
 	aspectRatio: z
@@ -1016,9 +1048,12 @@ export const OPENSCREEN_TOOL_NAMES = [
 	"setTrim",
 	"setClipRange",
 	"moveClip",
+	"insertClip",
+	"duplicateClip",
 	"replaceTimeline",
 	"addZoom",
 	"addZooms",
+	"addAutoZooms",
 	"setZoom",
 	"addSpeed",
 	"setSpeed",
@@ -1091,8 +1126,11 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"setTrim",
 	"setClipRange",
 	"moveClip",
+	"insertClip",
+	"duplicateClip",
 	"replaceTimeline",
 	"addZoom",
+	"addAutoZooms",
 	"setZoom",
 	"addSpeed",
 	"setSpeed",
@@ -1301,6 +1339,8 @@ export function documentSnapshotForModel(
 			sourceEndSec: c.sourceEndSec ?? null,
 			timelineStartSec: c.timelineStartSec,
 			timelineEndSec: c.timelineEndSec,
+			// Only when set: absent is the whole frame.
+			...(c.cropRegion ? { cropRegion: c.cropRegion } : {}),
 		})),
 		trimRanges: document.timeline.trimRanges.map((s) => ({
 			id: s.id,
@@ -1522,6 +1562,16 @@ export interface AgentToolOptions {
 	/** Whether this machine can cut out the camera background, asked only by the two tools that
 	 *  report it. Absent where nothing can ask the compositor: reported as not checked. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** `addAutoZooms`' plan, made by the async wrapper from the recorded clicks. Absent means
+	 *  no cursor reader is wired here, which the tool reports as "could not look". */
+	autoZooms?: AutoZoomPlan;
+}
+
+/** What the timeline wand would add, and what each recording's cursor read gave. */
+export interface AutoZoomPlan {
+	suggestions: AutoZoomSuggestion[];
+	/** assetId → the read's verdict, for every video asset with a clip on the timeline. */
+	telemetry: Record<string, CursorTelemetryLoad["status"]>;
 }
 
 /**
@@ -2284,28 +2334,208 @@ export function executeAgentTool(
 		case "setClipRange": {
 			const parsed = setClipRangeArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
-			const { clipId } = parsed.data;
-			if (!document.timeline.clips.some((c) => c.id === clipId)) {
-				return failure(`Unknown clip: ${clipId}`);
+			const { clipId, cropRegion } = parsed.data;
+			const clip = document.timeline.clips.find((c) => c.id === clipId);
+			if (!clip) return failure(`Unknown clip: ${clipId}. ${clipRoster(document)}`);
+			const ranged =
+				parsed.data.sourceStartSec !== undefined || parsed.data.sourceEndSec !== undefined;
+			if (!ranged && cropRegion === undefined) {
+				return failure(
+					"Pass sourceStartSec / sourceEndSec, cropRegion, or both: nothing to change.",
+				);
 			}
-			const sourceStartSec = Math.min(parsed.data.sourceStartSec, parsed.data.sourceEndSec);
-			const sourceEndSec = Math.max(parsed.data.sourceStartSec, parsed.data.sourceEndSec);
-			// One shared mutator with the modale + op dispatcher: recomputes the clip's
-			// width from the new source window AND clamps/drops the anchored pills the
-			// trim removed. Hand-rolling it here is exactly what left this façade orphaning
-			// stale pills the other two didn't.
-			const next = setClipSourceRange(document, clipId, sourceStartSec, sourceEndSec);
+			const start = parsed.data.sourceStartSec ?? clip.sourceStartSec;
+			const end =
+				parsed.data.sourceEndSec ??
+				clip.sourceEndSec ??
+				document.assets.find((a) => a.id === clip.assetId)?.durationSec;
+			if (end === undefined) {
+				return failure(`Clip ${clipId} has no known end yet: pass sourceEndSec too.`);
+			}
+			const sourceStartSec = Math.min(start, end);
+			const sourceEndSec = Math.max(start, end);
+			// The clip's Edit modal, as one document: the range through the one shared mutator
+			// (which recomputes the clip's width and clamps / drops the anchored pills the new
+			// window no longer covers), then the crop. `null` clears it, and so does the whole
+			// frame: an untouched clip does not store the identity region.
+			const wholeFrame =
+				cropRegion?.x === 0 &&
+				cropRegion.y === 0 &&
+				cropRegion.width === 1 &&
+				cropRegion.height === 1;
+			const afterRange = ranged
+				? setClipSourceRange(document, clipId, sourceStartSec, sourceEndSec)
+				: document;
+			const next =
+				cropRegion === undefined
+					? afterRange
+					: setClipCrop(afterRange, clipId, wholeFrame ? null : cropRegion);
 			const dropped = droppedByEdit(document, next);
 			const casualties = dropped.droppedModifierIds.length + dropped.droppedTrimIds.length;
+			const after = next.timeline.clips.find((c) => c.id === clipId);
 			return {
 				ok: true,
 				document: next,
-				resultJson: JSON.stringify({ clipId, sourceStartSec, sourceEndSec, ...dropped }),
+				resultJson: JSON.stringify({
+					clipId,
+					sourceStartSec,
+					sourceEndSec,
+					cropRegion: after?.cropRegion ?? null,
+					// Its media now continues the clip before it, with the same framing: one clip.
+					...(after
+						? {}
+						: { joinedIntoNeighbour: true, clipOrder: next.timeline.clips.map((c) => c.id) }),
+					...dropped,
+				}),
 				summary:
-					`trimmed clip to ${formatSec(sourceStartSec)} – ${formatSec(sourceEndSec)}` +
+					(ranged
+						? `trimmed clip to ${formatSec(sourceStartSec)} – ${formatSec(sourceEndSec)}`
+						: `cropped clip ${clipId}`) +
+					(ranged && cropRegion !== undefined ? ", cropped" : "") +
 					(casualties > 0
 						? ` — dropped ${[...dropped.droppedModifierIds, ...dropped.droppedTrimIds].join(", ")}`
 						: ""),
+			};
+		}
+
+		case "insertClip": {
+			const parsed = insertClipArgs.safeParse(args);
+			if (!parsed.success) return failure(parsed.error.message);
+			const { assetId } = parsed.data;
+			const asset = document.assets.find((a) => a.id === assetId);
+			const footage = document.assets.filter(
+				(a) => a.kind === "video" && !isGeneratedAssetId(a.id),
+			);
+			const roster = footage.length
+				? ` Footage in this project: ${footage.map((a) => `${a.id} (${a.label})`).join(", ")}.`
+				: " This project has no footage to place.";
+			if (!asset) return failure(`Unknown asset: ${assetId}.${roster}`);
+			if (asset.kind === "audio") {
+				return failure(
+					`Asset ${assetId} is audio, not footage: lay it over the recording with addAudio.`,
+				);
+			}
+			if (isGeneratedAssetId(assetId)) {
+				return failure(`Asset ${assetId} is generated media, not footage you can place.${roster}`);
+			}
+			const beforeClipId = parsed.data.beforeClipId ?? null;
+			const clips = document.timeline.clips;
+			const index =
+				beforeClipId === null ? clips.length : clips.findIndex((c) => c.id === beforeClipId);
+			if (index < 0) return failure(`Unknown clip: ${beforeClipId}. ${clipRoster(document)}`);
+			const durationSec = asset.durationSec;
+			const requestedEnd = parsed.data.sourceEndSec ?? durationSec;
+			if (requestedEnd === undefined) {
+				return failure(
+					`The length of ${assetId} is not known yet: pass sourceEndSec, in its source seconds, to say where the clip ends.`,
+				);
+			}
+			const bound = (sec: number) => (durationSec === undefined ? sec : Math.min(sec, durationSec));
+			const sourceStartSec = bound(parsed.data.sourceStartSec);
+			const sourceEndSec = bound(requestedEnd);
+			if (sourceEndSec <= sourceStartSec) {
+				return failure(
+					`The clip would be empty: ${formatSec(sourceStartSec)} – ${formatSec(sourceEndSec)} of ${assetId}` +
+						(durationSec === undefined ? "." : `, which lasts ${formatSec(durationSec)}.`),
+				);
+			}
+			const clipId = createId("clip");
+			// The media panel's drop, through the same mutator.
+			const next = insertAssetClip(document, index, {
+				id: clipId,
+				assetId,
+				sourceStartSec,
+				sourceEndSec,
+				origin: "agent",
+				reason: "",
+			});
+			const placed = next.timeline.clips.find((c) => c.id === clipId);
+			return {
+				ok: true,
+				document: next,
+				resultJson: JSON.stringify({
+					clipId: placed ? clipId : null,
+					assetId,
+					sourceStartSec,
+					sourceEndSec,
+					...(placed
+						? { timelineStartSec: placed.timelineStartSec, timelineEndSec: placed.timelineEndSec }
+						: // Its media continues the clip before it, with the same framing: one clip.
+							{ joinedIntoNeighbour: true }),
+					clipOrder: next.timeline.clips.map((c) => c.id),
+				}),
+				summary:
+					`inserted ${asset.label} ${formatSec(sourceStartSec)} – ${formatSec(sourceEndSec)} ` +
+					(beforeClipId ? `before ${beforeClipId}` : "at the end"),
+			};
+		}
+
+		case "duplicateClip": {
+			const parsed = duplicateClipArgs.safeParse(args);
+			if (!parsed.success) return failure(parsed.error.message);
+			const { clipId } = parsed.data;
+			const index = document.timeline.clips.findIndex((c) => c.id === clipId);
+			if (index < 0) return failure(`Unknown clip: ${clipId}. ${clipRoster(document)}`);
+			// The editor's Duplicate: the copy right after the original, with its own copy of
+			// the original's cuts and anchored effects.
+			const next = duplicateClip(document, clipId, "agent", "");
+			const copy = next.timeline.clips[index + 1];
+			return {
+				ok: true,
+				document: next,
+				resultJson: JSON.stringify({
+					clipId: copy.id,
+					of: clipId,
+					timelineStartSec: copy.timelineStartSec,
+					timelineEndSec: copy.timelineEndSec,
+					clipOrder: next.timeline.clips.map((c) => c.id),
+					copiedTrimIds: next.timeline.trimRanges
+						.filter((t) => t.clipId === copy.id)
+						.map((t) => t.id),
+				}),
+				summary: `duplicated ${clipId}`,
+			};
+		}
+
+		case "addAutoZooms": {
+			const parsed = addAutoZoomsArgs.safeParse(args);
+			if (!parsed.success) return failure(parsed.error.message);
+			if (document.timeline.clips.length === 0) {
+				return failure("The timeline has no clips, so there is nothing to zoom on.");
+			}
+			const plan = options?.autoZooms;
+			const reads = Object.values(plan?.telemetry ?? {});
+			if (!plan || (reads.length > 0 && reads.every((status) => status === "unavailable"))) {
+				return failure(
+					"The recorded clicks could not be read from here, so no zoom was planned. This says nothing about whether the recording has any: report the limit as yours.",
+				);
+			}
+			// The timeline wand's write: zooms on the clicks, clear of the zooms already there.
+			const next = appendAutoZoomSuggestions(document, plan.suggestions);
+			const before = new Set(document.zoomRanges.map((z) => z.id));
+			const added = coalesceForAgent(next.zoomRanges).filter((z) => !before.has(z.id));
+			return {
+				ok: true,
+				...(added.length ? { document: next } : {}),
+				resultJson: JSON.stringify({
+					added: added.length,
+					zooms: added.map((z) => ({
+						id: z.id,
+						startSec: roundSec(z.startMs),
+						endSec: roundSec(z.endMs),
+						renderedScale: effectiveZoomScale(z),
+						focus: z.focus,
+					})),
+					telemetry: plan.telemetry,
+					...(added.length
+						? cutTransitionsReport(document, next)
+						: {
+								note: "No click on the timeline calls for a new zoom: none was recorded, each one is already under a zoom, or they fall in the first seconds or on the stop.",
+							}),
+				}),
+				...(added.length
+					? { summary: `added ${added.length} automatic zoom${added.length === 1 ? "" : "s"}` }
+					: {}),
 			};
 		}
 
@@ -2980,7 +3210,7 @@ export function executeAgentTool(
 			}
 			if (asset.kind !== "audio") {
 				return failure(
-					`Asset ${assetId} is video, not audio. addAudio plays an imported audio file over the recording; to place footage use replaceTimeline.`,
+					`Asset ${assetId} is video, not audio. addAudio plays an imported audio file over the recording; to place footage on the timeline use insertClip.`,
 				);
 			}
 			const durationSec = asset.durationSec ?? 0;
