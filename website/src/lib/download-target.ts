@@ -1,4 +1,4 @@
-import { type AssetKind, findAsset, type LatestRelease } from "./release.ts";
+import { ASSET_PATTERNS, type AssetKind, findAsset, type LatestRelease } from "./release.ts";
 
 export const STORE_URL = "https://apps.microsoft.com/detail/9MXQ1HQJL5G5";
 // The endpoint used by Microsoft's own Store badge in direct-install mode.
@@ -107,4 +107,22 @@ export async function browserDownloadTarget(
 export function directDownloadUrl(target: DownloadTarget, release: LatestRelease): string | null {
 	if (target.os === "windows") return STORE_INSTALLER_URL;
 	return target.kind ? (findAsset(release, target.kind)?.url ?? null) : null;
+}
+
+export type DownloadClick = {
+	kind: AssetKind | "store" | "other";
+	version: string | null;
+	file: string | null;
+};
+
+/** What a link downloads, for the analytics event, or null when it downloads nothing. */
+export function downloadClick(href: string): DownloadClick | null {
+	if (href.startsWith(STORE_INSTALLER_URL)) return { kind: "store", version: null, file: null };
+	const match = /\/releases\/download\/([^/]+)\/([^/?#]+)/.exec(href);
+	if (!match) return null;
+	const file = decodeURIComponent(match[2]);
+	const kind = (Object.keys(ASSET_PATTERNS) as AssetKind[]).find((k) =>
+		ASSET_PATTERNS[k].test(file),
+	);
+	return { kind: kind ?? "other", version: match[1], file };
 }
