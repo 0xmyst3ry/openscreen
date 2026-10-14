@@ -628,8 +628,6 @@ export const shaderEffectRangeSchema = endGteStart(
 		values: z.record(z.string(), shaderEffectValueSchema).default({}),
 		// What the effect transforms: the picture under the texts, the texts alone, or both.
 		target: z.enum(["image", "text", "both"]).default("image"),
-		// Application order, lane 0 first, closest to the content. No overlap within a lane.
-		lane: z.number().int().min(0).max(7).default(0),
 	}),
 	"endMs",
 	"startMs",

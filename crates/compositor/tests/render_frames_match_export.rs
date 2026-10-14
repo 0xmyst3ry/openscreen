@@ -50,7 +50,7 @@ fn scene_json(source: &str) -> String {
         "cropByClip": [null, null],
         "output": {{"width":640,"height":360,"fps":null}},
         "shaderEffects": [{{
-            "clipIndex": 1, "startSec": 6.0, "endSec": 20.0, "target": "image", "lane": 0, "contract": 1,
+            "clipIndex": 1, "startSec": 6.0, "endSec": 20.0, "target": "image", "contract": 1,
             "code": "fn effect(uv: vec2<f32>) -> vec4<f32> {{ let c = frame(uv); return vec4<f32>(c.rgb * (0.6 + 0.4 * sin(ctx.time * 3.0)), 1.0); }}",
             "params": [], "values": {{}}
         }}]

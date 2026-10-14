@@ -779,7 +779,6 @@ describe("useTimeline.clearTimeline", () => {
 							effectId: "fx_1",
 							values: {},
 							target: "image",
-							lane: 0,
 						},
 					],
 				},
