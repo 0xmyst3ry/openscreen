@@ -120,6 +120,8 @@ function renderTimeline(
 		annotationRegions: [annotation],
 		speedRegions: [],
 		cameraFullscreenRegions: [],
+		shaderEffectRanges: [],
+		shaderEffects: [],
 		zoomRegions: [],
 		trimRanges: [],
 		hasEditRegions: true,
@@ -357,6 +359,27 @@ describe("V4Timeline lane pills", () => {
 			selection: { kind: "annotation", id: "ann2" },
 		});
 		expect(pill.className).toContain("lanePillSel");
+	});
+});
+
+describe("V4Timeline effects lane", () => {
+	// CSS modules hash the class to `_tlLane_<hash>` under Vitest.
+	const lanes = () =>
+		Array.from(document.querySelectorAll("div")).filter((el) =>
+			Array.from(el.classList).some((c) => /^_tlLane_/.test(c)),
+		).length;
+
+	it("shows only while the project has an effect, and names the pill after it", () => {
+		renderTimeline();
+		const without = lanes();
+		cleanup();
+
+		renderTimeline(undefined, undefined, undefined, undefined, {
+			shaderEffects: [{ id: "fx_1", name: "Dim" }],
+			shaderEffectRanges: [{ id: "fxr_1", startMs: 20_000, endMs: 21_000, effectId: "fx_1" }],
+		});
+		expect(lanes()).toBe(without + 1);
+		expect(screen.getByTitle("Dim").className).toContain("laneShaderEffect");
 	});
 });
 
@@ -700,6 +723,8 @@ describe("V4Timeline audio lane drag", () => {
 			annotationRegions: [],
 			speedRegions: [],
 			cameraFullscreenRegions: [],
+			shaderEffectRanges: [],
+			shaderEffects: [],
 			zoomRegions: [],
 			trimRanges: [],
 			selection: null,
