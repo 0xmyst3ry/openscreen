@@ -2,6 +2,7 @@ import type {
 	AxcutDocument,
 	AxcutShaderEffect,
 	AxcutShaderEffectParam,
+	AxcutShaderEffectRange,
 	AxcutShaderEffectValue,
 } from "./schema";
 
@@ -150,4 +151,27 @@ export function shaderEffectCostAdvice(tier: ShaderEffectTier, spanSec: number):
 	const lighter =
 		tier === "very-heavy" ? "heavy or lighter" : tier === "heavy" ? "medium or light" : "light";
 	return `${tier} over ${spanSec.toFixed(1)} s: this tier is meant for at most ${TIER_SPAN_SEC[tier]} s; for a region this long, aim ${lighter}. It is a recommendation, not a limit.`;
+}
+
+/**
+ * `document` with a pasted effect region (its fragments, already anchored) and its definition,
+ * recreated when the project does not have it: a region copied from another project. `null`
+ * when the region would overlap an effect already there, since one effect runs at a time.
+ */
+export function withPastedShaderEffect(
+	document: AxcutDocument,
+	definition: AxcutShaderEffect,
+	fragments: AxcutShaderEffectRange[],
+): AxcutDocument | null {
+	const ranges = document.shaderEffectRanges ?? [];
+	const overlaps = fragments.some((f) =>
+		ranges.some((r) => r.startMs < f.endMs && r.endMs > f.startMs),
+	);
+	if (overlaps) return null;
+	const known = (document.shaderEffects ?? []).some((e) => e.id === definition.id);
+	return {
+		...document,
+		shaderEffects: known ? document.shaderEffects : [...(document.shaderEffects ?? []), definition],
+		shaderEffectRanges: [...ranges, ...fragments],
+	};
 }
