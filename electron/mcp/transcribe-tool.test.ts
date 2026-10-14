@@ -191,6 +191,29 @@ describe("transcribe, on a project's file", () => {
 		await second;
 	});
 
+	it("runs no Whisper for a project deleted while it waited", async () => {
+		await projects.saveProject(fixtureDocument("proj_1"));
+		await projects.saveProject(fixtureDocument("proj_2"));
+		const running: Array<(response: SttTranscribeResponse) => void> = [];
+		const { run, transcribe } = runnerWith(
+			() =>
+				new Promise((resolve) => {
+					running.push(resolve);
+				}),
+		);
+		const first = run(TRANSCRIBE_TOOL, { projectId: "proj_1" });
+		await vi.waitFor(() => expect(running).toHaveLength(1));
+		const second = run(TRANSCRIBE_TOOL, { projectId: "proj_2" });
+		await projects.deleteProject("proj_2");
+		running.shift()?.(SPEECH);
+		await first;
+
+		const result = await second;
+		expect(result.isError).toBe(true);
+		expect(result.content[0]).toMatchObject({ text: expect.stringContaining("deleted") });
+		expect(transcribe).toHaveBeenCalledTimes(1);
+	});
+
 	it("survives a restore to a checkpoint made before it", async () => {
 		await projects.saveProject(fixtureDocument("proj_1"));
 		const { run } = runnerWith(async () => SPEECH);

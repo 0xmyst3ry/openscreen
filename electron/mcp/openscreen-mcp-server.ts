@@ -687,7 +687,11 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 			const current = await deps.projects
 				.getProjectForUpdate(targetId)
 				.then((read) => read.document)
-				.catch(() => document);
+				.catch((error) => {
+					// Deleted while it waited: no Whisper on a file nobody owns any more.
+					if (error instanceof DocumentNotFoundError) throw error;
+					return document;
+				});
 			const media = current.assets.find((a) => a.id === asset.id);
 			if (!media) throw new Error(`Asset ${asset.id} was removed from the project.`);
 			return whisper({
@@ -701,6 +705,12 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 		try {
 			response = await started;
 		} catch (error) {
+			if (error instanceof DocumentNotFoundError) {
+				return textResult(
+					`Project ${targetId} was deleted before its transcription started.`,
+					true,
+				);
+			}
 			const failure = classifyTranscriptionError(error);
 			// Remembered on the asset as the editor remembers it: best effort, the answer stands.
 			await landEdit(targetId, editsAllowed, async (current) => {
