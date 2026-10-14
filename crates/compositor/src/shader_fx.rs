@@ -226,6 +226,17 @@ pub fn analyze(user: &str, params: &[ShaderParamDecl]) -> Result<Parsed, String>
     )
     .validate(&module)
     .map_err(|e| e.emit_to_string(&src))?;
+    // Les bindings sont ceux du prélude, et eux seuls : chaque backend lie ces quatre-là. Linux
+    // valide le pipeline contre ce layout, et une erreur de validation wgpu y fait paniquer.
+    for (handle, var) in module.global_variables.iter() {
+        let name = var.name.as_deref().unwrap_or("?");
+        if var.binding.is_some() && !["fx_frame", "fx_sampler", "ctx", "params"].contains(&name) {
+            let line = module.global_variables.get_span(handle).location(&src).line_number;
+            return Err(format!(
+                "`{name}` at line {line}: an effect declares no binding of its own, it reads frame(), ctx and params"
+            ));
+        }
+    }
     let entry = module
         .entry_points
         .iter()
@@ -657,13 +668,23 @@ pub fn spawn_compile(effect: &SceneShaderEffect) -> std::sync::mpsc::Receiver<Re
     rx
 }
 
+/// Le SPIR-V que wgpu tirera du même module pour Vulkan. Le compositeur Linux passe le WGSL à
+/// wgpu, qui refait cette traduction lui-même : celle-ci ne sert qu'à la vérifier d'avance.
+#[cfg(target_os = "linux")]
+fn to_spirv(parsed: &Parsed) -> Result<Vec<u32>, String> {
+    naga::back::spv::write_vec(&parsed.module, &parsed.info, &naga::back::spv::Options::default(), None)
+        .map_err(|e| e.to_string())
+}
+
 /// Ce que l'outil de l'agent demande avant d'accepter un code : la validation, la compilation
 /// réelle pour le backend de la machine quand elle existe, et le palier.
 pub fn check_for_agent(code: &str, params: &[ShaderParamDecl]) -> Result<EffectReport, String> {
-    let report = analyze(code, params)?.report;
+    let parsed = analyze(code, params)?;
     #[cfg(windows)]
     compile_dxbc(code, params)?;
-    Ok(report)
+    #[cfg(target_os = "linux")]
+    to_spirv(&parsed)?;
+    Ok(parsed.report)
 }
 
 /// `check_for_agent`, les paramètres reçus en JSON (`[{ "name", "type" }, …]`) depuis l'addon.
@@ -723,6 +744,21 @@ mod tests {
     #[test]
     fn an_effect_without_the_entry_function_is_refused() {
         assert!(analyze("fn other() {}", &[]).is_err());
+    }
+
+    #[test]
+    fn an_effect_declares_no_binding_of_its_own() {
+        let code = "@group(0) @binding(4) var extra: texture_2d<f32>;\n\
+                    fn effect(uv: vec2<f32>) -> vec4<f32> { return textureLoad(extra, vec2<i32>(0), 0); }\n";
+        let err = analyze(code, &[]).err().expect("refusé");
+        assert!(err.contains("`extra` at line 1"), "{err}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_valid_effect_becomes_spirv() {
+        let parsed = analyze(VIGNETTE, &[decl("strength", ShaderParamType::Number)]).expect("analyze");
+        assert!(!to_spirv(&parsed).expect("spirv").is_empty());
     }
 
     #[test]
