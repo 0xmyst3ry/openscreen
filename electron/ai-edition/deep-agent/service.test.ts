@@ -83,6 +83,13 @@ const ARGS: Record<string, unknown> = {
 	setAnnotation: { annotationId: "ann_nope" },
 	addCameraFullscreen: { startSec: 1, endSec: 2 },
 	setCameraFullscreen: { cameraFullscreenId: "cam_nope" },
+	// No validator in these tests: stored unchecked, and the result says so.
+	addShaderEffect: {
+		startSec: 1,
+		endSec: 2,
+		code: "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }",
+	},
+	setShaderEffect: { shaderEffectId: "shaderfx_nope" },
 	// The fixture has no `kind: "audio"` asset, so these exercise the refusal branch —
 	// the honest one to pin: the agent can place imported audio, never import it.
 	addAudio: { assetId: "audio_nope", startSec: 1, endSec: 2 },

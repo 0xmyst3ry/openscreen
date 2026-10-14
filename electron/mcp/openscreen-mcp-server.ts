@@ -170,6 +170,8 @@ export interface McpToolDeps extends ImportMediaDeps {
 	cursor?: CursorTelemetryReader;
 	/** Whether this machine can cut out the camera background; absent where nothing can ask. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** Compiles a shader effect's WGSL; absent where nothing can ask. */
+	validateShaderEffect?: (code: string) => string | null;
 	/** The main process's on-device Whisper (`SttManager.transcribe`). Absent: no transcribe tool. */
 	transcribe?(request: SttTranscribeRequest): Promise<SttTranscribeResponse>;
 	version: string;
@@ -574,6 +576,7 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 			cursor: deps.cursor,
 			availableByAssetId,
 			cameraSegmentation: deps.cameraSegmentation,
+			validateShaderEffect: deps.validateShaderEffect,
 		});
 	}
 

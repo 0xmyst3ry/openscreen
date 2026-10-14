@@ -41,6 +41,7 @@ import {
 	resolvePlaybackSegments,
 } from "@/lib/ai-edition/document/timeline";
 import type { AxcutAudioTrack, AxcutClip, AxcutDocument } from "@/lib/ai-edition/schema";
+import { readShaderEffects } from "@/lib/ai-edition/shaderEffects";
 import { getEditorSettings } from "@/lib/ai-edition/store/editorSettings";
 import { assetCameraSource } from "@/lib/ai-edition/timeline/camera";
 import { resolveClipSourceEndSec } from "@/lib/ai-edition/timeline/clipDuration";
@@ -118,6 +119,16 @@ export interface SceneZoomRegion {
 	underTrim?: boolean;
 	/** When true, cursor is hidden during this zoom region. */
 	hideCursor?: boolean;
+}
+
+/** A shader effect an agent wrote (`legacyEditor.shaderEffects`), projected onto each clip's
+ *  source time like the other regions. Spike: see `crates/compositor/src/shader_fx.rs`. */
+export interface SceneShaderEffect {
+	startSec: number;
+	endSec: number;
+	clipIndex?: number;
+	code: string;
+	params: number[];
 }
 
 /** A "Full Camera" timeline region (from `legacyEditor.cameraFullscreenRegions`). Times in seconds. */
@@ -479,6 +490,8 @@ export interface SceneDescription {
 	 * source-time span after `projectRegionsToSourceTime`). Empty when none set.
 	 */
 	cameraFullscreenRegions: SceneCameraFullscreenRegion[];
+	/** Shader effects, omitted when there are none. */
+	shaderEffects?: SceneShaderEffect[];
 	/**
 	 * Speed regions projected onto each clip's source time (one entry per
 	 * source-time span after `projectRegionsToSourceTime`). Empty when none set.
@@ -1085,6 +1098,13 @@ export function buildSceneDescription(
 		() => createId("speed"),
 	);
 
+	const projectedShaderEffects = projectRegionsToSource(
+		readShaderEffects(document),
+		visibleClips,
+		document.timeline.clips,
+		() => createId("shaderfx"),
+	).filter((region) => !region.underTrim);
+
 	// Webcam rect, single source of truth between preview & native :
 	// on résout le rect AVEC LA MÊME maths que `PreviewCanvas.computeCompositeLayout` et on
 	// l'envoie au natif dans `layout.webcamRect` (fractions du cadre de sortie). Le natif le
@@ -1470,6 +1490,17 @@ export function buildSceneDescription(
 				clipIndex: region.clipIndex,
 			})),
 		cropByClip,
+		...(projectedShaderEffects.length > 0
+			? {
+					shaderEffects: projectedShaderEffects.map((region) => ({
+						startSec: region.startMs / 1000,
+						endSec: region.endMs / 1000,
+						clipIndex: region.clipIndex,
+						code: region.code,
+						params: region.params,
+					})),
+				}
+			: {}),
 		output: { ...pickOutputDims(document, settings.aspectRatio), fps: null },
 		// Omitted rather than sent as `{mode:"none"}`: the Rust side defaults the field, and
 		// every project without a webcam effect would otherwise carry it for nothing.

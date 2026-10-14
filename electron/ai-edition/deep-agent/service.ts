@@ -55,6 +55,7 @@ import {
 	addAudioArgs,
 	addAutoZoomsArgs,
 	addCameraFullscreenArgs,
+	addShaderEffectArgs,
 	addSpeedArgs,
 	addTrimArgs,
 	addTrimsArgs,
@@ -80,6 +81,7 @@ import {
 	setAudioArgs,
 	setCameraFullscreenArgs,
 	setClipRangeArgs,
+	setShaderEffectArgs,
 	setSpeedArgs,
 	setTrimArgs,
 	setWordTextArgs,
@@ -256,6 +258,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 		'Change the project\'s look: pass only the settings to change, named as getCurrentDocument returns them under `settings`. Background: wallpaper (a bundled path from settingsContext.bundledWallpapers, a CSS colour or gradient, or a base64 PNG/JPEG data URL; never a file path or web URL; an embedded image reads back as a marker, leave the key out to keep it), wallpaperMotion (moves a gradient or image only), backgroundBlur 0–1. Frame: aspectRatio ("auto", a preset, or an originalAspectRatios token; a fixed format picked for the first time fills the frame with a window that follows the cursor, which formatFollowCursor turns off when settingsContext.formatFill is "available"), padding 0–100 %, borderRadius 0–64 px, shadowIntensity 0–1, frame (none, window, laptop, phone, monitor) and frameTheme (light, dark), motionBlurAmount 0–1, depthOfField (blurs 3D-tilted zooms only). Camera: webcamLayoutPreset, webcamMirrored, webcamReactiveZoom (shrinks on zoom), webcamMaskShape (square or rectangle, the camera\'s own proportions; an untouched roundness follows it), webcamRoundness 0–1, webcamSizePreset 15–60, webcamAnchor (a corner or an edge middle), webcamCropRegion (the framing: a square share of the picture, width = height ≥ 1/3) and webcamCropPan (where that window sits, 0–1 per axis, 0.5 centred), webcamBackgroundMode (none, transparent, blur, custom: needs settingsContext.cameraSegmentation ready), webcamBlurIntensity 0–1, webcamWallpaper (as wallpaper). Cursor, under `cursor`: show, autoHide, theme (settingsContext.cursorThemes), asArrow (the recorded cursor kinds drawn as the arrow instead), size 1.5–6, smoothing 0–1, motionBlur 0–1, clickBounce 0–2, clickImpact, clickSound (only heard when the take recorded clicks) and clickSoundGainDb −24–0, model3d. Also autoFocusAll (every zoom follows the cursor) and audioGainDb −12–12 dB, the master volume. A value out of range or a key not listed is refused with the reason, and nothing changes. The result lists what was applied, including what the editor changes with it, and `inactive` for any of those the current state leaves without effect.',
 	addCameraFullscreen:
 		"Add a camera-fullscreen region over a span of the edited timeline (virtual seconds): the webcam fills the frame for that span. This only does something when the footage under that span comes from an asset with a linked webcam — check assets[].hasCameraTrack (or hasAnyCamera) in getCurrentDocument first. On footage with no camera the call is refused rather than storing a region that would render nothing; say so instead of retrying.",
+	addShaderEffect:
+		"Write a visual effect as a shader, over a span of the edited timeline (virtual seconds). `code` is WGSL that defines `fn effect(uv: vec2<f32>) -> vec4<f32>`, called for every pixel of the finished frame; uv is 0..1 with (0,0) top-left. Available inside it: `frame(uv)` samples the composed frame, `ctx.time` is programme seconds, `ctx.progress` goes 0 to 1 across the span, `ctx.resolution` is the output size in px, and `param(i)` reads `params[i]` (up to 8 numbers). Reason in uv or fractions of the height, never in px: the preview renders smaller than the export. The effect must be a pure function of those inputs: no state between frames, so the preview and the export show the same pixels. Code that does not compile is refused with the compiler's error (line and column of your code): fix it and call again. Check the result with getFrames.",
+	setShaderEffect:
+		"Change an existing shader effect by id: its span (virtual seconds), its WGSL `code`, or its `params`. Only the fields you pass change. New code is compiled first and refused with the compiler's error if it does not compile. removeModifier deletes one.",
 	setCameraFullscreen:
 		"Move or resize an existing camera-fullscreen region by id (virtual-timeline seconds). Only the fields you pass are changed. Refused if the new span lands on footage with no linked webcam.",
 	addAudio: `Lay an ALREADY-IMPORTED audio file over the recording across a span of the edited timeline (virtual seconds): a voiceover, or a music bed. assetId must name an asset whose kind is 'audio' — getCurrentDocument lists them. If there is none, a file has to be imported first (importMedia, where it is offered): never guess an id. Omit endSec to play the whole file from offsetSec. kind picks the lane ('voiceover' or 'music'). offsetSec is where in the FILE playback starts, gainDb its level (0 unchanged, negative ducks it), fadeInMs / fadeOutMs its fades (0 to ${AUDIO_FADE_MAX_MS} ms, default none; a track too short for both shares its span between them). A voiceover-lane track is also what gets transcribed, so the lane is not only cosmetic.`,
@@ -310,6 +316,8 @@ export interface ToolRuntime {
 	availableByAssetId?: Record<string, boolean>;
 	/** Asks the compositor whether this machine can cut out the camera background. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** Compiles an effect's WGSL in the compositor: null when good, else the error. */
+	validateShaderEffect?: (code: string) => string | null;
 }
 
 /**
@@ -393,6 +401,7 @@ export async function runDocumentTool(
 		editsAllowed,
 		cursorTelemetry: { availableByAssetId: runtime.availableByAssetId, load },
 		cameraSegmentation: runtime.cameraSegmentation,
+		validateShaderEffect: runtime.validateShaderEffect,
 		autoZooms,
 	});
 }
@@ -504,6 +513,8 @@ export const TOOL_ARG_SCHEMAS: ReadonlyArray<readonly [string, z.ZodObject]> = [
 	["setAnnotation", setAnnotationArgs],
 	["addCameraFullscreen", addCameraFullscreenArgs],
 	["setCameraFullscreen", setCameraFullscreenArgs],
+	["addShaderEffect", addShaderEffectArgs],
+	["setShaderEffect", setShaderEffectArgs],
 	["addAudio", addAudioArgs],
 	["setAudio", setAudioArgs],
 	["removeTrim", removeTrimArgs],

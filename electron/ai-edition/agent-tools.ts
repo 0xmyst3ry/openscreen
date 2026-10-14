@@ -51,6 +51,11 @@ import {
 	clipCropRegionSchema,
 	figureDataSchema,
 } from "../../src/lib/ai-edition/schema";
+import {
+	readShaderEffects,
+	SHADER_EFFECT_PARAM_COUNT,
+	withShaderEffects,
+} from "../../src/lib/ai-edition/shaderEffects";
 import { getEditorSettings } from "../../src/lib/ai-edition/store/editorSettings";
 import { appendAutoZoomSuggestions } from "../../src/lib/ai-edition/timeline/apply-auto-zooms";
 import { hasAnyClipWithCamera } from "../../src/lib/ai-edition/timeline/camera";
@@ -987,6 +992,24 @@ export const addCameraFullscreenArgs = z.object({
 	endSec: secondsSchema,
 });
 
+const shaderCodeSchema = z.string().min(1).max(20_000);
+const shaderParamsSchema = z.array(z.number().finite()).max(SHADER_EFFECT_PARAM_COUNT);
+
+export const addShaderEffectArgs = z.object({
+	startSec: secondsSchema,
+	endSec: secondsSchema,
+	code: shaderCodeSchema,
+	params: shaderParamsSchema.optional(),
+});
+
+export const setShaderEffectArgs = z.object({
+	shaderEffectId: z.string().min(1),
+	startSec: secondsSchema.optional(),
+	endSec: secondsSchema.optional(),
+	code: shaderCodeSchema.optional(),
+	params: shaderParamsSchema.optional(),
+});
+
 export const setCameraFullscreenArgs = z.object({
 	cameraFullscreenId: z.string().min(1),
 	startSec: secondsSchema.optional(),
@@ -1062,6 +1085,8 @@ export const OPENSCREEN_TOOL_NAMES = [
 	"setAnnotation",
 	"addCameraFullscreen",
 	"setCameraFullscreen",
+	"addShaderEffect",
+	"setShaderEffect",
 	"addAudio",
 	"setAudio",
 	"removeTrim",
@@ -1140,6 +1165,8 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"setAnnotation",
 	"addCameraFullscreen",
 	"setCameraFullscreen",
+	"addShaderEffect",
+	"setShaderEffect",
 	"addAudio",
 	"setAudio",
 	"removeTrim",
@@ -1578,6 +1605,10 @@ export interface AgentToolOptions {
 	/** Whether this machine can cut out the camera background, asked only by the two tools that
 	 *  report it. Absent where nothing can ask the compositor: reported as not checked. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** Validates an effect's WGSL in the compositor: null when it is good, else the error as
+	 *  the agent must read it. Absent where nothing can ask: the effect is stored unchecked
+	 *  and the result says so. */
+	validateShaderEffect?: (code: string) => string | null;
 	/** `addAutoZooms`' plan, made by the async wrapper from the recorded clicks. Absent means
 	 *  no cursor reader is wired here, which the tool reports as "could not look". */
 	autoZooms?: AutoZoomPlan;
@@ -3169,6 +3200,64 @@ export function executeAgentTool(
 			};
 		}
 
+		case "addShaderEffect": {
+			const parsed = addShaderEffectArgs.safeParse(args);
+			if (!parsed.success) return failure(parsed.error.message);
+			const { code, params = [] } = parsed.data;
+			const error = options?.validateShaderEffect?.(code) ?? null;
+			if (error) return failure(`The effect does not compile:\n${error}`);
+			const startMs = toMs(Math.min(parsed.data.startSec, parsed.data.endSec));
+			const endMs = toMs(Math.max(parsed.data.startSec, parsed.data.endSec));
+			const region = { id: createId("shaderfx"), startMs, endMs, code, params };
+			return {
+				ok: true,
+				document: withShaderEffects(document, [...readShaderEffects(document), region]),
+				resultJson: JSON.stringify({
+					shaderEffectId: region.id,
+					startSec: startMs / 1000,
+					endSec: endMs / 1000,
+					validated: options?.validateShaderEffect !== undefined,
+				}),
+				summary: `shader effect ${formatSec(startMs / 1000)} – ${formatSec(endMs / 1000)}`,
+			};
+		}
+
+		case "setShaderEffect": {
+			const parsed = setShaderEffectArgs.safeParse(args);
+			if (!parsed.success) return failure(parsed.error.message);
+			const effects = readShaderEffects(document);
+			const existing = effects.find((e) => e.id === parsed.data.shaderEffectId);
+			if (!existing) return failure(`Unknown shader effect: ${parsed.data.shaderEffectId}`);
+			const code = parsed.data.code ?? existing.code;
+			if (parsed.data.code !== undefined) {
+				const error = options?.validateShaderEffect?.(code) ?? null;
+				if (error) return failure(`The effect does not compile:\n${error}`);
+			}
+			const startSec = parsed.data.startSec ?? existing.startMs / 1000;
+			const endSec = parsed.data.endSec ?? existing.endMs / 1000;
+			const updated = {
+				...existing,
+				startMs: toMs(Math.min(startSec, endSec)),
+				endMs: toMs(Math.max(startSec, endSec)),
+				code,
+				params: parsed.data.params ?? existing.params,
+			};
+			return {
+				ok: true,
+				document: withShaderEffects(
+					document,
+					effects.map((e) => (e.id === existing.id ? updated : e)),
+				),
+				resultJson: JSON.stringify({
+					shaderEffectId: updated.id,
+					startSec: updated.startMs / 1000,
+					endSec: updated.endMs / 1000,
+					validated: parsed.data.code === undefined || options?.validateShaderEffect !== undefined,
+				}),
+				summary: `updated shader effect ${formatSec(updated.startMs / 1000)} – ${formatSec(updated.endMs / 1000)}`,
+			};
+		}
+
 		case "setCameraFullscreen": {
 			const parsed = setCameraFullscreenArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
@@ -3401,6 +3490,18 @@ export function executeAgentTool(
 			const parsed = removeModifierArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
 			const { id } = parsed.data;
+			const shaderEffects = readShaderEffects(document);
+			if (shaderEffects.some((e) => e.id === id)) {
+				return {
+					ok: true,
+					document: withShaderEffects(
+						document,
+						shaderEffects.filter((e) => e.id !== id),
+					),
+					resultJson: JSON.stringify({ removed: id, removedIds: [id], kind: "shaderEffect" }),
+					summary: `removed shaderEffect ${id}`,
+				};
+			}
 			const legacy = (document.legacyEditor as Record<string, unknown>) ?? {};
 			const speedRegions = (legacy.speedRegions as Array<{ id: string }> | undefined) ?? [];
 			const cameraFullscreenRegions =

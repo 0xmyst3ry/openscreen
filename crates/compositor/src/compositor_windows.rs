@@ -26,7 +26,8 @@ use std::ffi::c_void;
 use windows::core::Interface;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D::{
-    D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+    D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+    D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
 };
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
@@ -83,6 +84,15 @@ struct WebcamMask {
 struct BgCache {
     key: crate::frame_geometry::BackgroundKey,
     tex: ID3D11Texture2D,
+}
+
+/// Un effet shader de la scène (`shader_fx`), par hash de son source.
+enum ShaderFx {
+    /// naga + FXC tournent sur un thread de fond.
+    Pending(std::sync::mpsc::Receiver<Result<crate::shader_fx::CompiledFx, String>>),
+    Ready(ID3D11VertexShader, ID3D11PixelShader),
+    /// Erreur déjà écrite ; l'effet ne se dessine pas.
+    Failed,
 }
 
 struct DofPyramid {
@@ -264,6 +274,14 @@ pub struct Compositor {
     /// Pyramide de profondeur de champ, allouée au premier écran incliné et recréée quand la
     /// texture décodeur change de taille. Rien n'est alloué tant qu'aucun tilt n'est rendu.
     dof_pyramid: RefCell<Option<DofPyramid>>,
+    /// Effets shader de la scène, compilés une fois par source. ponytail: jamais évincés, un
+    /// cache LRU quand des agents en écriront des centaines par session.
+    shader_fx: RefCell<HashMap<u64, ShaderFx>>,
+    shader_fx_cb: ID3D11Buffer,
+    /// Vrai par défaut : une frame dont l'effet compile encore attend son binaire, parce qu'un
+    /// export ne doit jamais rendre de frame sans l'effet. La preview le passe à faux et saute
+    /// l'effet le temps de la compilation (~10 ms), puis recompose (`shader_fx_landed`).
+    shader_fx_blocking: Cell<bool>,
     /// Device WARP : la profondeur de champ y obéit à `DOF_ON_CPU_BACKEND`.
     cpu_backend: bool,
 }
@@ -654,6 +672,12 @@ impl Compositor {
         };
         let mut cbuf: Option<ID3D11Buffer> = None;
         dev.CreateBuffer(&bd, None, Some(&mut cbuf))?;
+        let fx_bd = D3D11_BUFFER_DESC {
+            ByteWidth: std::mem::size_of::<crate::shader_fx::FxContext>() as u32,
+            ..bd
+        };
+        let mut shader_fx_cb: Option<ID3D11Buffer> = None;
+        dev.CreateBuffer(&fx_bd, None, Some(&mut shader_fx_cb))?;
 
         // --- blend alpha prémultiplié ---
         let mut bl = D3D11_BLEND_DESC::default();
@@ -791,6 +815,9 @@ impl Compositor {
             seg_failed: RefCell::new(false),
             nv12_readback_staging: RefCell::new(None),
             dof_pyramid: RefCell::new(None),
+            shader_fx: RefCell::new(HashMap::new()),
+            shader_fx_cb: shader_fx_cb.unwrap(),
+            shader_fx_blocking: Cell::new(true),
             cpu_backend: gpu.backend == crate::d3d::Backend::Cpu,
         })
     }
@@ -839,7 +866,138 @@ impl Compositor {
     /// Installe (ou retire) la scène de l'app. Présente → `compose_frame` prend ses placements
     /// depuis le layout preset au lieu du planning fixture.
     pub fn set_scene(&self, s: Option<Scene>) {
+        // Les effets nouveaux partent compiler tout de suite, hors du thread de rendu : à la
+        // première frame qui les montre, ils sont en général déjà prêts.
+        if let Some(scene) = &s {
+            let mut fx = self.shader_fx.borrow_mut();
+            for effect in &scene.shader_effects {
+                fx.entry(crate::shader_fx::source_hash(&effect.code)).or_insert_with(|| {
+                    ShaderFx::Pending(crate::shader_fx::spawn_compile(effect.code.clone()))
+                });
+            }
+        }
         *self.scene.borrow_mut() = s;
+    }
+
+    /// Faux pour la preview : voir `shader_fx_blocking`.
+    pub fn set_shader_fx_blocking(&self, on: bool) {
+        self.shader_fx_blocking.set(on);
+    }
+
+    /// Fait aboutir les compilations terminées. Vrai si un effet vient d'être prêt : la preview
+    /// en pause doit alors recomposer, sinon elle resterait sur la frame sans l'effet.
+    pub fn shader_fx_landed(&self) -> bool {
+        let mut landed = false;
+        for entry in self.shader_fx.borrow_mut().values_mut() {
+            let got = match entry {
+                ShaderFx::Pending(rx) => rx.try_recv(),
+                _ => continue,
+            };
+            match got {
+                Ok(result) => {
+                    *entry = self.finish_shader_fx(result);
+                    landed = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => *entry = ShaderFx::Failed,
+            }
+        }
+        landed
+    }
+
+    fn finish_shader_fx(&self, result: Result<crate::shader_fx::CompiledFx, String>) -> ShaderFx {
+        let created = result.and_then(|c| unsafe {
+            let (mut vs, mut ps) = (None, None);
+            self.dev
+                .CreateVertexShader(&c.vs, None, Some(&mut vs))
+                .and_then(|()| self.dev.CreatePixelShader(&c.ps, None, Some(&mut ps)))
+                .map_err(|e| e.to_string())?;
+            Ok((vs.unwrap(), ps.unwrap()))
+        });
+        match created {
+            Ok((vs, ps)) => ShaderFx::Ready(vs, ps),
+            Err(e) => {
+                eprintln!("[shader-fx] {e}");
+                ShaderFx::Failed
+            }
+        }
+    }
+
+    /// La passe d'effet shader, sur l'image composée entière. `source_t` choisit la région,
+    /// `programme_t` est l'horloge que l'effet lit (`ctx.time`).
+    unsafe fn draw_shader_effect(&self, scene: Option<&Scene>, source_t: f32, programme_t: f32) {
+        let Some(scene) = scene else { return };
+        let Some((effect, progress)) =
+            crate::shader_fx::active_effect(&scene.shader_effects, source_t)
+        else {
+            return;
+        };
+        let (vs, ps) = {
+            let mut fx = self.shader_fx.borrow_mut();
+            let entry = fx
+                .entry(crate::shader_fx::source_hash(&effect.code))
+                .or_insert_with(|| {
+                    ShaderFx::Pending(crate::shader_fx::spawn_compile(effect.code.clone()))
+                });
+            if let ShaderFx::Pending(rx) = entry {
+                let got = if self.shader_fx_blocking.get() {
+                    rx.recv().map_err(|e| e.to_string())
+                } else {
+                    match rx.try_recv() {
+                        Ok(result) => Ok(result),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                        Err(e) => Err(e.to_string()),
+                    }
+                };
+                *entry = match got {
+                    Ok(result) => self.finish_shader_fx(result),
+                    Err(e) => {
+                        eprintln!("[shader-fx] {e}");
+                        ShaderFx::Failed
+                    }
+                };
+            }
+            match entry {
+                ShaderFx::Ready(vs, ps) => (vs.clone(), ps.clone()),
+                _ => return,
+            }
+        };
+        let cb = crate::shader_fx::context(effect, progress, programme_t, [self.rw(), self.rh()]);
+        let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+        if self.ctx.Map(&self.shader_fx_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut m)).is_err() {
+            return;
+        }
+        std::ptr::copy_nonoverlapping(
+            &cb as *const crate::shader_fx::FxContext as *const u8,
+            m.pData as *mut u8,
+            std::mem::size_of::<crate::shader_fx::FxContext>(),
+        );
+        self.ctx.Unmap(&self.shader_fx_cb, 0);
+        // On ne lit pas le RT sur lequel on dessine : copie dans `ann_copy`, libre à ce stade
+        // (les flous d'annotation et le cristal de Prism Glow l'ont déjà lue).
+        self.ctx.CopySubresourceRegion(&self.ann_copy, 0, 0, 0, 0, &self.rt, 0, None);
+        self.ctx.OMSetRenderTargets(Some(&[Some(self.rtv.clone())]), None);
+        let vp = D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: self.rw(),
+            Height: self.rh(),
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        };
+        self.ctx.RSSetViewports(Some(&[vp]));
+        self.ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.VSSetShader(&vs, None);
+        self.ctx.PSSetShader(&ps, None);
+        // Les registres de `shader_fx::PRELUDE` tels que naga les sort : t0, s1, b2.
+        self.ctx.PSSetShaderResources(0, Some(&[Some(self.ann_copy_srv.clone())]));
+        self.ctx.PSSetSamplers(1, Some(&[Some(self.sampler.clone())]));
+        self.ctx.PSSetConstantBuffers(2, Some(&[Some(self.shader_fx_cb.clone())]));
+        self.ctx.OMSetBlendState(&self.blend_none, None, 0xffffffff);
+        self.ctx.Draw(3, 0);
+        self.ctx.PSSetShaderResources(0, Some(&[None]));
+        self.ctx.PSSetConstantBuffers(2, Some(&[None]));
+        self.bind_compose_state();
     }
 
     /// The Y (R8) and UV (R8G8) views of the decoder frame — over a private COPY, never
@@ -2554,6 +2712,8 @@ impl Compositor {
         // pas le compteur de frames. C'est ce qui garde une annotation alignée sur l'image quand
         // une speed region répète ou saute des frames.
         self.draw_annotations(scene_ref.as_ref(), source_t, s_ann, &g, false);
+        // Effet shader de l'agent : le tout dernier calque, il voit l'image finale.
+        self.draw_shader_effect(scene_ref.as_ref(), source_t, g.programme_t);
         Ok(())
     }
 
@@ -3553,5 +3713,145 @@ mod tests {
         );
         let (rw, rh, rgba) = unsafe { comp.readback_direct() }.expect("readback");
         assert_eq!((rw, rh, rgba.len()), (182, 322, 182 * 322 * 4));
+    }
+
+    /// Une scène à fond rouge plein, l'écran rétréci par le padding : les coins sont du fond.
+    /// `effect` : du WGSL, posé de 1 s à 3 s si présent.
+    fn shader_fx_scene(effect: Option<&str>) -> Scene {
+        let effects = effect
+            .map(|code| {
+                serde_json::json!([{ "clipIndex": 0, "startSec": 1.0, "endSec": 3.0, "code": code, "params": [1.0] }])
+            })
+            .unwrap_or(serde_json::json!([]));
+        let json = serde_json::json!({
+            "clips": [],
+            "layout": {"preset":"no-webcam","webcamSize":1,"webcamShape":"rectangle","webcamMirror":false,"webcamPosition":null,"webcamReactiveZoom":false},
+            "effects": {"padding":0.5,"blur":false,"shadow":0,"roundnessFrac":0,"motionBlur":0},
+            "background": {"kind":"color","color":"#ff0000"},
+            "zoomRegions": [],
+            "cursor": {"show":false,"size":1,"smoothing":0,"motionBlur":0,"clickBounce":0,"clipToBounds":false,"theme":"default"},
+            "cropByClip": [],
+            "output": {"width":320,"height":180,"fps":null},
+            "shaderEffects": effects,
+        });
+        Scene::from_json(&json.to_string()).expect("scène")
+    }
+
+    const INVERT: &str = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    let c = frame(uv);\n    return vec4<f32>(vec3<f32>(param(0)) - c.rgb, 1.0);\n}\n";
+
+    fn fx_cfg() -> crate::config::Cfg {
+        let mut cfg = crate::config::Cfg::c8();
+        cfg.bg_blur = 0.0;
+        cfg.mblur_n = 1;
+        cfg
+    }
+
+    /// Le pixel du coin haut-gauche (du fond) après une frame composée au temps source `t`.
+    fn corner_at(comp: &Compositor, gpu: &crate::d3d::Gpu, t: f32) -> [u8; 3] {
+        let (screen, _tex) = nv12_frame(gpu, 64, 64);
+        comp.set_timeline_time(Some(t));
+        comp.set_programme_time(Some(t));
+        unsafe { comp.compose_frame(&*screen, &*screen, 0.0, &fx_cfg()) }.expect("compose");
+        let (_, _, rgba) = unsafe { comp.readback_direct() }.expect("readback");
+        [rgba[0], rgba[1], rgba[2]]
+    }
+
+    /// La passe de l'agent repeint l'image composée, dans sa région et nulle part ailleurs. Le
+    /// compositeur par défaut est celui de l'export : il attend le shader, jamais de frame sans.
+    #[test]
+    fn a_shader_effect_repaints_the_composed_frame_inside_its_region() {
+        let Ok(gpu) = crate::d3d::Gpu::create_auto(false) else {
+            eprintln!("pas de device D3D11 — test sauté");
+            return;
+        };
+        let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
+        comp.set_scene(Some(shader_fx_scene(Some(INVERT))));
+        assert_eq!(corner_at(&comp, &gpu, 0.5), [255, 0, 0], "avant la région : le fond rouge");
+        assert_eq!(corner_at(&comp, &gpu, 2.0), [0, 255, 255], "dans la région : rouge inversé");
+        assert_eq!(corner_at(&comp, &gpu, 3.5), [255, 0, 0], "après la région : le fond rouge");
+    }
+
+    /// La preview ne bloque pas : elle saute l'effet tant qu'il compile, et `shader_fx_landed`
+    /// lui dit quand recomposer. Ensuite la frame est celle de l'export, au pixel.
+    #[test]
+    fn the_preview_shows_the_effect_once_it_landed() {
+        let Ok(gpu) = crate::d3d::Gpu::create_auto(false) else {
+            eprintln!("pas de device D3D11 — test sauté");
+            return;
+        };
+        let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
+        comp.set_shader_fx_blocking(false);
+        comp.set_scene(Some(shader_fx_scene(Some(INVERT))));
+        let start = std::time::Instant::now();
+        while !comp.shader_fx_landed() {
+            assert!(start.elapsed().as_secs() < 10, "la compilation n'a jamais abouti");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        eprintln!("effet prêt en {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(corner_at(&comp, &gpu, 2.0), [0, 255, 255]);
+    }
+
+    /// Un WGSL invalide ne casse pas le rendu : l'effet ne se dessine pas, la frame reste celle
+    /// de la composition.
+    #[test]
+    fn a_broken_effect_leaves_the_frame_untouched() {
+        let Ok(gpu) = crate::d3d::Gpu::create_auto(false) else {
+            eprintln!("pas de device D3D11 — test sauté");
+            return;
+        };
+        let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
+        comp.set_scene(Some(shader_fx_scene(Some("fn effect(uv: vec2<f32>) -> vec4<f32> { nope }"))));
+        assert_eq!(corner_at(&comp, &gpu, 2.0), [255, 0, 0]);
+    }
+
+    /// Débit de composition avec et sans effet, à 1080p et 4K : N frames composées d'affilée, une
+    /// relecture à la fin pour attendre le GPU. Opt-in, comme les autres mesures :
+    ///
+    ///     set OPENSCREEN_FX_BENCH=1 && cargo test -p openscreen-compositor --release
+    ///         shader_fx_throughput -- --nocapture
+    #[test]
+    fn shader_fx_throughput() {
+        if std::env::var_os("OPENSCREEN_FX_BENCH").is_none() {
+            eprintln!("OPENSCREEN_FX_BENCH absent — saute");
+            return;
+        }
+        let gpu = crate::d3d::Gpu::create_backend(crate::d3d::Backend::Hardware, false)
+            .expect("device D3D11");
+        let heavy = std::fs::read_to_string(
+            std::env::var("OPENSCREEN_FX_BENCH_EFFECT").unwrap_or_default(),
+        )
+        .unwrap_or_else(|_| INVERT.to_string());
+        let (screen, _tex) = nv12_frame(&gpu, 1920, 1080);
+        let cfg = fx_cfg();
+        for (w, h) in [(1920, 1080), (3840, 2160)] {
+            let mut ms = [0.0f64; 2];
+            // Alternées, plusieurs tours : le turbo du GPU et le cache ne favorisent aucun cas.
+            for round in 0..6 {
+                for (i, effect) in [None, Some(heavy.as_str())].into_iter().enumerate() {
+                    let comp = Compositor::new_sized(&gpu, w, h).expect("compositeur");
+                    comp.set_scene(Some(shader_fx_scene(effect)));
+                    comp.set_timeline_time(Some(2.0));
+                    comp.set_programme_time(Some(2.0));
+                    unsafe { comp.compose_frame(&*screen, &*screen, 0.0, &cfg) }.unwrap();
+                    unsafe { comp.readback_direct() }.unwrap();
+                    let n = 300;
+                    let t0 = std::time::Instant::now();
+                    for f in 0..n {
+                        unsafe { comp.compose_frame(&*screen, &*screen, f as f32, &cfg) }.unwrap();
+                    }
+                    unsafe { comp.readback_direct() }.unwrap();
+                    let per = t0.elapsed().as_secs_f64() * 1000.0 / n as f64;
+                    if round > 0 {
+                        ms[i] += per / 5.0;
+                    }
+                }
+            }
+            eprintln!(
+                "{w}x{h} : sans effet {:.3} ms/frame, avec {:.3} ms/frame, écart {:+.3} ms",
+                ms[0],
+                ms[1],
+                ms[1] - ms[0]
+            );
+        }
     }
 }

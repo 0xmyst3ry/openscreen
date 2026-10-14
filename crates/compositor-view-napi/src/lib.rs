@@ -388,6 +388,13 @@ pub fn set_active_clip(
     }
 }
 
+/// Valide le WGSL d'un effet shader (spike, `shader_fx`) : `null` s'il est bon, sinon l'erreur
+/// telle que l'agent doit la lire (ligne, colonne, extrait). Ne compile rien pour le GPU.
+#[napi]
+pub fn validate_shader_effect(code: String) -> Option<String> {
+    openscreen_compositor::shader_fx::validate(&code).err()
+}
+
 /// Installe la scène de l'app (JSON `SceneDescription`) sur la vue : layout preset piloté par
 /// l'app au lieu de la fixture. JSON invalide → ignoré côté natif.
 #[napi]

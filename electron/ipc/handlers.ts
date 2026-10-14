@@ -5062,6 +5062,7 @@ export function registerIpcHandlers(
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
 		cameraSegmentation: () => loudnessService.probeSegmentation(),
+		validateShaderEffect: (code) => loudnessService.validateShaderEffect(code),
 		// The editor's own engine, in this process: `openscreen mcp` transcribes without the app.
 		transcribe: (request) => getSttManager().transcribe(request),
 		version: app.getVersion(),

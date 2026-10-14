@@ -547,6 +547,22 @@ pub struct SceneCameraFullscreenRegion {
     pub continues_after: bool,
 }
 
+/// Une région d'effet shader écrit à l'exécution (spike, voir `shader_fx`). Temps source du clip,
+/// comme les autres régions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneShaderEffect {
+    #[serde(default)]
+    pub clip_index: Option<usize>,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    /// Le WGSL de l'agent : une `fn effect(uv: vec2<f32>) -> vec4<f32>`.
+    pub code: String,
+    /// Jusqu'à huit valeurs, lues par `param(i)`. Les absentes valent 0.
+    #[serde(default)]
+    pub params: Vec<f32>,
+}
+
 /// Rendu du curseur.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -798,6 +814,9 @@ pub struct Scene {
     /// Effet d'arrière-plan de la webcam. Absent = aucun effet.
     #[serde(default)]
     pub webcam_effect: Option<SceneWebcamEffect>,
+    /// Effets shader écrits par un agent (spike). Absent = aucun.
+    #[serde(default)]
+    pub shader_effects: Vec<SceneShaderEffect>,
     /// État de rendu interne, positionné par `for_clip_window` (jamais envoyé par l'app).
     #[serde(skip)]
     pub(crate) active_clip_index: usize,
@@ -844,6 +863,9 @@ impl Scene {
         });
         scene.annotations.retain(|annotation| {
             belongs(annotation.clip_index, annotation.start_sec, annotation.end_sec)
+        });
+        scene.shader_effects.retain(|effect| {
+            belongs(effect.clip_index, effect.start_sec, effect.end_sec)
         });
         // Le layout dépend de la FORME de la source du clip (dimensions natives × crop), qui
         // varie d'un clip à l'autre. On installe donc celui du clip composé dans les champs

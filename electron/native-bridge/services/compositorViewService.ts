@@ -588,6 +588,17 @@ export class CompositorViewService {
 		return resolveSceneAssetPath(SEGMENTATION_MODEL_ASSET) ? "ready" : "no-model";
 	}
 
+	/** Compiles a shader effect's WGSL (spike, `crates/compositor/src/shader_fx.rs`): null when it
+	 *  is good, else the compiler's error. An addon that cannot answer reports that as the error,
+	 *  so a refusal never reads as a compile failure of the agent's code. */
+	validateShaderEffect(code: string): string | null {
+		const addon = this.ensureAddon();
+		if (!addon || typeof addon.validateShaderEffect !== "function") {
+			return "This build's compositor cannot compile shader effects.";
+		}
+		return addon.validateShaderEffect(code);
+	}
+
 	/** Subject mask for one camera frame, no view needed — see `segmentFrame` in the addon.
 	 *  `null` when the addon (or this version of it) or the model is missing. */
 	async segmentFrame(rgba: Uint8Array): Promise<Uint8Array | null> {

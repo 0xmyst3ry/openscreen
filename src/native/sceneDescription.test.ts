@@ -2949,3 +2949,24 @@ describe("buildSceneDescription.audioTracks", () => {
 		expect(buildSceneDescription(doc).audioTracks).toEqual([]);
 	});
 });
+
+// --- shaderEffects -------------------------------------------------------------
+
+describe("buildSceneDescription.shaderEffects", () => {
+	const code = "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }";
+
+	it("carries each effect's code and params, in seconds", () => {
+		const doc = makeDoc({
+			legacyEditor: {
+				shaderEffects: [{ id: "fx1", startMs: 1000, endMs: 2500, code, params: [0.5] }],
+			},
+		});
+		expect(buildSceneDescription(doc).shaderEffects).toEqual([
+			{ startSec: 1, endSec: 2.5, code, params: [0.5] },
+		]);
+	});
+
+	it("is omitted when there are none", () => {
+		expect(buildSceneDescription(makeDoc({ legacyEditor: {} })).shaderEffects).toBeUndefined();
+	});
+});

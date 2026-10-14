@@ -6,6 +6,7 @@ import {
 	createEmptyDocument,
 	documentSchema,
 } from "../../src/lib/ai-edition/schema";
+import { readShaderEffects } from "../../src/lib/ai-edition/shaderEffects";
 import { ZOOM_DEPTH_SCALES } from "../../src/lib/ai-edition/timeline/zoom-scale";
 import { zoomScaleLimit } from "../../src/native/sceneDescription";
 import {
@@ -192,6 +193,7 @@ describe("the mutating-tool table", () => {
 				"addAnnotation",
 				"addAudio",
 				"addCameraFullscreen",
+				"addShaderEffect",
 				"addSpeed",
 				"addTrim",
 				"addTrims",
@@ -212,6 +214,7 @@ describe("the mutating-tool table", () => {
 				"setCameraFullscreen",
 				"setClipRange",
 				"setEditorSettings",
+				"setShaderEffect",
 				"setSpeed",
 				"setTrim",
 				"setWordText",
@@ -3732,5 +3735,72 @@ describe("clip structure (#1180)", () => {
 				expect(result.resultJson).toContain("could not be read");
 			}
 		});
+	});
+});
+
+describe("shader effects", () => {
+	const CODE = "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }";
+	const BROKEN = "fn effect(uv: vec2<f32>) -> vec4<f32> { return nope; }";
+	// Stands in for the compositor: the error text is what naga would print.
+	const validateShaderEffect = (code: string) =>
+		code.includes("nope") ? "error: no definition in scope for identifier: `nope`" : null;
+
+	it("adds, edits and removes an effect, the region normalised and its code kept", () => {
+		const added = executeAgentTool(
+			fixtureDocument(),
+			"addShaderEffect",
+			JSON.stringify({ startSec: 3, endSec: 1, code: CODE, params: [0.5] }),
+			{ validateShaderEffect },
+		);
+		expect(added.ok).toBe(true);
+		const [region] = readShaderEffects(added.document as AxcutDocument);
+		expect(region).toMatchObject({ startMs: 1000, endMs: 3000, code: CODE, params: [0.5] });
+		expect(JSON.parse(added.resultJson)).toMatchObject({
+			shaderEffectId: region.id,
+			validated: true,
+		});
+		expect(() => documentSchema.parse(added.document)).not.toThrow();
+
+		const edited = executeAgentTool(
+			added.document as AxcutDocument,
+			"setShaderEffect",
+			JSON.stringify({ shaderEffectId: region.id, params: [1, 2] }),
+			{ validateShaderEffect },
+		);
+		expect(readShaderEffects(edited.document as AxcutDocument)[0]).toMatchObject({
+			startMs: 1000,
+			endMs: 3000,
+			code: CODE,
+			params: [1, 2],
+		});
+
+		const removed = executeAgentTool(
+			edited.document as AxcutDocument,
+			"removeModifier",
+			JSON.stringify({ id: region.id }),
+		);
+		expect(removed.ok).toBe(true);
+		expect(readShaderEffects(removed.document as AxcutDocument)).toEqual([]);
+	});
+
+	it("refuses code that does not compile, with the compiler's error, and changes nothing", () => {
+		const refused = executeAgentTool(
+			fixtureDocument(),
+			"addShaderEffect",
+			JSON.stringify({ startSec: 1, endSec: 2, code: BROKEN }),
+			{ validateShaderEffect },
+		);
+		expect(refused.ok).toBe(false);
+		expect(refused.document).toBeUndefined();
+		expect(JSON.parse(refused.resultJson).error).toMatch(/does not compile[\s\S]*nope/);
+	});
+
+	it("says when nothing could compile the code", () => {
+		const added = executeAgentTool(
+			fixtureDocument(),
+			"addShaderEffect",
+			JSON.stringify({ startSec: 1, endSec: 2, code: CODE }),
+		);
+		expect(JSON.parse(added.resultJson).validated).toBe(false);
 	});
 });

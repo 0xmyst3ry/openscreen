@@ -143,6 +143,8 @@ export interface CompositorViewAddon {
 	/** What this machine offers, asked without allocating a view — the export dialog
 	 *  needs the answer before any preview exists. Cached native-side. */
 	probeBackend(): CompositorBackend;
+	/** Shader effect WGSL check (spike): null when it compiles, else the error. Absent from older builds. */
+	validateShaderEffect?(code: string): string | null;
 
 	/** Whether the ONNX Runtime library is where the app staged it, and therefore whether a
 	 *  segmentation mask can be produced at all. Asked of the machine rather than guessed from
