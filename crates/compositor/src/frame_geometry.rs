@@ -3599,6 +3599,12 @@ pub struct CursorPlan {
     /// composée, le métrage et ses flous de confidentialité, que le backend lui copie juste avant
     /// de le dessiner. Seuls des pixels floutés passent ainsi à travers le verre.
     pub glass: bool,
+    /// Pour les effets shader (`shader_fx`) : la pointe en 0..1 de SORTIE, zoom, layout et tilt
+    /// appliqués — ce qu'un effet ne peut pas recalculer lui-même.
+    pub pointer: [f32; 2],
+    /// Le dernier clic des `shader_fx::CLICK_WINDOW_S` dernières secondes : son point en 0..1 de
+    /// sortie et son âge en secondes. Le point est celui de la pointe AU MOMENT du clic.
+    pub last_click: Option<([f32; 2], f32)>,
 }
 
 impl CursorPlan {
@@ -3887,7 +3893,15 @@ pub fn plan_cursor(g: &FrameGeometry, input: &CursorPlanInput) -> Option<CursorP
         Vec::new()
     };
 
+    let last_click = input
+        .track
+        .clicks_with_points(input.t - crate::shader_fx::CLICK_WINDOW_S, input.t)
+        .last()
+        .and_then(|(tc, p)| Some((place(Some(p), g.s_dst)?.upright_center(), input.t - tc)));
+
     Some(CursorPlan {
+        pointer: placement.upright_center(),
+        last_click,
         placement,
         prev_placement,
         size_px,
@@ -8847,6 +8861,44 @@ mod tests {
             assert_eq!(back.taps, 1, "model3d {model3d} : traînée venue de la phase cachée");
         }
         assert!(!plan(true, 1.08).expect("visible").impacts.is_empty(), "garde : l'anneau du clic");
+    }
+
+    /// Les effets shader lisent la pointe et le dernier clic en uv de SORTIE : le clic garde le
+    /// point où la pointe était quand il a eu lieu, son âge court, et il sort après la fenêtre.
+    #[test]
+    fn the_plan_hands_effects_the_pointer_and_the_last_click() {
+        let scene = model_scene();
+        let cfg = crate::config::all().pop().expect("cfg");
+        let fg = full_frame_geometry();
+        let track = crate::cursor::CursorTrack::new_with_visibility(
+            vec![(0.0, 0.3, 0.6), (1.0, 0.3, 0.6), (2.0, 0.8, 0.2), (6.0, 0.8, 0.2)],
+            vec![1.0],
+            vec![],
+            vec![(0.0, true)],
+        );
+        let plan = |t: f32| {
+            plan_cursor(
+                &fg,
+                &CursorPlanInput {
+                    render_px: [1920.0, 1080.0],
+                    u_max: 1.0,
+                    v_max: 1.0,
+                    cfg: &cfg,
+                    live: LiveParams::default(),
+                    scene: Some(&scene),
+                    track: &track,
+                    t,
+                },
+            )
+            .expect("visible")
+        };
+        assert!(plan(0.5).last_click.is_none(), "pas encore de clic");
+        let at_click = plan(1.0).pointer;
+        let (point, age) = plan(1.5).last_click.expect("clic récent");
+        assert_eq!(point, at_click, "le point du clic, pas celui de la pointe maintenant");
+        assert!((age - 0.5).abs() < 1e-4, "{age}");
+        assert_ne!(plan(2.5).pointer, at_click, "la pointe a bougé depuis");
+        assert!(plan(1.0 + crate::shader_fx::CLICK_WINDOW_S + 0.1).last_click.is_none());
     }
 
     /// Sous un angle fixe, l'écran tourne autour du centre de sa boîte ZOOMÉE, réduit de son

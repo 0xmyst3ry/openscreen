@@ -23,12 +23,17 @@ use std::hash::{Hash, Hasher};
 /// - `ctx.time` : secondes de programme, continues à travers coupes et clips.
 /// - `ctx.progress` : 0 → 1 à travers la région de l'effet.
 /// - `param(i)` : les huit paramètres de la région, i de 0 à 7.
+/// - `ctx.cursor` : xy = la pointe du curseur en uv de sortie, z = 1 si elle est à l'écran.
+/// - `ctx.click` : xy = le point du dernier clic en uv de sortie, z = secondes écoulées depuis,
+///   w = 1 s'il y en a eu un dans les `CLICK_WINDOW_S` dernières secondes.
 pub const PRELUDE: &str = r#"
 struct FxContext {
     resolution: vec2<f32>,
     time: f32,
     progress: f32,
     params: array<vec4<f32>, 2>,
+    cursor: vec4<f32>,
+    click: vec4<f32>,
 };
 @group(0) @binding(0) var fx_frame: texture_2d<f32>;
 @group(0) @binding(1) var fx_sampler: sampler;
@@ -64,7 +69,10 @@ fn fx_fs(v: FxVsOut) -> @location(0) vec4<f32> {
 
 pub const PARAM_COUNT: usize = 8;
 
-/// Le constant buffer de la passe, au layout de `FxContext` (48 octets, multiple de 16).
+/// Jusqu'où un clic reste visible des effets (`ctx.click`) : au-delà, `w` retombe à 0.
+pub const CLICK_WINDOW_S: f32 = 2.0;
+
+/// Le constant buffer de la passe, au layout de `FxContext` (80 octets, multiple de 16).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FxContext {
@@ -72,6 +80,15 @@ pub struct FxContext {
     pub time: f32,
     pub progress: f32,
     pub params: [f32; PARAM_COUNT],
+    pub cursor: [f32; 4],
+    pub click: [f32; 4],
+}
+
+/// Ce que le plan du curseur donne aux effets, `None` quand il n'y a pas de curseur à l'écran.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FxPointer {
+    pub cursor: Option<[f32; 2]>,
+    pub last_click: Option<([f32; 2], f32)>,
 }
 
 pub fn module_source(user: &str) -> String {
@@ -128,12 +145,20 @@ pub fn active_effect(effects: &[SceneShaderEffect], t: f32) -> Option<(&SceneSha
     })
 }
 
-pub fn context(effect: &SceneShaderEffect, progress: f32, programme_t: f32, resolution: [f32; 2]) -> FxContext {
+pub fn context(
+    effect: &SceneShaderEffect,
+    progress: f32,
+    programme_t: f32,
+    resolution: [f32; 2],
+    pointer: FxPointer,
+) -> FxContext {
     let mut params = [0.0; PARAM_COUNT];
     for (slot, value) in params.iter_mut().zip(&effect.params) {
         *slot = *value;
     }
-    FxContext { resolution, time: programme_t, progress, params }
+    let cursor = pointer.cursor.map_or([0.0; 4], |[x, y]| [x, y, 1.0, 0.0]);
+    let click = pointer.last_click.map_or([0.0; 4], |([x, y], age)| [x, y, age, 1.0]);
+    FxContext { resolution, time: programme_t, progress, params, cursor, click }
 }
 
 /// Le bytecode DXBC des deux étages, prêt pour `CreateVertexShader` / `CreatePixelShader`.
@@ -251,8 +276,8 @@ fn effect(uv: vec2<f32>) -> vec4<f32> {
     }
 
     #[test]
-    fn the_context_is_48_bytes_like_its_wgsl_struct() {
-        assert_eq!(std::mem::size_of::<FxContext>(), 48);
+    fn the_context_is_80_bytes_like_its_wgsl_struct() {
+        assert_eq!(std::mem::size_of::<FxContext>(), 80);
     }
 
     #[test]
@@ -262,8 +287,12 @@ fn effect(uv: vec2<f32>) -> vec4<f32> {
         let (_, p) = active_effect(&effects, 2.0).unwrap();
         assert!((p - 0.5).abs() < 1e-6);
         assert!(active_effect(&effects, 3.0).is_none(), "end is exclusive");
-        let ctx = context(&effects[0], 0.5, 10.0, [1920.0, 1080.0]);
+        let ctx = context(&effects[0], 0.5, 10.0, [1920.0, 1080.0], FxPointer::default());
         assert_eq!(ctx.params, [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!((ctx.cursor[2], ctx.click[3]), (0.0, 0.0), "pas de curseur, pas de clic");
+        let pointer = FxPointer { cursor: Some([0.25, 0.5]), last_click: Some(([0.3, 0.6], 0.2)) };
+        let ctx = context(&effects[0], 0.5, 10.0, [1920.0, 1080.0], pointer);
+        assert_eq!((ctx.cursor, ctx.click), ([0.25, 0.5, 1.0, 0.0], [0.3, 0.6, 0.2, 1.0]));
     }
 
     #[cfg(windows)]

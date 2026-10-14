@@ -925,7 +925,13 @@ impl Compositor {
 
     /// La passe d'effet shader, sur l'image composée entière. `source_t` choisit la région,
     /// `programme_t` est l'horloge que l'effet lit (`ctx.time`).
-    unsafe fn draw_shader_effect(&self, scene: Option<&Scene>, source_t: f32, programme_t: f32) {
+    unsafe fn draw_shader_effect(
+        &self,
+        scene: Option<&Scene>,
+        source_t: f32,
+        programme_t: f32,
+        pointer: crate::shader_fx::FxPointer,
+    ) {
         let Some(scene) = scene else { return };
         let Some((effect, progress)) =
             crate::shader_fx::active_effect(&scene.shader_effects, source_t)
@@ -962,7 +968,13 @@ impl Compositor {
                 _ => return,
             }
         };
-        let cb = crate::shader_fx::context(effect, progress, programme_t, [self.rw(), self.rh()]);
+        let cb = crate::shader_fx::context(
+            effect,
+            progress,
+            programme_t,
+            [self.rw(), self.rh()],
+            pointer,
+        );
         let mut m = D3D11_MAPPED_SUBRESOURCE::default();
         if self.ctx.Map(&self.shader_fx_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut m)).is_err() {
             return;
@@ -2473,6 +2485,9 @@ impl Compositor {
         // pixels déjà floutés. Les autres annotations restent le calque le plus haut (plus bas).
         self.draw_annotations(scene_ref.as_ref(), source_t, s_ann, &g, true);
 
+        // Le curseur et le dernier clic tels que les effets shader les lisent (`ctx.cursor/click`).
+        let mut fx_pointer = crate::shader_fx::FxPointer::default();
+
         // --- curseur custom : suit le mapping src/dst (zoom+layout), click bounce,
         // et flou de mouvement (parité `compositor_macos.rs` et `compositor_linux.rs`) ---
         if let Some(track) = cursor_ref.as_ref() {
@@ -2491,6 +2506,10 @@ impl Compositor {
             )
             .map(|p| p.for_backend(self.cpu_backend));
             if let Some(plan) = plan {
+                fx_pointer = crate::shader_fx::FxPointer {
+                    cursor: Some(plan.pointer),
+                    last_click: plan.last_click,
+                };
                 let cursor_sprites: HashMap<String, SceneCursorSprite> = scene_ref
                     .as_ref()
                     .map(|s| s.cursor.cursor_sprites.clone())
@@ -2713,7 +2732,7 @@ impl Compositor {
         // une speed region répète ou saute des frames.
         self.draw_annotations(scene_ref.as_ref(), source_t, s_ann, &g, false);
         // Effet shader de l'agent : le tout dernier calque, il voit l'image finale.
-        self.draw_shader_effect(scene_ref.as_ref(), source_t, g.programme_t);
+        self.draw_shader_effect(scene_ref.as_ref(), source_t, g.programme_t, fx_pointer);
         Ok(())
     }
 
