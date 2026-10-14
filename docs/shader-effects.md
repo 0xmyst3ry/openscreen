@@ -230,6 +230,8 @@ libre, et les erreurs pointent ainsi les lignes que l'agent a écrites.
   la souris arrive pile au moment du clic. Ce cas est rare sur une vraie prise.
 - **Le spike exposait un seul clic** (`ctx.click`). Avec quatre, deux clics rapprochés gardent
   chacun leur onde.
+- **Rien d'autre n'est lié.** Une variable `@group`/`@binding` dans le code de l'agent est
+  refusée, avec sa ligne : aucun backend ne la lierait.
 
 ### C.3 Les paramètres sont nommés et typés
 
@@ -338,6 +340,10 @@ refusé parce que la machine qui l'écrit est modeste.
   1080p et 17 µs en 4K, au-dessus d'un fixe de 0,03 ms. Un effet léger coûte au plus 0,06 ms par
   frame en 1080p, un moyen 0,14 ms, un lourd 0,54 ms, 512 lectures 2,1 ms. Le détail est dans
   [rendering-performance.md](../technical-documentation/engineering/rendering-performance.md).
+- **Mesuré sur lavapipe** (le repli CPU de Linux, 16 threads) : environ 1,4 ms par lecture en
+  1080p, 350 fois la RTX. Un effet léger y ajoute jusqu'à 11 ms à une frame qui en coûte 7,5 ;
+  un lourd, 234 ms. L'ordre des paliers tient, mais sans GPU même un effet léger double le
+  temps d'export.
 - **Le GPU intégré de référence** (le Radeon 610M des mesures Linux) reste à mesurer : on y attend
   plusieurs fois ces coûts. La description de l'outil donnera les paliers en ms sur les deux
   machines, pour que l'agent raisonne en temps et non en lectures.
@@ -424,10 +430,10 @@ Une seule source WGSL, traduite par naga au moment de compiler.
 |---|---|---|---|
 | Traduction | naga vers HLSL SM 5.0 | naga vers MSL | aucune : WGSL tel quel |
 | Compilation | `D3DCompile` (FXC) vers DXBC, puis `CreateVertexShader`/`CreatePixelShader` | `new_library_with_source`, puis `make_pipeline(…, Blend::Replace)` | `create_shader_module`, puis `create_render_pipeline` |
-| Thread de fond | naga et FXC (fait) | bibliothèque et pipeline, sous `autoreleasepool` | module et pipeline |
-| Copie du RT | `CopySubresourceRegion` vers `ann_copy` (fait) | `snapshot_rt(cmd_buf, false)` | `copy_texture_to_texture` vers `ann_copy` (comme le verre) |
-| Insertion | fin de `compose_frame` (fait) | entre `draw_annotations(…, false)` et `submit` | entre l'ann-pass et `submit` |
-| Uniforms | `Map(WRITE_DISCARD)` (fait) | `set_fragment_bytes` | `create_buffer_init(UNIFORM)` par draw |
+| Thread de fond | naga et FXC (fait) | bibliothèque et pipeline, sous `autoreleasepool` | module et pipeline (fait) |
+| Copie du RT | `CopySubresourceRegion` vers `ann_copy` (fait) | `snapshot_rt(cmd_buf, false)` | `copy_texture_to_texture` vers le niveau 0 d'`ann_copy` (fait) |
+| Insertion | fin de `compose_frame` (fait) | entre `draw_annotations(…, false)` et `submit` | `image` entre la passe caméra et l'ann-pass, `text` et `both` après (fait) |
+| Uniforms | `Map(WRITE_DISCARD)` (fait) | `set_fragment_bytes` | `create_buffer_init(UNIFORM)` par passe (fait) |
 
 **macOS en détail**
 - **Activer `msl-out`.** Le dépôt l'obtient aujourd'hui par unification des features de wgpu ; le
@@ -447,7 +453,14 @@ Une seule source WGSL, traduite par naga au moment de compiler.
 - **Le thread de fond.** `wgpu::Device` est `Send`, `Sync` et `Clone` : le pipeline peut se
   construire hors du thread de rendu.
 - **Valider avant wgpu.** Aucun `on_uncaptured_error` n'est posé, donc une erreur de validation
-  wgpu fait paniquer. La pré-validation par naga (`shader_fx::validate`) en protège.
+  wgpu fait paniquer. La pré-validation (`shader_fx::analyze`) en protège : naga 24, celui de
+  wgpu 24, et le refus de tout binding que le prélude ne déclare pas. Si wgpu panique malgré tout,
+  seul le thread de compilation meurt, et l'effet ne se dessine pas (D.6).
+- **« Accepté » sous Linux.** `check_for_agent` traduit l'effet en SPIR-V par naga, comme wgpu le
+  fera. La compilation par le pilote Vulkan n'a lieu qu'à `set_scene`, faute de device dans
+  l'outil.
+- **Le calque des textes** est une texture RGBA8 transparente, posée sur le RT par la passe qui
+  recopie déjà `accum` (`pipeline_copy`, « over » prémultiplié).
 
 **naga reste en 24.** À partir de la 25, sa sortie HLSL déclare les samplers dans un tas D3D12
 (`register(s0, space0)`), que FXC refuse en `ps_5_0` (erreur X3721). Le test
@@ -692,10 +705,12 @@ qu'on n'a pas écrit.
 | Export de 180 frames en 1752×1080 : sans effet, avec effet, avec effet lourd | 520, 523 et 521 ms |
 | Preview en lecture, source à 30 i/s | 30 i/s avec et sans effet |
 
+Mesuré à la passe Linux (lavapipe sous WSL, 16 threads) : effet prêt en 18 ms après `set_scene`,
+module et pipeline compris ; les paliers en C.7.
+
 À mesurer à l'implémentation :
 - un GPU intégré (le Radeon 610M des mesures Linux) ;
-- le compilateur Metal ;
-- lavapipe en CI.
+- le compilateur Metal.
 
 Les résultats iront dans
 [rendering-performance.md](../technical-documentation/engineering/rendering-performance.md).
