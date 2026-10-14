@@ -53,7 +53,7 @@ import { WhisperServerManager } from "./whisperServer";
  * worth revisiting only if a much smaller model ever becomes the default.
  */
 
-/** The renderer always sends mono 16 kHz (see `extractMono16kFromVideoUrl`). */
+/** What `extractMono16kPcm` decodes to (see `extractAudio.ts`). */
 const SAMPLE_RATE = 16_000;
 
 /** Attempts per chunk before the whole transcription fails. */

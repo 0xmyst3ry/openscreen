@@ -10,7 +10,7 @@ export interface CaptionSegment {
 
 /**
  * How caption layout should interpret `CaptionSegment` times from
- * `transcribeMono16kToSegments`. The native pipeline gets per-word timestamps
+ * `transcribeSourceFileToSegments`. The native pipeline gets per-word timestamps
  * from whisper.cpp's own output; `"phrase"` is a fallback for the rare case
  * where whisper reports zero words for a segment.
  */
@@ -53,7 +53,7 @@ export interface SttRendererStatus {
 }
 
 interface RendererSttApi {
-	transcribe: (request: { samples: Float32Array; language?: string; prompt?: string }) => Promise<{
+	transcribe: (request: { sourcePath: string; language?: string; prompt?: string }) => Promise<{
 		segments: CaptionSegment[];
 		wordSegments: SttWordSegment[];
 		detectedLanguage: string;
@@ -61,42 +61,6 @@ interface RendererSttApi {
 	}>;
 	cancel?: () => Promise<void>;
 	onStatus?: (callback: (event: SttRendererStatus) => void) => () => void;
-}
-
-/**
- * Transcribes mono 16 kHz audio into per-word timed caption segments. The
- * renderer is a thin IPC adapter: it forwards the audio to the Electron main
- * process where `whisper-server` runs recognition and emits its own
- * per-word timestamps in the same pass.
- *
- * The previous in-Web-Worker implementation (Transformers.js + ORT-WASM) was
- * 0.5× realtime on tiny models and had no word-level accuracy under 50 ms;
- * see `technical-documentation/architecture/transcription-and-captions.md` § History for context.
- */
-export function transcribeMono16kToSegments(
-	samples: Float32Array,
-	options?: TranscribeOptions,
-): Promise<TranscribeMono16kResult> {
-	return runTranscription({ samples }, options);
-}
-
-/**
- * Same recognition, from a FILE the main process decodes itself.
- *
- * Preferred over `transcribeMono16kToSegments` wherever there is a path to point at.
- * The samples entry point decodes in the renderer — whole file into memory, an
- * `arrayBuffer()` copy, a `slice(0)` copy, then a resample loop on the UI thread —
- * which is what froze the editor at open on a long import. Here the renderer sends a
- * string and gets segments back.
- *
- * Rejects with a message carrying `STT_NATIVE_EXTRACTION_UNAVAILABLE` when the
- * install has no ffmpeg, so the caller can fall back rather than lose the transcript.
- */
-export function transcribeSourceFileToSegments(
-	sourcePath: string,
-	options?: TranscribeOptions,
-): Promise<TranscribeMono16kResult> {
-	return runTranscription({ sourcePath }, options);
 }
 
 export interface TranscribeOptions {
@@ -108,8 +72,22 @@ export interface TranscribeOptions {
 	prompt?: string;
 }
 
-function runTranscription(
-	payload: { samples: Float32Array } | { sourcePath: string },
+/**
+ * Transcribes a media FILE into per-word timed caption segments. The renderer is a
+ * thin IPC adapter: it sends the path, the main process decodes it with ffmpeg and
+ * `whisper-server` runs recognition, emitting per-word timestamps in the same pass.
+ * The renderer never holds the audio: decoding it here read the whole file, copied it
+ * twice and resampled on the UI thread, which is what froze the editor at open.
+ *
+ * Rejects with `FfmpegUnavailableError`'s message when the install has no ffmpeg.
+ * There is no renderer decode to fall back on any more.
+ *
+ * The previous in-Web-Worker implementation (Transformers.js + ORT-WASM) was
+ * 0.5× realtime on tiny models and had no word-level accuracy under 50 ms;
+ * see `technical-documentation/architecture/transcription-and-captions.md` § History for context.
+ */
+export function transcribeSourceFileToSegments(
+	sourcePath: string,
 	options?: TranscribeOptions,
 ): Promise<TranscribeMono16kResult> {
 	if (options?.signal?.aborted) {
@@ -138,7 +116,7 @@ function runTranscription(
 	// trimmed leading silence with a peak detector and got false positives on
 	// quiet music intros / room tone. VAD or nothing.
 	return api
-		.transcribe({ ...payload, language: forcedLanguage, prompt: options?.prompt })
+		.transcribe({ sourcePath, language: forcedLanguage, prompt: options?.prompt })
 		.then((result) => ({ ...segmentsFromStt(result), detectedLanguage: result.detectedLanguage }))
 		.catch((error: unknown) => {
 			// A run the caller cancelled surfaces as an abort, not as an engine

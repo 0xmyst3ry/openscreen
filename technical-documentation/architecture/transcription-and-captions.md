@@ -15,8 +15,8 @@ the transcript).
 flowchart LR
     Z["Asset added<br/>(import or recording)"] -- "sync()" --> Y["transcriptionStore queue<br/>(src/lib/ai-edition/store/transcriptionStore.ts)"]
     Y -- "one job at a time" --> A["Recorded audio"]
-    A -- "extract mono 16 kHz" --> B["transcribeAsset<br/>(src/lib/ai-edition/document/transcribe.ts)"]
-    B -- "IPC: Float32Array + language" --> C["SttManager<br/>(electron/stt/index.ts)"]
+    A -- "file path" --> B["transcribeAsset<br/>(src/lib/ai-edition/document/transcribe.ts)"]
+    B -- "IPC: source path + language" --> C["SttManager<br/>(electron/stt/index.ts)<br/>ffmpeg: mono 16 kHz"]
     C -- "POST /inference (WAV)" --> D["whisper-stt-server<br/>(electron/native/whisper-stt/)"]
     D -- "VAD cut + whisper_full() + DTW" --> E["SttTranscribeResponse<br/>(segments + wordSegments)"]
     E --> C
@@ -27,10 +27,11 @@ flowchart LR
     H -- "annotation path<br/>(scene description)" --> I["Native compositor<br/>(preview AND export)"]
 ```
 
-The renderer pieces — `transcribeMono16kToSegments`
+The renderer pieces — `transcribeSourceFileToSegments`
 (`src/lib/captioning/transcribe.ts`) called from `transcribeAsset`
 (`src/lib/ai-edition/document/transcribe.ts`) — are a thin IPC adapter: the
-audio crosses to the main process, the helper does the recognition, and the
+file path crosses to the main process, which decodes it with ffmpeg
+(`electron/stt/extractAudio.ts`), the helper does the recognition, and the
 result is mapped back onto the `AxcutTranscript` shape the rest of the editor
 reads. From the moment that transcript is persisted, captions and the words
 they show cannot drift — captions are a derived view, not a parallel store.
@@ -71,8 +72,7 @@ What the store owns and what it does not:
   the panes' one button: every timeline asset that still lacks a transcript,
   skipping the ones already known to be silent and waiting on (rather than
   duplicating) a run the background pass already has in flight.
-- **One run at a time.** whisper-server is a single process and the audio
-  extraction path holds decoded frames in renderer memory, so the pump is a
+- **One run at a time.** whisper-server is a single process, so the pump is a
   sequential loop, not a fan-out.
 - **The auto pass never loops.** `sync` enqueues an asset only when it has no
   transcript, no job entry (queued / running / failed alike) and no persisted
@@ -132,12 +132,12 @@ Three edges make that promise hold, and each is load-bearing:
   clip's word stream swallow Backspace and hover-bin clicks in silence for the
   whole background pass.
 
-Still synchronous, and still on the main thread: `mixToMono`
-([`src/lib/captioning/extractMono16k.ts`](../../src/lib/captioning/extractMono16k.ts))
-now hoists its channel arrays out of the sample loop (it was making one WebIDL
-call per sample per channel), but a long recording will still block the renderer
-for a moment during "extracting-audio". Moving the mixdown to a worker is the
-next step if it shows up in practice.
+Audio extraction never runs in the renderer. There is no renderer decode to fall
+back on: it read the whole file on the UI thread, froze the editor at open, and
+the CLI's hidden runner was not even allowed to read the file. An install with
+no ffmpeg fails with "ffmpeg is missing", in the editor, the CLI and MCP alike;
+every package ships one, and `before-pack` refuses a macOS or Linux payload
+without it.
 
 ## The STT engine
 

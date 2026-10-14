@@ -14,9 +14,7 @@ vi.mock("../media/audioPeaks", () => ({
 
 const { extractMono16kPcm, FfmpegUnavailableError, MediaUnreadableError, NoAudioTrackError } =
 	await import("./extractAudio");
-const { STT_MEDIA_UNREADABLE, STT_NATIVE_EXTRACTION_UNAVAILABLE } = await import(
-	"./transcriptionContract"
-);
+const { STT_MEDIA_UNREADABLE } = await import("./transcriptionContract");
 
 /** A stand-in for the ffmpeg child: two pipes and a close event, nothing more. */
 function fakeChild() {
@@ -179,13 +177,12 @@ describe("extractMono16kPcm", () => {
 		expect(Array.from(await promise)).toEqual([expect.closeTo(0.1, 6), expect.closeTo(0.2, 6)]);
 	});
 
-	it("refuses with the marker the renderer falls back on when ffmpeg is missing", async () => {
-		// The string is the contract across the IPC boundary, which drops the class.
+	it("says ffmpeg is missing when none resolves", async () => {
+		// The message is all that crosses the IPC boundary, and nothing falls back on it:
+		// it is what the editor, the CLI and MCP show.
 		resolveFfmpegMock.mockReturnValue(null);
 		await expect(extractMono16kPcm("/tmp/a.mp3")).rejects.toBeInstanceOf(FfmpegUnavailableError);
-		await expect(extractMono16kPcm("/tmp/a.mp3")).rejects.toThrow(
-			STT_NATIVE_EXTRACTION_UNAVAILABLE,
-		);
+		await expect(extractMono16kPcm("/tmp/a.mp3")).rejects.toThrow(/^ffmpeg is missing/);
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 

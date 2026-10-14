@@ -21,7 +21,7 @@
 
 import { spawn } from "node:child_process";
 import { mediaClockAudioArgs, resolveFfmpeg } from "../media/audioPeaks";
-import { STT_MEDIA_UNREADABLE, STT_NATIVE_EXTRACTION_UNAVAILABLE } from "./transcriptionContract";
+import { STT_MEDIA_UNREADABLE } from "./transcriptionContract";
 
 /** What whisper.cpp wants, and what `decodePeaks` already asks ffmpeg for. */
 const SAMPLE_RATE = 16_000;
@@ -30,14 +30,17 @@ const SAMPLE_RATE = 16_000;
 const EXTRACT_TIMEOUT_MS = 60_000;
 
 /**
- * Thrown when no ffmpeg can be resolved, so the caller can fall back to the
- * renderer pipeline rather than failing the transcription outright. A distinct type
- * because "there is no ffmpeg here" and "this file has no audio" want opposite
- * responses: fall back, versus report a permanent failure for this asset.
+ * Thrown when no ffmpeg can be resolved. There is no fallback behind it: the renderer
+ * decode that used to catch this reads the whole file on the UI thread, and the hidden
+ * CLI runner could not read the file at all. Every package ships ffmpeg, so the message
+ * names what is missing and how to put it back, for the editor, the CLI and MCP alike.
  */
 export class FfmpegUnavailableError extends Error {
 	constructor() {
-		super(`${STT_NATIVE_EXTRACTION_UNAVAILABLE}: no ffmpeg binary for native audio extraction`);
+		super(
+			"ffmpeg is missing: transcription needs it to read the audio, and this install has none. " +
+				"Reinstall OpenScreen, or set OPENSCREEN_FFMPEG_PATH to an ffmpeg executable.",
+		);
 		this.name = "FfmpegUnavailableError";
 	}
 }

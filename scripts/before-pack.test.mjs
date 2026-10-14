@@ -359,7 +359,7 @@ describe("MAC_REQUIRED", () => {
 });
 
 // The Linux twin of #616: packages shipped the libav shared objects but no ffmpeg CLI, so
-// transcription over MCP and the CLI failed with stt:native-extraction-unavailable.
+// transcription over MCP and the CLI failed for want of ffmpeg.
 describe("LINUX_REQUIRED", () => {
 	it("refuses a payload that has everything except the ffmpeg binary", () => {
 		const { LINUX_REQUIRED, checkNativePayload } = testing();
