@@ -408,6 +408,13 @@ export function runCli(command: CliCommand): void {
 				setupRecordStopSignals(stop);
 			}
 
+			// The project as the captions runner reads it. Transcribing takes minutes; a save made
+			// meanwhile must not be lost under the runner's older copy.
+			const captionsSource =
+				command.kind === "captions"
+					? await fs.readFile(command.projectPath, "utf8").catch(() => null)
+					: null;
+
 			milestone("cli ipc registered; starting the runner");
 			const run = runners.start(command, {
 				onRequest: () => milestone("renderer asked for the request"),
@@ -453,6 +460,12 @@ export function runCli(command: CliCommand): void {
 					}
 				}
 				if (result.success && command.kind === "captions" && result.projectData !== undefined) {
+					const current = await fs.readFile(command.projectPath, "utf8").catch(() => null);
+					if (current !== captionsSource) {
+						throw new Error(
+							`${command.projectPath} changed while it was being captioned, so nothing was written. Run captions again.`,
+						);
+					}
 					await writeProjectFile(command.projectPath, result.projectData);
 				}
 				// -o writes where no wrapper can redirect. stdout itself is fine --
