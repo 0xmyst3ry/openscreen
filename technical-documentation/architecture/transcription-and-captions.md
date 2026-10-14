@@ -606,8 +606,10 @@ For anything user-facing, though, read them off the STATUS events rather than
 this response: the response lands only once the whole recording is done,
 which is far too late to explain a wait that is already happening.
 
-The request takes a raw `Float32Array` of mono 16 kHz PCM and an optional
-ISO 639-1 `language` code; `"auto"` or absent leaves detection to Whisper.
+The renderer sends a `sourcePath`, which the main process decodes with ffmpeg
+into mono 16 kHz PCM; `samples`, a raw `Float32Array`, stays as `SttManager`'s
+own seam. The request takes an optional ISO 639-1 `language` code; `"auto"` or
+absent leaves detection to Whisper.
 An optional `prompt` carries the project's names and terms
 (`project.vocabulary`, the media stage's "Names and terms" field, issue #1023).
 `whisperServer.ts` sends it framed as `Glossary: <terms>.`, and the helper sets
