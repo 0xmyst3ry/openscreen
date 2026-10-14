@@ -1,6 +1,6 @@
 # OpenScreen docs site
 
-Docusaurus 3 site. Lives in `website/` inside the monorepo. Deployed to GitHub Pages via `.github/workflows/docs.yml`.
+Docusaurus 3 site. Lives in `website/` inside the monorepo. Deployed to Cloudflare (a Worker serving static assets, `wrangler.jsonc`) via `.github/workflows/docs.yml`. `www-redirect/` is a separate Worker that sends www.getopenscreen.com to the apex; it is deployed by hand.
 
 ## Develop
 
