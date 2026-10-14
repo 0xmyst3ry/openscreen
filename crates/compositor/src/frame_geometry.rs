@@ -2857,12 +2857,17 @@ impl FrameGeometry {
         let [x, y, w, h] = self.s_dst;
         FootageQuad { corners: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], projective: false }
     }
+
+    /// Largeur sur hauteur du métrage dans son propre plan : celles du rect qu'incline le tilt.
+    pub fn footage_aspect(&self, render_px: [f32; 2]) -> f32 {
+        self.s_dst[2] * render_px[0] / (self.s_dst[3] * render_px[1]).max(1e-6)
+    }
 }
 
 /// Le métrage dans l'image : ses coins TL, TR, BR, BL en fractions de la sortie, et la
 /// correspondance d'un point `(u, v)` du métrage à l'image, bilinéaire entre eux ou, sous la
 /// caméra réelle, l'homographie qu'ils définissent (`TiltedQuad::point_px`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FootageQuad {
     pub corners: [[f32; 2]; 4],
     pub projective: bool,
