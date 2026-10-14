@@ -93,7 +93,6 @@ export const shaderEffectRangeSchema = endGteStart(z.object({
 	effectId: z.string().min(1),
 	values: z.record(z.string(), shaderEffectValueSchema).default({}),
 	target: z.enum(["image", "text", "both"]).default("image"),
-	lane: z.number().int().min(0).max(7).default(0),
 }), "endMs", "startMs");
 
 // documentSchemaShape
@@ -115,7 +114,7 @@ shaderEffectRanges: z.array(shaderEffectRangeSchema).optional(),
   dernière région (`removeRegion`, `mapAllRegionCollections`). Le document ne garde pas de code
   mort.
 - **Les `max` du schéma sont des plafonds techniques, pas des budgets.** Ils protègent le document
-  (64 Ko de code, 32 paramètres, 8 lanes) et sont loin au-dessus de tout effet raisonnable. Ce que
+  (64 Ko de code, 32 paramètres) et sont loin au-dessus de tout effet raisonnable. Ce que
   l'agent doit viser, ce sont les paliers de C.7.
 
 ### B.3 Ancrée sur le clip, comme les autres régions
@@ -140,13 +139,12 @@ ms brutes, sans ancre : elle restait en place pendant que les clips bougeaient.
 - **L'identité des pilules** (`regionIdentityKey`) compte tous les champs sauf la position et la
   provenance. Deux régions contiguës du même effet, aux mêmes `values`, se fondent donc en une
   pilule, comme deux zooms identiques.
-- **Les pistes.** Deux régions d'une même `lane` ne se chevauchent pas, avec la règle des autres
-  régions (`refuseIfBlocked`). Les lanes s'appliquent dans l'ordre : la lane 0 d'abord, au plus
-  près du contenu. C'est ce qui permet un ripple sur toute la vidéo ET un glitch
-  sur une coupe.
-- **Après une édition de clip** qui fait se chevaucher deux régions d'une même lane, le rendu
-  applique les deux, dans l'ordre du tableau, et la piste les montre superposées. Pas de
-  réparation automatique : contrairement à l'audio, deux effets superposés ne cassent rien.
+- **Un effet à la fois** (K.6). Deux régions d'effet ne se chevauchent pas : les outils refusent
+  un chevauchement, avec la règle des autres régions (`refuseIfBlocked`). Pour combiner deux
+  rendus au même instant, l'agent les écrit dans un seul shader.
+- **Après une édition de clip** qui ferait se chevaucher deux régions, le rendu applique les
+  deux, dans l'ordre du tableau. Pas de réparation automatique : deux effets superposés ne
+  cassent rien.
 
 ### B.4 Persistance
 
@@ -170,7 +168,7 @@ ajoute à chaque fragment ce que le compositeur ne peut pas recalculer :
 "shaderEffects": [{
   "clipIndex": 0, "startSec": 1.0, "endSec": 5.0,
   "programmeStartSec": 1.0, "programmeEndSec": 5.0,
-  "target": "image", "lane": 0,
+  "target": "image",
   "contract": 1, "code": "fn effect(uv: vec2<f32>) -> vec4<f32> { … }",
   "params": [ { "name": "strength", "type": "number" } ],
   "values": { "strength": 1.0 }
@@ -363,8 +361,6 @@ refusé parce que la machine qui l'écrit est modeste.
   lectures y dominent aussi : sans les `sin`/`cos` du banc, 128 lectures coûtent encore 10,5 ms.
 - **Le Radeon 610M** des mesures Linux reste à mesurer. La description de l'outil donnera les
   paliers en ms sur la RTX et sur le M1, pour que l'agent raisonne en temps et non en lectures.
-- **Plusieurs effets au même instant s'additionnent.** Le retour d'un outil donne le palier de
-  l'effet, et le palier cumulé du moment le plus chargé de sa région.
 - **Rien n'est refusé au coût.** Le palier et sa recommandation reviennent à l'agent (E.3), qui
   décide, et ils restent lisibles dans le snapshot (E.2).
 
@@ -397,11 +393,11 @@ Une région choisit sa cible (`target`). Sans demande explicite, c'est `image`.
 Les flous de confidentialité restent sûrs. L'effet ne voit que des pixels déjà floutés et ne peut
 rien y retrouver : il n'existe aucun chemin vers l'image d'avant le flou.
 
-### D.2 Plusieurs effets à la fois
+### D.2 Un effet à la fois
 
-- **L'ordre.** Les régions actives à la frame s'appliquent par lane croissante, puis dans
-  l'ordre du tableau.
-- **Le coût.** Chacune fait une copie du RT dans `ann_copy` et une passe plein cadre.
+- **Le document n'en tient qu'un à un instant donné** (B.3). Une scène qui en superposerait les
+  appliquerait dans l'ordre du tableau.
+- **Le coût.** Un effet fait une copie du RT dans `ann_copy` et une passe plein cadre.
 - **Les cibles s'enchaînent dans l'ordre du dessin :** les effets `image`, puis les textes et
   leurs effets `text`, puis les effets `both`. Un effet ne voit que ce qui est dessiné avant lui.
 
@@ -519,8 +515,8 @@ intégré les reçoit par le même tableau.
 
 | Outil | Arguments | Effet |
 |---|---|---|
-| `addEffect` | `startSec`, `endSec` (secondes de règle), `effect` **ou** `effectId`, `values?`, `target?`, `lane?` | Pose une région. Avec `effect` (`name`, `description`, `code`, `params?`), crée d'abord la définition. Avec `effectId`, réutilise une définition du projet. |
-| `setEffect` | `effectRegionId`, `startSec?`, `endSec?`, `values?`, `target?`, `lane?` | Change une région. Seuls les champs passés changent. |
+| `addEffect` | `startSec`, `endSec` (secondes de règle), `effect` **ou** `effectId`, `values?`, `target?` | Pose une région. Avec `effect` (`name`, `description`, `code`, `params?`), crée d'abord la définition. Avec `effectId`, réutilise une définition du projet. |
+| `setEffect` | `effectRegionId`, `startSec?`, `endSec?`, `values?`, `target?` | Change une région. Seuls les champs passés changent. |
 | `setEffectDefinition` | `effectId`, `name?`, `description?`, `code?`, `params?` | Change une définition, donc toutes les régions qui l'utilisent. Un code neuf est compilé avant d'être accepté. Les `values` d'un paramètre retiré tombent, un paramètre nouveau prend son `default`. |
 | `getEffect` | `effectId` | Lecture : la définition entière, code compris. |
 | `removeModifier` | `id` | Retire une région d'effet, comme un zoom. |
@@ -533,7 +529,7 @@ intégré les reçoit par le même tableau.
   retrait.
 - **Le placement suit les autres régions :** `anchorForAgent` / `landingOf`. Le modèle est
   `addCameraFullscreen`. Une étendue qui ne couvre aucun clip est refusée (`coversNoClip`), et
-  une région qui en heurterait une autre de la même lane aussi (`refuseIfBlocked`).
+  une région qui en heurterait une autre aussi : un effet à la fois (`refuseIfBlocked`).
 
 ### E.2 Ce que l'agent relit
 
@@ -543,7 +539,7 @@ lecture :
 ```json
 "effects": [
   { "id": "fxr_…", "effectId": "fx_…", "name": "Ripple au clic",
-    "startSec": 0, "endSec": 6, "target": "image", "lane": 0, "values": { "strength": 1 } }
+    "startSec": 0, "endSec": 6, "target": "image", "values": { "strength": 1 } }
 ],
 "effectDefinitions": [
   { "effectId": "fx_…", "name": "Ripple au clic",
@@ -567,8 +563,8 @@ lecture :
 ### E.3 Les retours
 
 - **Accepté :** l'id, l'étendue posée (`landingReport`, comme les autres régions : fragments,
-  bornes rognées), et le coût : le palier de l'effet, le palier cumulé du moment le plus chargé,
-  et la recommandation du palier quand la région la dépasse. Par exemple : « lourd sur 45 s :
+  bornes rognées), et le coût : le palier de l'effet, et la recommandation du palier quand la région
+  la dépasse. Par exemple : « lourd sur 45 s :
   pour une région longue, vise moyen ».
 - **Refusé à la compilation :** l'enveloppe `{ error }`, avec l'erreur de naga ou du compilateur
   du backend, lignes et colonnes de SON code. Le document ne change pas.
@@ -645,7 +641,8 @@ dit `validated: false`, et les checks lisent le code comme du texte.
 
 ### F.1 Une piste « Effets » dans la timeline
 
-- **Où.** Une rangée par lane utilisée, plus une rangée vide pour en ouvrir une nouvelle. Elles se placent sous la piste Full Camera, dans l'ordre des lanes de `V4Timeline.tsx`.
+- **Où.** Une seule rangée « Effets », sous la piste Full Camera : les effets ne se chevauchent
+  pas (K.6).
 - **La pilule** porte le nom de la définition. La glisser, l'étirer, la sélectionner et la
   supprimer se font comme pour un zoom (`selectPill`, `startPillDrag`, `removeRegions`).
 - **L'annulation** passe par l'historique habituel (`saveDocument({ history: true })`). Une
@@ -778,7 +775,7 @@ Le détail est dans
 
 | Niveau | Ce qu'il couvre |
 |---|---|
-| Rust, `shader_fx.rs` | Prélude et struct générée ; packer de paramètres contre les offsets de naga ; borne littérale et plafond d'itérations ; estimation du coût et paliers (boucles imbriquées, fonctions dépliées) ; erreurs aux lignes de l'agent ; sélection des régions (lane, ordre, `underTrim`) ; `ctx.region` sur une pilule coupée. |
+| Rust, `shader_fx.rs` | Prélude et struct générée ; packer de paramètres contre les offsets de naga ; borne littérale et plafond d'itérations ; estimation du coût et paliers (boucles imbriquées, fonctions dépliées) ; erreurs aux lignes de l'agent ; sélection des régions (fenêtre, `underTrim`) ; `ctx.region` sur une pilule coupée. |
 | Rust, par backend | Une passe repeint la frame dans sa région et nulle part ailleurs ; les trois cibles (`text` laisse l'image intacte, `image` laisse les textes intacts) ; preview non bloquante puis `shader_fx_landed` ; effet cassé = frame intacte. Windows (fait), macOS (fait, sur le runner CI, avec en plus une vraie annotation entre une cible `image` et une cible `text`), Linux sur lavapipe. |
 | Rust, `frame_geometry.rs` | `ctx.clicks`, `ctx.footage`, `ctx.camera` en uv de sortie, sous zoom et sous tilt. |
 | TS, schéma | Parse, bornes des `values`, définition orpheline retirée, document ancien inchangé. |
@@ -813,13 +810,17 @@ Le détail est dans
    indépendants de la machine. L'agent les connaît, avec leurs recommandations. Un budget lié à
    la machine aurait refusé des effets haut de gamme sur une machine modeste, alors que l'export,
    lui, les rend très bien.
-3. **Pas de limites fermes non plus.** Paramètres, code et lanes ont des recommandations, et des
+3. **Pas de limites fermes non plus.** Paramètres et code ont des recommandations, et des
    plafonds techniques loin au-dessus (B.2). Seule reste ferme la borne littérale des boucles,
    avec son plafond de 4 096 itérations par pixel : une protection contre le blocage du GPU, pas
    une limite de créativité.
 4. **Pas de bouton « ajouter un effet » en v1.** Les effets naissent des agents.
 5. **Trois cibles : `image`, `text`, `both`.** Sans demande explicite, l'effet vise `image`, sous
    les textes.
+6. **Un effet à la fois** (décidé après les premières PR). Un effet est écrit sur mesure pour ce
+   que l'utilisateur demande : deux rendus au même instant s'écrivent dans un seul shader, au lieu
+   de s'empiler. Les lanes 0 à 7 des premières PR sont retirées du document, des outils et du
+   compositeur, et la timeline n'a qu'une rangée d'effets.
 
 ## L. Découpage en PR
 
@@ -833,7 +834,7 @@ ailleurs (`legacyEditor`, sans ancre).
      référence.
    - `check_shader_effect` compile pour le backend et rend le palier.
    - `scene.rs` lit la nouvelle forme ; la passe Windows gère les trois cibles (calque de textes
-     à part pour `text`), `lane` et l'éviction LRU.
+     à part pour `text`) et l'éviction LRU.
 2. **Modèle de données et DSL (TS).**
    - Schéma (B.2) et `RegionKind` dans tout le pipeline (B.3) ;
    - outils (E.1), snapshot (E.2), projection de scène (B.5) ;
@@ -844,7 +845,7 @@ ailleurs (`legacyEditor`, sans ancre).
 4. **Passe Linux.** WGSL direct, bind group layout explicite, thread de fond, test lavapipe.
 5. **`getFrames` depuis le document.** Rendu de frames sans export quand celui-ci manque ou est
    périmé (E.4).
-6. **Interface.** Piste et lanes, inspecteur, copier-coller, i18n.
+6. **Interface.** Piste, inspecteur, copier-coller, i18n.
 
 La PR 2 dépend de la 1. Les PR 3, 4 et 5 dépendent de la 1 et peuvent avancer en parallèle. La
 PR 6 dépend de la 2.

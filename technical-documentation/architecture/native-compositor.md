@@ -208,8 +208,8 @@ backend-specific.
   its effect. The live view (`set_shader_fx_blocking(false)`) skips the effect until it lands, then
   recomposes the paused frame (`shader_fx_landed`).
 - **Targets.** `image` effects run before the annotations and captions. `text` effects run on a
-  transparent text layer, which is then drawn over the image. `both` effects run last. Within a
-  target, effects apply by lane, then in scene order. Each pass copies its destination into
+  transparent text layer, which is then drawn over the image. `both` effects run last. The document holds
+  one effect at a time; a hand-written scene that overlaps several applies them in its order. Each pass copies its destination into
   `ann_copy` and repaints it with blending off. On Metal every pass is encoded in the frame's
   command buffer: a blit into `ann_copy`, then a render pass that loads its target (an effect may
   `discard`). `draw_annotations` takes the target it opens its pass on, which is how the text layer

@@ -6948,9 +6948,9 @@ mod tests {
     }
 
     /// Un fragment d'effet de 1 s à 3 s, tel que l'app l'envoie.
-    fn fx(code: &str, target: &str, lane: u32) -> serde_json::Value {
+    fn fx(code: &str, target: &str) -> serde_json::Value {
         serde_json::json!({
-            "clipIndex": 0, "startSec": 1.0, "endSec": 3.0, "target": target, "lane": lane,
+            "clipIndex": 0, "startSec": 1.0, "endSec": 3.0, "target": target,
             "contract": 1, "code": code,
             "params": [{"name": "level", "type": "number"}, {"name": "tint", "type": "color"}],
             "values": {"level": 1.0, "tint": [0.0, 1.0, 0.0, 1.0]},
@@ -6998,7 +6998,7 @@ mod tests {
     #[test]
     fn a_shader_effect_repaints_the_composed_frame_inside_its_region() {
         let Some(gpu) = gpu() else { return };
-        let comp = fx_compositor(&gpu, 320, 180, serde_json::json!([fx(INVERT, "image", 0)]));
+        let comp = fx_compositor(&gpu, 320, 180, serde_json::json!([fx(INVERT, "image")]));
         assert_eq!(corner_at(&comp, &gpu, 0.5), [255, 0, 0], "avant la région : le fond rouge");
         assert_eq!(corner_at(&comp, &gpu, 2.0), [0, 255, 255], "dans la région : rouge inversé");
         assert_eq!(corner_at(&comp, &gpu, 3.5), [255, 0, 0], "après la région : le fond rouge");
@@ -7011,7 +7011,7 @@ mod tests {
         let Some(gpu) = gpu() else { return };
         let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
         comp.set_shader_fx_blocking(false);
-        let scene = shader_fx_scene(serde_json::json!([fx(INVERT, "image", 0)]));
+        let scene = shader_fx_scene(serde_json::json!([fx(INVERT, "image")]));
         comp.set_live_params(live_params_from_scene(&scene));
         let start = std::time::Instant::now();
         comp.set_scene(Some(scene));
@@ -7028,13 +7028,12 @@ mod tests {
     /// qui paniquerait sur une erreur de validation.
     #[test]
     fn a_broken_or_unknown_effect_leaves_the_frame_untouched() {
-        let broken = fx("fn effect(uv: vec2<f32>) -> vec4<f32> { nope }", "image", 0);
+        let broken = fx("fn effect(uv: vec2<f32>) -> vec4<f32> { nope }", "image");
         let extra = fx(
             "@group(0) @binding(4) var<uniform> extra: vec4<f32>;\nfn effect(uv: vec2<f32>) -> vec4<f32> { return extra; }",
             "image",
-            0,
         );
-        let mut future = fx(BLUE, "image", 0);
+        let mut future = fx(BLUE, "image");
         future["contract"] = serde_json::json!(2);
         for effect in [broken, extra, future] {
             let Some(corner) = corner_under(serde_json::json!([effect])) else { return };
@@ -7046,7 +7045,7 @@ mod tests {
     /// suit le nombre `level` dans le buffer, et se lit telle que l'app l'a écrite.
     #[test]
     fn a_color_parameter_reaches_the_shader() {
-        let Some(corner) = corner_under(serde_json::json!([fx(TINT, "image", 0)])) else { return };
+        let Some(corner) = corner_under(serde_json::json!([fx(TINT, "image")])) else { return };
         assert_eq!(corner, [0, 255, 0]);
     }
 
@@ -7057,7 +7056,7 @@ mod tests {
     fn a_hidden_cursor_still_hands_the_effect_its_pointer_and_clicks() {
         let Some(gpu) = gpu() else { return };
         const SEES: &str = "fn effect(uv: vec2<f32>) -> vec4<f32> { return vec4<f32>(ctx.cursor.z, ctx.clicks[0].w, 0.0, 1.0); }";
-        let comp = fx_compositor(&gpu, 320, 180, serde_json::json!([fx(SEES, "image", 0)]));
+        let comp = fx_compositor(&gpu, 320, 180, serde_json::json!([fx(SEES, "image")]));
         comp.set_cursor(crate::cursor::CursorTrack::new_with_visibility(
             vec![(0.0, 0.5, 0.5), (4.0, 0.5, 0.5)],
             vec![1.5],
@@ -7068,35 +7067,19 @@ mod tests {
         assert_eq!(corner_at(&comp, &gpu, 2.0), [255, 255, 0]);
     }
 
-    /// Les lanes s'appliquent dans l'ordre : bleu puis inversion donne jaune, l'inverse donne bleu.
-    #[test]
-    fn lanes_apply_in_order() {
-        let Some(blue_then_invert) =
-            corner_under(serde_json::json!([fx(INVERT, "image", 1), fx(BLUE, "image", 0)]))
-        else {
-            return;
-        };
-        assert_eq!(blue_then_invert, [255, 255, 0]);
-        let invert_then_blue =
-            corner_under(serde_json::json!([fx(INVERT, "image", 0), fx(BLUE, "image", 1)])).unwrap();
-        assert_eq!(invert_then_blue, [0, 0, 255]);
-    }
-
-    /// `text` ne touche que le calque des textes, posé ensuite sur l'image ; `both` voit tout.
-    /// Sans annotation, le calque est transparent : un effet `text` qui le rend tel quel laisse
-    /// l'image intacte, un effet `text` opaque la recouvre.
+    /// `text` ne touche que le calque des textes, posé ensuite sur l'image ; `image` et `both`
+    /// repeignent l'image. Sans annotation, le calque est transparent : un effet `text` qui le
+    /// rend tel quel laisse l'image intacte, un effet `text` opaque la recouvre.
     #[test]
     fn the_three_targets_keep_to_their_layer() {
-        let Some(image_only) = corner_under(serde_json::json!([fx(BLUE, "image", 0)])) else { return };
+        let Some(image_only) = corner_under(serde_json::json!([fx(BLUE, "image")])) else { return };
         assert_eq!(image_only, [0, 0, 255]);
-        let text_untouched =
-            corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(SAME, "text", 0)])).unwrap();
-        assert_eq!(text_untouched, [0, 0, 255], "un calque transparent ne change pas l'image");
-        let text_opaque =
-            corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(TINT, "text", 0)])).unwrap();
+        let text_untouched = corner_under(serde_json::json!([fx(SAME, "text")])).unwrap();
+        assert_eq!(text_untouched, [255, 0, 0], "un calque transparent ne change pas l'image");
+        let text_opaque = corner_under(serde_json::json!([fx(TINT, "text")])).unwrap();
         assert_eq!(text_opaque, [0, 255, 0], "le calque des textes, opaque, posé sur l'image");
-        let both = corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(INVERT, "both", 0)])).unwrap();
-        assert_eq!(both, [255, 255, 0], "`both` voit l'image finale");
+        let both = corner_under(serde_json::json!([fx(INVERT, "both")])).unwrap();
+        assert_eq!(both, [0, 255, 255], "`both` repeint l'image finale");
     }
 
     /// Calibre les paliers de coût : le surcoût par frame d'un effet qui lit `frame()` N fois,
@@ -7143,7 +7126,7 @@ mod tests {
                 let code = reads_effect(reads);
                 let report = crate::shader_fx::analyze(&code, &[]).expect("analyse").report;
                 let with = (0..3)
-                    .map(|_| per_frame(w, h, serde_json::json!([fx(&code, "image", 0)])))
+                    .map(|_| per_frame(w, h, serde_json::json!([fx(&code, "image")])))
                     .fold(f64::MAX, f64::min);
                 eprintln!(
                     "{w}x{h} : {reads:>3} lectures ({:>10}) : +{:.3} ms/frame",

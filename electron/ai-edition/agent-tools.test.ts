@@ -3781,13 +3781,12 @@ describe("shader effects", () => {
 			clipId: "clip_1",
 			values: { level: 0.5 },
 			target: "image",
-			lane: 0,
 		});
 		expect(JSON.parse(added.resultJson)).toMatchObject({
 			effectRegionId: range.id,
 			effectId: effect.id,
 			validated: true,
-			cost: { tier: "light", busiestTier: "light" },
+			cost: { tier: "light", frameReads: 4 },
 		});
 		expect(() => documentSchema.parse(doc)).not.toThrow();
 	});
@@ -3815,12 +3814,14 @@ describe("shader effects", () => {
 		expect(reused.document?.shaderEffectRanges).toHaveLength(2);
 	});
 
-	it("keeps one lane free of overlaps, and points to another lane", () => {
+	it("runs one effect at a time, and says to combine looks in one shader", () => {
 		const doc = add(fixtureDocument()).document as AxcutDocument;
-		const blocked = add(doc, { startSec: 4, endSec: 8 });
+		const blocked = add(doc, { startSec: 4, endSec: 8, target: "text" });
 		expect(blocked.ok).toBe(false);
-		expect(JSON.parse(blocked.resultJson).error).toMatch(/lane 0[\s\S]*another lane/);
-		expect(add(doc, { startSec: 4, endSec: 8, lane: 1 }).ok).toBe(true);
+		expect(JSON.parse(blocked.resultJson).error).toMatch(
+			/one effect runs at a time[\s\S]*one shader/,
+		);
+		expect(add(doc, { startSec: 6, endSec: 8 }).ok).toBe(true);
 	});
 
 	it("recommends a lighter tier when a heavy effect runs long, and never refuses it", () => {
@@ -3861,16 +3862,13 @@ describe("shader effects", () => {
 		});
 	});
 
-	it("moves a region against its own lane only: another lane's effect does not shorten it", () => {
-		const below = add(fixtureDocument()).document as AxcutDocument;
-		const doc = add(below, { startSec: 8, endSec: 9, lane: 1 }).document as AxcutDocument;
-		const upper = doc.shaderEffectRanges?.find((r) => r.lane === 1);
-		const moved = run(doc, "setEffect", { effectRegionId: upper?.id, startSec: 4 });
-		expect(moved.ok).toBe(true);
-		expect(moved.document?.shaderEffectRanges?.find((r) => r.lane === 1)).toMatchObject({
-			startMs: 4000,
-			endMs: 9000,
-		});
+	it("refuses to move an effect onto another one", () => {
+		const first = add(fixtureDocument()).document as AxcutDocument;
+		const doc = add(first, { startSec: 8, endSec: 9 }).document as AxcutDocument;
+		const second = doc.shaderEffectRanges?.find((r) => r.startMs === 8000);
+		const moved = run(doc, "setEffect", { effectRegionId: second?.id, startSec: 4 });
+		expect(moved.ok).toBe(false);
+		expect(JSON.parse(moved.resultJson).error).toMatch(/one effect runs at a time/);
 	});
 
 	it("changes the definition for every region, recompiles, and drops a removed parameter's values", () => {
@@ -3893,7 +3891,7 @@ describe("shader effects", () => {
 		const read = JSON.parse(run(doc, "getEffect", { effectId }).resultJson);
 		expect(read).toMatchObject({
 			code: CODE,
-			regions: [{ startSec: 2, endSec: 6, target: "image", lane: 0 }],
+			regions: [{ startSec: 2, endSec: 6, target: "image" }],
 		});
 		const snapshot = JSON.parse(run(doc, "getCurrentDocument", {}).resultJson);
 		expect(snapshot.effects).toEqual([
