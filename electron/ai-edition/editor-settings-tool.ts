@@ -313,7 +313,7 @@ export function editorSettingsSnapshot(
 	return {
 		settings: settingsForModel(document),
 		settingsContext: {
-			note: "settings uses setEditorSettings' own shape. inactive lists each setting the editor hides in this state, and why: a value set there is stored but changes nothing until that state changes. cameraSegmentation null means this server could not check whether the machine can cut out the camera background.",
+			note: "settings uses setEditorSettings' own shape. inactive lists each setting the editor hides in this state, and why: a value set there is stored but changes nothing until that state changes. cameraSegmentation null means this server could not check whether the machine can cut out the camera background. The captions are not here: getCaptions reads them, setCaptionSettings sets them.",
 			aspectRatios: [...(autoAvailable ? ["auto"] : []), ...ASPECT_RATIO_PRESETS],
 			originalAspectRatios: collectNativeFormats(document).map(({ ratio: _ratio, ...f }) => f),
 			formatFill: formatFillAvailability(document),
