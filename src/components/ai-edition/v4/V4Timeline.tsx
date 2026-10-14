@@ -596,7 +596,7 @@ const AudioLanePill = memo(function AudioLanePill({
 
 interface LanePill {
 	id: string;
-	kind: "annotation" | "speed" | "trim" | "zoom" | "cameraFullscreen";
+	kind: "annotation" | "speed" | "trim" | "zoom" | "cameraFullscreen" | "shaderEffect";
 	start: number;
 	end: number;
 	label: string;
@@ -767,6 +767,15 @@ export function V4Timeline({
 			sourceIds: p.ids,
 		}),
 	);
+	const effectNames = new Map(tl.shaderEffects.map((effect) => [effect.id, effect.name]));
+	const shaderEffectPills: LanePill[] = coalesceRegionsForRuler(tl.shaderEffectRanges).map((p) => ({
+		id: p.ids[0],
+		kind: "shaderEffect",
+		start: p.start,
+		end: p.end,
+		label: effectNames.get(p.member.effectId) ?? "",
+		sourceIds: p.ids,
+	}));
 	const zoomRuns = coalesceRegionsForRuler(tl.zoomRegions);
 	const zoomPills: LanePill[] = zoomRuns.map((p) => ({
 		id: p.ids[0],
@@ -940,6 +949,7 @@ export function V4Timeline({
 				speed: tl.speedRegions,
 				zoom: tl.zoomRegions,
 				cameraFullscreen: tl.cameraFullscreenRegions,
+				shaderEffect: tl.shaderEffectRanges,
 				// Nothing to edit on a trim but its span, and a span edit moves the whole pill.
 				trim: [],
 			};
@@ -1015,6 +1025,8 @@ export function V4Timeline({
 					await tl.updateAnnotationSpan(grabbed, s * 1000, en * 1000);
 				else if (pill.kind === "cameraFullscreen")
 					await tl.updateCameraFullscreenSpan(grabbed, s * 1000, en * 1000);
+				else if (pill.kind === "shaderEffect")
+					await tl.updateShaderEffectSpan(grabbed, s * 1000, en * 1000);
 				else {
 					// Trims are stored in source-time per asset but manipulated on the
 					// timeline like every other pill. Ventilate the new span across the
@@ -1444,7 +1456,9 @@ export function V4Timeline({
 					? styles.laneTrim
 					: kind === "cameraFullscreen"
 						? styles.laneCameraFullscreen
-						: styles.laneZoom;
+						: kind === "shaderEffect"
+							? styles.laneShaderEffect
+							: styles.laneZoom;
 	const pillIcon = (kind: LanePill["kind"]) =>
 		kind === "annotation" ? (
 			<MessageSquare size={12} />
@@ -1454,6 +1468,8 @@ export function V4Timeline({
 			<Scissors size={12} />
 		) : kind === "cameraFullscreen" ? (
 			<Maximize2 size={12} />
+		) : kind === "shaderEffect" ? (
+			<Sparkles size={12} />
 		) : (
 			<ZoomIn size={12} />
 		);
@@ -2307,6 +2323,13 @@ export function V4Timeline({
 											: ts("layout.noWebcam"),
 									)}
 								</div>
+								{/* Agent-written shader effects: one at a time, so one row. Only when the project
+								    has one: an agent writes them, nothing in the editor adds one, so an empty
+								    row would offer nothing. The shell grows by its height
+								    (`EFFECT_LANE_EXPANSION_PX`). */}
+								{tl.shaderEffectRanges.length > 0 ? (
+									<div className={styles.tlLane}>{renderPills(shaderEffectPills, "")}</div>
+								) : null}
 								{/* Imported audio tracks (issue #350). Always shown, like every other
 								    lane — "Add audio" is a toolbar peer of the region tools now (and
 								    has a keyboard shortcut), so an empty lane advertises the shortcut
