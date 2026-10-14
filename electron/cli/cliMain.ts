@@ -464,16 +464,23 @@ export function runCli(command: CliCommand): void {
 					// a half-written project, and the window left for a save to slip in is the rename.
 					// ponytail: no cross-process file lock exists to close it; add one if the app
 					// ever saves this file while the CLI runs.
-					const tmpPath = `${command.projectPath}.${process.pid}.tmp`;
+					// The real file, not a symlink to it, keeping its permissions.
+					const target = await fs.realpath(command.projectPath);
+					const { mode } = await fs.stat(target);
+					const tmpPath = `${target}.${process.pid}.tmp`;
 					try {
-						await fs.writeFile(tmpPath, JSON.stringify(result.projectData, null, 2), "utf8");
-						const current = await fs.readFile(command.projectPath, "utf8").catch(() => null);
+						await fs.writeFile(tmpPath, JSON.stringify(result.projectData, null, 2), {
+							encoding: "utf8",
+							mode: 0o600,
+						});
+						await fs.chmod(tmpPath, mode & 0o777);
+						const current = await fs.readFile(target, "utf8").catch(() => null);
 						if (current !== captionsSource) {
 							throw new Error(
 								`${command.projectPath} changed while it was being captioned, so nothing was written. Run captions again.`,
 							);
 						}
-						await fs.rename(tmpPath, command.projectPath);
+						await fs.rename(tmpPath, target);
 					} finally {
 						await fs.rm(tmpPath, { force: true }).catch(() => undefined);
 					}
