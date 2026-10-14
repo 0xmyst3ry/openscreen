@@ -98,7 +98,7 @@ La page [Installation](./installation.md) donne les étapes pour chaque platefor
 |---|---|
 | Site web | [getopenscreen.com](https://getopenscreen.com/) |
 | Code source, versions et tickets | [github.com/getopenscreen/openscreen](https://github.com/getopenscreen/openscreen) |
-| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5) |
+| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website) |
 | Discord | [getopenscreen.com/discord](https://getopenscreen.com/discord/) |
 | Projet d'origine, archivé et en lecture seule | [github.com/siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen) |
 

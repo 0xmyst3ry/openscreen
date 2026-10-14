@@ -98,7 +98,7 @@ OpenScreen 是一款免费的录屏与视频剪辑软件，采用 MIT 许可证�
 |---|---|
 | 网站 | [getopenscreen.com](https://getopenscreen.com/) |
 | 源代码、版本发布和 Issue | [github.com/getopenscreen/openscreen](https://github.com/getopenscreen/openscreen) |
-| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5) |
+| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website) |
 | Discord | [getopenscreen.com/discord](https://getopenscreen.com/discord/) |
 | 原项目，已归档，只读 | [github.com/siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen) |
 
