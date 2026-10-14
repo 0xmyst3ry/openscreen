@@ -3859,6 +3859,18 @@ describe("shader effects", () => {
 		});
 	});
 
+	it("moves a region against its own lane only: another lane's effect does not shorten it", () => {
+		const below = add(fixtureDocument()).document as AxcutDocument;
+		const doc = add(below, { startSec: 8, endSec: 9, lane: 1 }).document as AxcutDocument;
+		const upper = doc.shaderEffectRanges?.find((r) => r.lane === 1);
+		const moved = run(doc, "setEffect", { effectRegionId: upper?.id, startSec: 4 });
+		expect(moved.ok).toBe(true);
+		expect(moved.document?.shaderEffectRanges?.find((r) => r.lane === 1)).toMatchObject({
+			startMs: 4000,
+			endMs: 9000,
+		});
+	});
+
 	it("changes the definition for every region, recompiles, and drops a removed parameter's values", () => {
 		const doc = add(fixtureDocument(), { values: { tint: "#ff0000" } }).document as AxcutDocument;
 		const effectId = doc.shaderEffects?.[0].id;

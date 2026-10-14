@@ -73,7 +73,15 @@ export default defineScenario({
 			id: "dsl.effect.covers-the-clicks",
 			weight: 3,
 			check: (c) => {
-				const ranges = c.after.shaderEffectRanges ?? [];
+				// Only a range of an effect that reads the clicks makes a ripple there.
+				const readsClicks = new Set(
+					(c.after.shaderEffects ?? [])
+						.filter((e) => e.code.includes("ctx.clicks"))
+						.map((e) => e.id),
+				);
+				const ranges = (c.after.shaderEffectRanges ?? []).filter((r) =>
+					readsClicks.has(r.effectId),
+				);
 				const missed = DWELLS.filter(
 					(d) =>
 						!ranges.some(
@@ -83,7 +91,7 @@ export default defineScenario({
 				return missed.length === 0
 					? pass()
 					: fail(
-							`clics hors de toute région d'effet : ${missed.map((d) => `${d.atSec} s`).join(", ")}`,
+							`clics hors de toute région d'un effet qui lit ctx.clicks : ${missed.map((d) => `${d.atSec} s`).join(", ")}`,
 						);
 			},
 		},
