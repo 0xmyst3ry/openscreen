@@ -74,6 +74,13 @@ import { offersStarPrompt, REPO_URL, storeReviewUrl } from "./star-prompt";
 import { registerSttIpc, shutdownStt } from "./stt";
 import { checkLatestRelease } from "./update-checker";
 import { loadUpdateMode, saveUpdateMode } from "./update-settings";
+import {
+	doNotTrack,
+	loadUsagePingState,
+	sendUsagePing,
+	setUsagePingEnabled,
+	USAGE_PING_INTERVAL_MS,
+} from "./usage-ping";
 import { configureWaylandSupport } from "./wayland";
 import {
 	createCountdownOverlayWindow,
@@ -652,6 +659,28 @@ function persistUpdateMode(mode: UpdateMode) {
 	updateTrayMenu(isRecording);
 }
 
+let usagePingEnabled = true;
+
+/** Hidden where the ping never runs anyway: a dev build, or DO_NOT_TRACK set. */
+function showUsagePingToggle(): boolean {
+	return getInstallChannel() !== "dev" && !doNotTrack(process.env);
+}
+
+function persistUsagePingEnabled(enabled: boolean) {
+	usagePingEnabled = enabled;
+	setUsagePingEnabled(app.getPath("userData"), enabled);
+	updateTrayMenu(isRecording);
+}
+
+function runUsagePing() {
+	void sendUsagePing(app.getPath("userData"), {
+		version: app.getVersion(),
+		os: process.platform,
+		arch: process.arch,
+		channel: getInstallChannel(),
+	});
+}
+
 async function downloadAndInstall(latestVersion: string) {
 	const result = await runUnblockedDownloadAndInstall({
 		download: downloadSelfUpdate,
@@ -943,6 +972,16 @@ function updateTrayMenu(recording: boolean = false) {
 									checked: currentUpdateMode === mode,
 									click: () => persistUpdateMode(mode),
 								})),
+							},
+						]
+					: []),
+				...(showUsagePingToggle()
+					? [
+							{
+								label: mainT("common", "actions.usagePing") || "Send Anonymous Usage Count",
+								type: "checkbox" as const,
+								checked: usagePingEnabled,
+								click: () => persistUsagePingEnabled(!usagePingEnabled),
 							},
 						]
 					: []),
@@ -1390,9 +1429,12 @@ appReady?.then(async () => {
 	// all (see auto-updater.ts getUpdater) — every real update path applies
 	// its settings lazily on first use.
 	currentUpdateMode = loadUpdateMode(app.getPath("userData"));
+	usagePingEnabled = loadUsagePingState(app.getPath("userData")).enabled;
 	createTray();
 	updateTrayMenu();
 	startBackgroundUpdateTimer();
+	runUsagePing();
+	setInterval(runUsagePing, USAGE_PING_INTERVAL_MS).unref();
 	configureAboutPanel();
 	setupApplicationMenu();
 	await ensureRecordingsDir();
