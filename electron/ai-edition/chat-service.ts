@@ -16,6 +16,7 @@ import {
 	createEmptyDocument,
 	documentSchema,
 } from "../../src/lib/ai-edition/schema";
+import type { ShaderEffectChecker } from "../../src/lib/ai-edition/shaderEffects";
 import type {
 	AiEditionChatMessage,
 	AiEditionChatResult,
@@ -322,6 +323,8 @@ export interface ChatRunEnv {
 	cursor?: CursorTelemetryReader;
 	/** Whether this machine can cut out the camera background, asked of the compositor. */
 	cameraSegmentation?: () => SegmentationSupport;
+	/** The compositor's check of an agent-written effect's WGSL. */
+	checkShaderEffect?: ShaderEffectChecker;
 	/** Runtime-only model retry override used by bounded measurement harnesses. */
 	maxRetries?: number;
 }
@@ -468,6 +471,7 @@ export async function runChat(
 		editsAllowed,
 		cursor: env.cursor,
 		cameraSegmentation: env.cameraSegmentation,
+		checkShaderEffect: env.checkShaderEffect,
 	});
 
 	// The project was deleted while the agent ran: its sessions are gone, so a

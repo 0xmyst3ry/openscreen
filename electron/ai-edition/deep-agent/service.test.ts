@@ -83,6 +83,19 @@ const ARGS: Record<string, unknown> = {
 	setAnnotation: { annotationId: "ann_nope" },
 	addCameraFullscreen: { startSec: 1, endSec: 2 },
 	setCameraFullscreen: { cameraFullscreenId: "cam_nope" },
+	// No checker in these tests: the effect is stored unchecked, and the result says so.
+	addEffect: {
+		startSec: 1,
+		endSec: 2,
+		effect: {
+			name: "Pass-through",
+			description: "Shows the frame unchanged.",
+			code: "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }",
+		},
+	},
+	setEffect: { effectRegionId: "fxr_nope" },
+	setEffectDefinition: { effectId: "fx_nope" },
+	getEffect: { effectId: "fx_nope" },
 	// The fixture has no `kind: "audio"` asset, so these exercise the refusal branch —
 	// the honest one to pin: the agent can place imported audio, never import it.
 	addAudio: { assetId: "audio_nope", startSec: 1, endSec: 2 },
@@ -389,6 +402,7 @@ describe("one description of the tools, not two", () => {
 			"getTranscript",
 			"getTranscriptWords",
 			"getCursorTrack",
+			"getEffect",
 			"getCaptions",
 			"getCaptionTranslationUnits",
 		]);

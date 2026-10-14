@@ -104,10 +104,12 @@ selection pane.
 ## Adding a region kind
 
 An ordered checklist of every file that must move when a new modifier
-(`"blur"`, `"captionHighlight"`, …) joins the existing five. The kind is added
+(`"blur"`, `"captionHighlight"`, …) joins the existing ones. The kind is added
 to `RegionKind` in `src/lib/ai-edition/document/timeline.ts` (`"zoom" |
-"trim" | "annotation" | "speed" | "cameraFullscreen"`, `:18`); every site that
-switches on it is checked below. Each path has been verified on this branch.
+"trim" | "annotation" | "speed" | "cameraFullscreen" | "audio" | "shaderEffect"`);
+every site that switches on it is checked below. `"shaderEffect"` went through
+the document and agent steps but has no lane or inspector in the editor yet:
+agents write effects ([docs/shader-effects.md](../../docs/shader-effects.md)). Each path has been verified on this branch.
 
 1. **Schema** — `src/lib/ai-edition/schema/index.ts`. Add a `xxxRegionSchema`
    Zod object that extends the modifier base (`{id, startMs, endMs,

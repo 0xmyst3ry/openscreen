@@ -192,6 +192,7 @@ describe("the mutating-tool table", () => {
 				"addAnnotation",
 				"addAudio",
 				"addCameraFullscreen",
+				"addEffect",
 				"addSpeed",
 				"addTrim",
 				"addTrims",
@@ -211,6 +212,8 @@ describe("the mutating-tool table", () => {
 				"setAudio",
 				"setCameraFullscreen",
 				"setClipRange",
+				"setEffect",
+				"setEffectDefinition",
 				"setEditorSettings",
 				"setSpeed",
 				"setTrim",
@@ -3732,5 +3735,180 @@ describe("clip structure (#1180)", () => {
 				expect(result.resultJson).toContain("could not be read");
 			}
 		});
+	});
+});
+
+describe("shader effects", () => {
+	const CODE = "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv) * params.level; }";
+	const params = [
+		{ type: "number", name: "level", label: "Level", default: 1, min: 0, max: 2 },
+		{ type: "color", name: "tint", label: "Tint", default: "#000000" },
+	];
+	// Stands in for the compositor's check: refuses `nope`, prices every effect at 4 reads.
+	const checkShaderEffect = (code: string) =>
+		code.includes("nope")
+			? { error: "error: no definition in scope for identifier: `nope`" }
+			: { tier: "light" as const, frameReads: 4, iterations: 0 };
+	const options = { checkShaderEffect };
+	const run = (document: AxcutDocument, name: string, args: unknown) =>
+		executeAgentTool(document, name, JSON.stringify(args), options);
+	const add = (document: AxcutDocument, args: Record<string, unknown> = {}) =>
+		run(document, "addEffect", {
+			startSec: 2,
+			endSec: 6,
+			effect: { name: "Dim", description: "Dims the picture.", code: CODE, params },
+			...args,
+		});
+
+	it("writes the effect and poses it, anchored, with only the values that differ", () => {
+		const added = add(fixtureDocument(), { values: { level: 0.5, tint: "#000000" } });
+		expect(added.ok).toBe(true);
+		const doc = added.document as AxcutDocument;
+		const [effect] = doc.shaderEffects ?? [];
+		const [range] = doc.shaderEffectRanges ?? [];
+		expect(effect).toMatchObject({
+			name: "Dim",
+			contract: 1,
+			origin: "agent",
+			cost: { tier: "light", frameReads: 4 },
+		});
+		expect(range).toMatchObject({
+			effectId: effect.id,
+			startMs: 2000,
+			endMs: 6000,
+			clipId: "clip_1",
+			values: { level: 0.5 },
+			target: "image",
+			lane: 0,
+		});
+		expect(JSON.parse(added.resultJson)).toMatchObject({
+			effectRegionId: range.id,
+			effectId: effect.id,
+			validated: true,
+			cost: { tier: "light", busiestTier: "light" },
+		});
+		expect(() => documentSchema.parse(doc)).not.toThrow();
+	});
+
+	it("refuses code that does not compile, with the compiler's error, and changes nothing", () => {
+		const refused = add(fixtureDocument(), {
+			effect: {
+				name: "Broken",
+				description: "",
+				code: "fn effect(uv: vec2<f32>) -> vec4<f32> { return nope; }",
+			},
+		});
+		expect(refused.ok).toBe(false);
+		expect(refused.document).toBeUndefined();
+		expect(JSON.parse(refused.resultJson).error).toMatch(/does not compile[\s\S]*nope/);
+	});
+
+	it("takes either a new effect or one of the project's, not both or neither", () => {
+		const doc = add(fixtureDocument()).document as AxcutDocument;
+		const effectId = doc.shaderEffects?.[0].id;
+		expect(run(doc, "addEffect", { startSec: 8, endSec: 9 }).ok).toBe(false);
+		const reused = run(doc, "addEffect", { startSec: 8, endSec: 9, effectId });
+		expect(reused.ok).toBe(true);
+		expect(reused.document?.shaderEffects).toHaveLength(1);
+		expect(reused.document?.shaderEffectRanges).toHaveLength(2);
+	});
+
+	it("keeps one lane free of overlaps, and points to another lane", () => {
+		const doc = add(fixtureDocument()).document as AxcutDocument;
+		const blocked = add(doc, { startSec: 4, endSec: 8 });
+		expect(blocked.ok).toBe(false);
+		expect(JSON.parse(blocked.resultJson).error).toMatch(/lane 0[\s\S]*another lane/);
+		expect(add(doc, { startSec: 4, endSec: 8, lane: 1 }).ok).toBe(true);
+	});
+
+	it("recommends a lighter tier when a heavy effect runs long, and never refuses it", () => {
+		const heavy = {
+			...options,
+			checkShaderEffect: () => ({ tier: "heavy" as const, frameReads: 100 }),
+		};
+		const added = executeAgentTool(
+			fixtureDocument(),
+			"addEffect",
+			JSON.stringify({
+				startSec: 0,
+				endSec: 40,
+				effect: { name: "Blur", description: "", code: CODE, params },
+			}),
+			heavy,
+		);
+		expect(added.ok).toBe(true);
+		expect(JSON.parse(added.resultJson).cost.advice).toMatch(/heavy over 40\.0 s/);
+	});
+
+	it("re-tunes, retargets and moves a region; a value back at its default is dropped", () => {
+		const doc = add(fixtureDocument(), { values: { level: 0.5 } }).document as AxcutDocument;
+		const regionId = doc.shaderEffectRanges?.[0].id;
+		const tuned = run(doc, "setEffect", {
+			effectRegionId: regionId,
+			values: { level: 1, tint: "#ff0000" },
+			target: "both",
+			startSec: 10,
+			endSec: 12,
+		});
+		expect(tuned.ok).toBe(true);
+		expect(tuned.document?.shaderEffectRanges?.[0]).toMatchObject({
+			startMs: 10000,
+			endMs: 12000,
+			target: "both",
+			values: { tint: "#ff0000" },
+		});
+	});
+
+	it("changes the definition for every region, recompiles, and drops a removed parameter's values", () => {
+		const doc = add(fixtureDocument(), { values: { tint: "#ff0000" } }).document as AxcutDocument;
+		const effectId = doc.shaderEffects?.[0].id;
+		const refused = run(doc, "setEffectDefinition", {
+			effectId,
+			code: "fn effect(uv: vec2<f32>) -> vec4<f32> { return nope; }",
+		});
+		expect(refused.ok).toBe(false);
+		const changed = run(doc, "setEffectDefinition", { effectId, params: [params[0]] });
+		expect(changed.ok).toBe(true);
+		expect(changed.document?.shaderEffectRanges?.[0].values).toEqual({});
+		expect(JSON.parse(changed.resultJson)).toMatchObject({ regions: 1, validated: true });
+	});
+
+	it("reads an effect's code by getEffect, and lists effects without it in the snapshot", () => {
+		const doc = add(fixtureDocument()).document as AxcutDocument;
+		const effectId = doc.shaderEffects?.[0].id;
+		const read = JSON.parse(run(doc, "getEffect", { effectId }).resultJson);
+		expect(read).toMatchObject({
+			code: CODE,
+			regions: [{ startSec: 2, endSec: 6, target: "image", lane: 0 }],
+		});
+		const snapshot = JSON.parse(run(doc, "getCurrentDocument", {}).resultJson);
+		expect(snapshot.effects).toEqual([
+			expect.objectContaining({ effectId, name: "Dim", startSec: 2, endSec: 6 }),
+		]);
+		expect(snapshot.effectDefinitions[0]).toMatchObject({ effectId, lines: 1, regions: 1 });
+		expect(snapshot.effectDefinitions[0].code).toBeUndefined();
+		expect(snapshot.timeBaseNote).toMatch(/effects/);
+	});
+
+	it("removes a region by removeModifier, and its definition with the last one", () => {
+		const doc = add(fixtureDocument()).document as AxcutDocument;
+		const removed = run(doc, "removeModifier", { id: doc.shaderEffectRanges?.[0].id });
+		expect(removed.ok).toBe(true);
+		expect(JSON.parse(removed.resultJson).kind).toBe("shaderEffect");
+		expect(removed.document?.shaderEffectRanges).toEqual([]);
+		expect(removed.document?.shaderEffects).toEqual([]);
+	});
+
+	it("says when nothing could check the code", () => {
+		const added = executeAgentTool(
+			fixtureDocument(),
+			"addEffect",
+			JSON.stringify({
+				startSec: 1,
+				endSec: 2,
+				effect: { name: "Dim", description: "", code: CODE, params },
+			}),
+		);
+		expect(JSON.parse(added.resultJson)).toMatchObject({ validated: false, cost: null });
 	});
 });

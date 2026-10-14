@@ -852,6 +852,33 @@ mod tests {
         assert_eq!((r.frame_reads, r.tier), (1, Tier::Light));
     }
 
+    /// The examples agents read in the MCP resource (`electron/mcp/effects-contract.ts`) compile
+    /// against this prelude, at the tier the resource promises.
+    #[test]
+    fn the_examples_of_the_mcp_contract_compile() {
+        let src = include_str!("../../../electron/mcp/effects-contract.ts");
+        let examples: Vec<String> = src
+            .split("## Example")
+            .skip(1)
+            .map(|section| {
+                section
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("    "))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect();
+        assert_eq!(examples.len(), 2, "le ripple et la vignette");
+        let ripple = [
+            decl("strength", ShaderParamType::Number),
+            decl("radius", ShaderParamType::Number),
+            decl("duration", ShaderParamType::Number),
+        ];
+        let vignette = [decl("depth", ShaderParamType::Number), decl("tint", ShaderParamType::Color)];
+        assert_eq!(analyze(&examples[0], &ripple).expect("ripple").report.tier, Tier::Light);
+        assert_eq!(analyze(&examples[1], &vignette).expect("vignette").report.tier, Tier::Light);
+    }
+
     #[test]
     fn the_active_regions_and_their_progress() {
         let mut a = test_effect(VIGNETTE, vec![], &[]);
