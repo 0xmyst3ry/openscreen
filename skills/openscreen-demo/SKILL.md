@@ -60,7 +60,7 @@ Write a storyboard and show it to the user in a few lines, then carry on unless 
 
 ## 4. Record
 
-1. `startRecording` with `window`. It returns once capture has started. Connected to the server in the app, the take goes through OpenScreen's recording bar: the editor closes, the bar counts down, and `stopRecording` opens the take in the editor. Pass `camera` only when the user wants to appear on screen: the webcam then shows as a picture-in-picture.
+1. `startRecording` with `window`. It returns once capture has started. Connected to the server in the app, the take goes through OpenScreen's recording bar: the editor closes, the bar counts down, and `stopRecording` opens the take in the editor. Pass `camera` only when the user wants to appear on screen: the webcam then shows as a picture-in-picture. Pass `microphone: true` when the user narrates: without it the take has no voice, and nothing to caption.
 2. Play the storyboard. Move deliberately, and pause about one second after each result appears.
 3. `stopRecording` with a `title`. Keep what it returns: `projectId`, `checkpointId`, `videoPath`, `recordingStartedAt`.
 
@@ -88,7 +88,7 @@ Use the document tools, always with the `projectId`. Read the project first with
 - **Hide what is private:** an email address, a token or a name that shows on screen gets `addAnnotation` with `type: "blur"` over the span it is visible. Its x, y, width and height are percent of the recording's picture, not of the frame, so it stays on what it hides when a zoom moves the picture. Check it with `getFrames`.
 - **Music or a voiceover:** `importMedia` with the file's absolute path adds it to the project's media, then `addAudio` plays it over a span. `removeMedia` takes back a file the timeline no longer uses.
 - **Name:** `setProjectInfo` renames the project, if the `title` given to `stopRecording` no longer fits.
-- **Captions, for a narrated take** (recorded with `microphone`):
+- **Captions, for a narrated take** (`startRecording` with `microphone: true`):
   1. `transcribe` with the `projectId`. Whisper runs on this machine and can take a minute; a take has no transcript before this.
   2. `setCaptionSettings` with `enabled: true` and a `style`, plus `anchorV`, `insetY` or `maxWordsPerLine` if the callouts need room.
   3. To caption in another language: `getCaptionTranslationUnits` with the `language`, translate each unit yourself as a whole phrase, store them with `putCaptionTranslation`, then `setCaptionSettings` with that `language`.
