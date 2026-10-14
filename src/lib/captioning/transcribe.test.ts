@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
-import { transcribeMono16kToSegments } from "./transcribe";
+import { transcribeSourceFileToSegments } from "./transcribe";
 
 /**
- * The renderer-side `transcribeMono16kToSegments` is a thin adapter on top of
+ * The renderer-side `transcribeSourceFileToSegments` is a thin adapter on top of
  * `electronAPI.stt.transcribe`. It must:
  *  - emit each word from `wordSegments` as a single-token `CaptionSegment`,
  *  - tag the run `granularity: "word"`,
@@ -75,7 +75,7 @@ const removeMockApi = () => {
 	lastStatusCb = null;
 };
 
-describe("transcribeMono16kToSegments", () => {
+describe("transcribeSourceFileToSegments", () => {
 	beforeEach(() => {
 		installMockApi();
 	});
@@ -95,8 +95,7 @@ describe("transcribeMono16kToSegments", () => {
 			backend: "whisper-cpu",
 		});
 
-		const samples = new Float32Array(1600);
-		const result = await transcribeMono16kToSegments(samples);
+		const result = await transcribeSourceFileToSegments("/tmp/a.mp4");
 
 		expect(result.granularity).toBe("word");
 		expect(result.segments).toEqual([
@@ -104,7 +103,7 @@ describe("transcribeMono16kToSegments", () => {
 			{ text: "world", startSec: 0.31, endSec: 0.65 },
 		]);
 		expect(mockApi.transcribe).toHaveBeenCalledWith({
-			samples,
+			sourcePath: "/tmp/a.mp4",
 			language: undefined,
 		});
 	});
@@ -117,7 +116,7 @@ describe("transcribeMono16kToSegments", () => {
 			backend: "whisper-cpu",
 		});
 
-		const result = await transcribeMono16kToSegments(new Float32Array(1600));
+		const result = await transcribeSourceFileToSegments("/tmp/a.mp4");
 		expect(result.granularity).toBe("phrase");
 		expect(result.segments).toEqual([{ text: "hello world", startSec: 0, endSec: 0.65 }]);
 	});
@@ -136,7 +135,7 @@ describe("transcribeMono16kToSegments", () => {
 			};
 		});
 
-		await transcribeMono16kToSegments(new Float32Array(1600), { onStatus });
+		await transcribeSourceFileToSegments("/tmp/a.mp4", { onStatus });
 		expect(onStatus).toHaveBeenCalledWith({ phase: "model" });
 		// The chunk progress must survive the hop, not just the phase — it is what
 		// drives the progress bar.
@@ -151,7 +150,7 @@ describe("transcribeMono16kToSegments", () => {
 
 	it("returns empty results when running outside Electron (browser tests)", async () => {
 		removeMockApi();
-		const result = await transcribeMono16kToSegments(new Float32Array(1600));
+		const result = await transcribeSourceFileToSegments("/tmp/a.mp4");
 		expect(result.granularity).toBe("word");
 		expect(result.segments).toEqual([]);
 	});
@@ -160,7 +159,7 @@ describe("transcribeMono16kToSegments", () => {
 		const controller = new AbortController();
 		controller.abort();
 		await expect(
-			transcribeMono16kToSegments(new Float32Array(1600), { signal: controller.signal }),
+			transcribeSourceFileToSegments("/tmp/a.mp4", { signal: controller.signal }),
 		).rejects.toMatchObject({ name: "AbortError" });
 		expect(mockApi.transcribe).not.toHaveBeenCalled();
 	});

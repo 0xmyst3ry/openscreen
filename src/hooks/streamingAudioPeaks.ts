@@ -1,5 +1,4 @@
 import { WebDemuxer } from "web-demuxer";
-import { audioDataFrameToMono } from "@/lib/captioning/extractMono16kWebDemuxer";
 
 /**
  * Streaming trim-waveform peaks for recordings too large to load into memory.
@@ -16,6 +15,39 @@ import { audioDataFrameToMono } from "@/lib/captioning/extractMono16kWebDemuxer"
  * `[min0, max0, min1, max1, ...]`, N = min(24000, ceil(duration * 200)), with
  * min/max starting from 0 (silence baseline) and channels averaged per sample.
  */
+
+/** Mixes one WebCodecs AudioData frame down to mono (averaged across channels). */
+function audioDataFrameToMono(frame: AudioData): Float32Array {
+	const frames = frame.numberOfFrames;
+	const ch = frame.numberOfChannels;
+	const out = new Float32Array(frames);
+	const fmt = frame.format || "";
+	const planar = fmt.includes("planar");
+
+	if (planar) {
+		const plane = new Float32Array(frames);
+		for (let c = 0; c < ch; c++) {
+			frame.copyTo(plane, { planeIndex: c });
+			for (let i = 0; i < frames; i++) {
+				out[i] += plane[i];
+			}
+		}
+		for (let i = 0; i < frames; i++) {
+			out[i] /= ch;
+		}
+	} else {
+		const interleaved = new Float32Array(frames * ch);
+		frame.copyTo(interleaved, { planeIndex: 0 });
+		for (let i = 0; i < frames; i++) {
+			let sum = 0;
+			for (let c = 0; c < ch; c++) {
+				sum += interleaved[i * ch + c];
+			}
+			out[i] = sum / ch;
+		}
+	}
+	return out;
+}
 
 const DECODE_QUEUE_BACKPRESSURE = 20;
 const LOAD_TIMEOUT_MS = 60_000;

@@ -149,10 +149,9 @@ export function withTranscriptionFailure(
 
 /**
  * Map an exception out of `transcribeAsset` onto a failure the UI can explain.
- * The deterministic cases come from whichever layer decoded the audio, and there
- * are two of them: `extractMono16kWebDemuxer` in the renderer, and — since
- * native extraction landed — `extractAudio.ts`'s `NoAudioTrackError` in the main
- * process, whose wording ("No decodable audio in …") is its own.
+ * The deterministic cases come from `extractAudio.ts`'s `NoAudioTrackError` in the
+ * main process ("No decodable audio in …"). The other phrasings are the renderer
+ * decode's, gone since the main process decodes every file.
  *
  * Matched on the message rather than on the class because `ipcRenderer.invoke`
  * rebuilds a plain `Error` and drops both the prototype and the `name`. Missing

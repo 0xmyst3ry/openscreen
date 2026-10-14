@@ -134,8 +134,7 @@ const MAC_REQUIRED = [
 		match: (name) => name === "ffmpeg",
 		what: "the LGPL ffmpeg CLI (spawned for waveform peaks and STT audio extraction)",
 		breaks:
-			"transcription falls back to the renderer decode or fails outright on machines with no\n" +
-			'system ffmpeg, shown to the user only as "Failed to fetch" (#616)',
+			'transcription fails in the editor, over MCP and in the CLI with "ffmpeg is missing" (#616)',
 		fix: "Build it with:\n\n    npm run build:native:compositor:mac\n\nwhich stages the SDK's ffmpeg beside the vendored dylibs.",
 	},
 ];
@@ -194,9 +193,7 @@ const LINUX_REQUIRED = [
 	{
 		match: (name) => name === "ffmpeg",
 		what: "the LGPL ffmpeg CLI (spawned for waveform peaks and STT audio extraction)",
-		breaks:
-			"transcription fails over MCP and the CLI with stt:native-extraction-unavailable,\n" +
-			"and the editor falls back to a slow renderer decode",
+		breaks: 'transcription fails in the editor, over MCP and in the CLI with "ffmpeg is missing"',
 		fix: `${FIX_LINUX_HELPER}\n\nwhich stages the SDK's shared ffmpeg beside helper-ffmpeg/.`,
 	},
 	{

@@ -107,10 +107,9 @@ export interface SttStatusEvent {
 /** IPC request: renderer → main. */
 export interface SttTranscribeRequest {
 	/**
-	 * Mono-16k samples the CALLER decoded. Optional since native extraction landed:
-	 * pass `sourcePath` instead and the main process decodes with ffmpeg, off the UI
-	 * thread and without the renderer ever holding the audio. Kept for the caption
-	 * path, which already has samples in hand and has no file to point at.
+	 * Mono-16k samples the CALLER decoded. No renderer sends these any more: it passes
+	 * `sourcePath` and the main process decodes with ffmpeg, off the UI thread and
+	 * without the renderer ever holding the audio. Kept as the manager's own seam.
 	 *
 	 * Exactly one of `samples` / `sourcePath` is required.
 	 */
@@ -120,8 +119,7 @@ export interface SttTranscribeRequest {
 	 * Preferred: the renderer's own pipeline read the whole file, copied it twice and
 	 * resampled it on the UI thread, which is what froze the editor at open.
 	 *
-	 * The caller falls back to its own decode when this cannot be honoured — see
-	 * `FfmpegUnavailableError`.
+	 * Fails with `FfmpegUnavailableError` when no ffmpeg can be resolved.
 	 */
 	sourcePath?: string;
 	/**
@@ -137,24 +135,14 @@ export interface SttTranscribeRequest {
 }
 
 /**
- * Marker carried in the error message when the main process cannot decode a
- * `sourcePath` because no ffmpeg is resolvable on this install.
- *
- * A string rather than an error class because this crosses `ipcRenderer.invoke`,
- * which reconstructs a plain `Error` from the message and drops the prototype and
- * the `name`. Exported so neither side spells it out by hand — a fallback keyed on
- * a literal typed twice is a fallback that silently stops working.
- */
-export const STT_NATIVE_EXTRACTION_UNAVAILABLE = "stt:native-extraction-unavailable";
-
-/**
  * Marker carried in the error message when audio extraction could not read the
  * `sourcePath` itself: the OS refused the read, or ffmpeg hung opening the file
  * (macOS holds the read behind a pending folder-access prompt, issue #968).
  *
  * Only `extractAudio.ts` sets it, so the renderer can tell "this file's folder is
  * not readable" from an engine failure that happens to mention a permission (model
- * loading, the whisper helper). Same IPC reason as above for being a string.
+ * loading, the whisper helper). A string rather than an error class because this
+ * crosses `ipcRenderer.invoke`, which rebuilds a plain `Error` from the message.
  */
 export const STT_MEDIA_UNREADABLE = "stt:media-unreadable";
 
