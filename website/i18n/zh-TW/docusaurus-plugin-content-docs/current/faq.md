@@ -98,7 +98,7 @@ OpenScreen 是一款採用 MIT 授權的免費螢幕錄影與影片剪輯軟體�
 |---|---|
 | 網站 | [getopenscreen.com](https://getopenscreen.com/) |
 | 原始碼、版本與問題回報 | [github.com/getopenscreen/openscreen](https://github.com/getopenscreen/openscreen) |
-| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5) |
+| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website) |
 | Discord | [getopenscreen.com/discord](https://getopenscreen.com/discord/) |
 | 原始專案（已封存，唯讀） | [github.com/siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen) |
 

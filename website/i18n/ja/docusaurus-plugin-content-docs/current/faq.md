@@ -98,7 +98,7 @@ OpenScreen は、Windows、macOS、Linux に対応した、MIT ライセンス�
 |---|---|
 | ウェブサイト | [getopenscreen.com](https://getopenscreen.com/) |
 | ソースコード、リリース、Issue | [github.com/getopenscreen/openscreen](https://github.com/getopenscreen/openscreen) |
-| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5) |
+| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website) |
 | Discord | [getopenscreen.com/discord](https://getopenscreen.com/discord/) |
 | 元のプロジェクト（アーカイブ済み、読み取り専用） | [github.com/siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen) |
 

@@ -7,6 +7,7 @@ import {
 	downloadClick,
 	downloadTarget,
 	STORE_INSTALLER_URL,
+	STORE_URL,
 } from "./download-target.ts";
 
 test("Windows goes directly to the official Store installer without release metadata", () => {
@@ -161,5 +162,5 @@ test("a download click names the asset kind and the release, and other links are
 	assert.equal(downloadClick(`${base}/Openscreen-Setup-arm64.exe`)?.kind, "other");
 	assert.equal(downloadClick(STORE_INSTALLER_URL)?.kind, "store");
 	assert.equal(downloadClick("https://github.com/getopenscreen/openscreen/releases/latest"), null);
-	assert.equal(downloadClick("https://apps.microsoft.com/detail/9MXQ1HQJL5G5"), null);
+	assert.equal(downloadClick(STORE_URL), null);
 });

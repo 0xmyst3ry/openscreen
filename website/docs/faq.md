@@ -98,7 +98,7 @@ OpenScreen is a free, MIT-licensed screen recorder and video editor for Windows,
 |---|---|
 | Website | [getopenscreen.com](https://getopenscreen.com/) |
 | Source code, releases and issues | [github.com/getopenscreen/openscreen](https://github.com/getopenscreen/openscreen) |
-| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5) |
+| Microsoft Store | [apps.microsoft.com/detail/9MXQ1HQJL5G5](https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website) |
 | Discord | [getopenscreen.com/discord](https://getopenscreen.com/discord/) |
 | Original project, archived and read-only | [github.com/siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen) |
 

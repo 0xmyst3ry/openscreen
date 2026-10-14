@@ -1,8 +1,10 @@
 import { ASSET_PATTERNS, type AssetKind, findAsset, type LatestRelease } from "./release.ts";
 
-export const STORE_URL = "https://apps.microsoft.com/detail/9MXQ1HQJL5G5";
-// The endpoint used by Microsoft's own Store badge in direct-install mode.
-export const STORE_INSTALLER_URL = "https://get.microsoft.com/installer/download/9MXQ1HQJL5G5";
+// `cid` makes the site its own campaign in Partner Center's Acquisitions report.
+export const STORE_URL = "https://apps.microsoft.com/detail/9MXQ1HQJL5G5?cid=website";
+// The endpoint and query Microsoft's own Store badge uses in direct-install mode.
+export const STORE_INSTALLER_URL =
+	"https://get.microsoft.com/installer/download/9MXQ1HQJL5G5?referrer=appbadge&cid=website";
 
 export type DownloadTarget = {
 	os: "macos" | "windows" | "linux" | null;
