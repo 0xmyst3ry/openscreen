@@ -750,6 +750,42 @@ describe("useTimeline.clearTimeline", () => {
 		annotation: (tl) => tl.addAnnotation(),
 		speed: (tl) => tl.addSpeed(),
 		cameraFullscreen: (tl) => tl.addCameraFullscreen(),
+		// The editor has no effect lane: agents add effects, so this one is written as they do.
+		shaderEffect: async () => {
+			const doc = useProjectStore.getState().document as AxcutDocument;
+			const clip = doc.timeline.clips[0];
+			await useProjectStore.getState().saveDocument(
+				{
+					...doc,
+					shaderEffects: [
+						{
+							id: "fx_1",
+							name: "Pass-through",
+							description: "",
+							contract: 1,
+							code: "fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }",
+							params: [],
+							origin: "agent",
+						},
+					],
+					shaderEffectRanges: [
+						{
+							id: "fxr_1",
+							startMs: 0,
+							endMs: 1000,
+							clipId: clip.id,
+							sourceStartSec: clip.sourceStartSec,
+							sourceEndSec: clip.sourceStartSec + 1,
+							effectId: "fx_1",
+							values: {},
+							target: "image",
+							lane: 0,
+						},
+					],
+				},
+				{ history: true },
+			);
+		},
 	};
 	const editKinds = Object.keys(addOf) as EditKind[];
 
@@ -761,6 +797,7 @@ describe("useTimeline.clearTimeline", () => {
 			annotation: doc?.annotations.length ?? 0,
 			speed: doc ? readSpeedRegions(doc).length : 0,
 			cameraFullscreen: legacy.cameraFullscreenRegions?.length ?? 0,
+			shaderEffect: doc?.shaderEffectRanges?.length ?? 0,
 		};
 	};
 	const noRegions: Record<EditKind, number> = {
@@ -769,6 +806,7 @@ describe("useTimeline.clearTimeline", () => {
 		annotation: 0,
 		speed: 0,
 		cameraFullscreen: 0,
+		shaderEffect: 0,
 	};
 
 	// A project holding everything that is NOT an edit: two clips, a webcam, an imported
@@ -928,6 +966,7 @@ describe("useTimeline.clearTimeline", () => {
 			annotation: 1,
 			speed: 1,
 			cameraFullscreen: 1,
+			shaderEffect: 1,
 		});
 
 		await act(async () => {
@@ -967,6 +1006,7 @@ describe("useTimeline.clearTimeline", () => {
 			annotation: 1,
 			speed: 1,
 			cameraFullscreen: 1,
+			shaderEffect: 1,
 		});
 
 		act(() => {

@@ -46,6 +46,10 @@ So a tool added to the agent appears over MCP with no further work, and the MCP 
 - **The project tools**, see [The project and its media](#the-project-and-its-media).
 - MCP metadata: `readOnlyHint` for the reads (`!isMutatingTool`), `listProjects` and `createCheckpoint`, and `destructiveHint` for `replaceTimeline`, the three `remove*` agent tools, `removeMedia` and `restoreCheckpoint`.
 
+### The effect contract
+
+The server's one resource, `openscreen://effects/contract` ([`effects-contract.ts`](../../electron/mcp/effects-contract.ts)), holds the full WGSL contract of `addEffect`: the inputs an effect reads, its parameters, the rules, the cost tiers and two examples. It is too long for a tool description and versioned with the contract; the instructions point to it. `effects-contract.test.ts` checks that it names every field of the compositor's prelude, and `shader_fx::tests::the_examples_of_the_mcp_contract_compile` compiles its examples. The code an agent writes is checked by `McpToolDeps.checkShaderEffect`, the compositor's `checkShaderEffect`, wired in `registerIpcHandlers` like `cameraSegmentation`; the in-app agent gets the same check through `ChatRunEnv`.
+
 ### The project's look
 
 `setEditorSettings` ([`editor-settings-tool.ts`](../../electron/ai-edition/editor-settings-tool.ts)) writes every setting of the editor's look panes: background, frame, format, camera layout, cursor, `autoFocusAll` and `audioGainDb`. It takes a partial `EditorSettingsPatch` and applies it with `applySettingsPatch`, the editor's own write, plus what the panes do around a pick (a first fixed format fills the frame, an untouched camera roundness follows its shape, the camera framing is stored as size and pan). `setAspectRatio` is the same write for the format alone.

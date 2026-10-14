@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, sharedTexture, type WebFrameMain } from "electron";
+import type { ShaderEffectCheck } from "../../../src/lib/ai-edition/shaderEffects";
 import {
 	type CursorKind,
 	readCursorAsArrow,
@@ -586,6 +587,21 @@ export class CompositorViewService {
 		// The model is resolved by this process, not the addon, so it is checked here — and it
 		// is the same lookup `resolveSceneAssetPaths` performs, so the two cannot disagree.
 		return resolveSceneAssetPath(SEGMENTATION_MODEL_ASSET) ? "ready" : "no-model";
+	}
+
+	/** Checks an agent-written effect's WGSL in the compositor (`docs/shader-effects.md`, E.3): the
+	 *  compile error, or the cost tier. `null` when this addon cannot answer, which the agent tools
+	 *  report as "not checked" rather than as a compile failure. */
+	checkShaderEffect(
+		code: string,
+		params: ReadonlyArray<{ name: string; type: string }>,
+	): ShaderEffectCheck | null {
+		const addon = this.ensureAddon();
+		if (!addon || typeof addon.checkShaderEffect !== "function") return null;
+		return addon.checkShaderEffect(
+			code,
+			JSON.stringify(params.map(({ name, type }) => ({ name, type }))),
+		);
 	}
 
 	/** Subject mask for one camera frame, no view needed — see `segmentFrame` in the addon.

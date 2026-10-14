@@ -78,15 +78,15 @@ export const shaderEffectSchema = z.object({
 	id: z.string().min(1),                        // "fx_…"
 	name: z.string().min(1).max(60),              // ce que la pilule affiche
 	description: z.string().max(500).default(""), // pour l'agent suivant : ce que l'effet fait
-	contract: z.literal(1),
+	contract: z.number().int().positive(),       // pas un littéral : voir C.5
 	code: z.string().min(1).max(65_536),         // plafond technique, pas un budget (C.7)
 	params: z.array(shaderEffectParamSchema).max(32).default([]),
 	origin: z.enum(["agent", "user"]).default("agent"),
-});
+	cost: z.object({ tier, frameReads }).optional(), // estimation du compositeur, en cache
+}).superRefine(/* noms uniques, min ≤ default ≤ max */);
 
 export const shaderEffectRangeSchema = endGteStart(z.object({
 	id: z.string().min(1),                        // "fxr_…", un par fragment
-	groupId: z.string().min(1).optional(),        // partagé par les fragments d'une même pilule
 	startMs: z.number().nonnegative(),            // cache dérivé de l'ancre, comme les zooms
 	endMs: z.number().nonnegative(),
 	...clipAnchorShape,
@@ -97,19 +97,23 @@ export const shaderEffectRangeSchema = endGteStart(z.object({
 }), "endMs", "startMs");
 
 // documentSchemaShape
-shaderEffects: z.array(shaderEffectSchema).default([]),
-shaderEffectRanges: z.array(shaderEffectRangeSchema).default([]),
+shaderEffects: z.array(shaderEffectSchema).optional(),
+shaderEffectRanges: z.array(shaderEffectRangeSchema).optional(),
 ```
 
 - **`values`** ne porte que ce qui diffère du `default` de la définition. Une valeur hors bornes
-  est ramenée dans les bornes au parse, sans erreur, comme les réglages du look.
+  est ramenée dans ses bornes à l'écriture (les outils) et à la lecture (la scène), sans erreur.
+  Le parse ne le peut pas : les bornes sont dans la définition, pas dans la région.
 - **Les `label`** sont écrits par l'agent, dans la langue de l'utilisateur, et affichés tels
   quels. Ils ne passent pas par l'i18n : c'est du contenu, pas de l'interface.
-- **`groupId`** reprend le principe du `trackId` des pistes audio. Une région coupée par un trim
-  ou une frontière de clip reste une seule pilule. Sa progression (`ctx.region`) court sur la
-  pilule entière, au lieu de repartir de zéro à chaque fragment.
-- **Une définition que plus aucune région n'utilise est retirée** à la sauvegarde. Le document ne
-  garde pas de code mort.
+- **Une pilule, ce sont les fragments identiques et contigus** (`regionIdentityKey`), comme pour
+  les zooms. Il n'y a pas de clé de groupe : une région coupée par un trim ou une frontière de
+  clip reste une seule pilule, et sa progression (`ctx.region`) court sur la pilule entière (B.5).
+- **`cost`** est l'estimation du compositeur (C.7), mise en cache quand le code a été vérifié. Elle
+  est dérivée, jamais une entrée : un code modifié la recalcule.
+- **Une définition que plus aucune région n'utilise est retirée** par l'édition qui a retiré sa
+  dernière région (`removeRegion`, `mapAllRegionCollections`). Le document ne garde pas de code
+  mort.
 - **Les `max` du schéma sont des plafonds techniques, pas des budgets.** Ils protègent le document
   (64 Ko de code, 32 paramètres, 8 lanes) et sont loin au-dessus de tout effet raisonnable. Ce que
   l'agent doit viser, ce sont les paliers de C.7.
@@ -146,9 +150,10 @@ ms brutes, sans ancre : elle restait en place pendant que les clips bougeaient.
 
 ### B.4 Persistance
 
-- **Champs additifs, sans montée de `schemaVersion`.** C'est la convention d'`audioTracks` et de
-  `vocabulary` : `.default([])`, et `z.object` qui ignore les clés inconnues. Un document écrit
-  avant cette fonctionnalité s'ouvre tel quel.
+- **Champs additifs et optionnels, sans montée de `schemaVersion`.** C'est la convention de
+  `vocabulary` : `.optional()`, et `z.object` qui ignore les clés inconnues. Un document écrit
+  avant cette fonctionnalité s'ouvre tel quel, un document sans effet n'en porte aucune trace, et
+  tout lecteur prend une liste absente pour vide.
 - **Le prix de ce choix.** Une build antérieure qui ouvre puis sauvegarde un projet perd ses
   effets en silence. Voir K, question 1.
 - **Pas dans les style presets.** Un preset porte le look du projet, jamais son contenu
@@ -500,7 +505,7 @@ lecture :
 "effectDefinitions": [
   { "effectId": "fx_…", "name": "Ripple au clic",
     "description": "Une onde part de chaque clic et réfracte l'image.",
-    "contract": 1, "lines": 22, "regions": 1, "compiles": true,
+    "contract": 1, "lines": 22, "regions": 1,
     "cost": { "tier": "light", "frameReads": 4 },
     "params": [ { "name": "strength", "type": "number", "label": "Force",
                   "default": 1, "min": 0, "max": 2 } ] }
@@ -512,7 +517,8 @@ lecture :
 - **Le code se lit par `getEffect`,** quand l'agent veut le modifier.
 - **`description` est écrite par l'agent** et lue par l'agent suivant. La description de l'outil
   l'exige : ce que l'effet fait, en une phrase, pas comment il le fait.
-- **`compiles`** dit si le code compile sur cette machine. `null` signifie « pas vérifié ici ».
+- **`cost`** est l'estimation mise en cache dans la définition. `null` signifie que rien n'a pu
+  vérifier le code quand il a été écrit.
 - **`timeBaseNote`** nomme les effets parmi les régions en secondes de règle.
 
 ### E.3 Les retours
@@ -568,16 +574,16 @@ quatre ajouts d'une ligne, sur le modèle de `cameraSegmentation` :
 
 ### E.7 Le banc (workbench)
 
-Deux scénarios, sur une mire avec une piste curseur :
+Un scénario, `effect-ripple-on-click`, sur une mire avec trois clics :
 
-- **« ripple au clic ».** DSL attendu : une lecture du curseur, puis un `addEffect` qui couvre
-  les clics. Comportement attendu : l'effet compile et le DSL le relit.
-- **« corrige l'effet ».** Le document porte un effet qui ne compile plus. Attendu : `getEffect`,
-  puis un `setEffectDefinition` qui compile.
+- **Attendu :** un `addEffect` dont le code lit `ctx.clicks`, une région qui couvre chaque clic et
+  la demi-seconde qui suit, et la cible `image`, puisque rien ne demande les textes.
+- **Pas exigé :** lire la piste du curseur. Le compositeur donne déjà les clics placés sur la
+  sortie, c'est tout l'intérêt du contrat (C.2).
 
 `documentInvariants` valide les deux nouvelles listes : chaque région pointe une définition
-existante, et ses `values` sont dans les bornes. Le harnais passe un validateur factice à
-`runChat`.
+existante, et ses `values` sont dans les bornes. Hors ligne, rien ne compile le code : le résultat
+dit `validated: false`, et les checks lisent le code comme du texte.
 
 ---
 

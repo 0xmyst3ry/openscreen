@@ -64,6 +64,7 @@ export function regionFamilies(document: AxcutDocument): RegionFamily[] {
 		{ kind: "annotation", regions: document.annotations as unknown as Region[] },
 		{ kind: "speed", regions: legacyRegions(document, "speedRegions") },
 		{ kind: "cameraFullscreen", regions: legacyRegions(document, "cameraFullscreenRegions") },
+		{ kind: "shaderEffect", regions: (document.shaderEffectRanges ?? []) as unknown as Region[] },
 	];
 }
 
