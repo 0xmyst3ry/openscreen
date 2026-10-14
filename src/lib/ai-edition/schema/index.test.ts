@@ -1265,7 +1265,7 @@ describe("shader effects (docs/shader-effects.md)", () => {
 		});
 		expect(
 			shaderEffectRangeSchema.parse({ id: "r", startMs: 0, endMs: 1000, effectId: "fx" }),
-		).toMatchObject({ values: {}, target: "image", lane: 0 });
+		).toMatchObject({ values: {}, target: "image" });
 	});
 
 	it("refuses a parameter declared twice, or a default out of its bounds", () => {

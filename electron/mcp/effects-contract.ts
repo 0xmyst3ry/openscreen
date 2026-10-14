@@ -78,15 +78,17 @@ changes the effect over its whole range: each one becomes a control in the edito
   \`frame(uv).a\` as alpha. For the target text, frame() is the text layer in premultiplied alpha,
   transparent outside the text, and the effect must return premultiplied alpha.
 
-## Targets and lanes
+## Targets
 
 - **image** (default): the picture under the annotations and captions; the text stays readable.
 - **text**: the annotations and captions alone, drawn over the untouched picture afterwards.
 - **both**: everything, captions included.
 
-Use text or both only when the request asks for them. Effects of one lane (0–7) cannot overlap;
-lanes apply in order, lane 0 first, so a ripple across the whole video and a glitch on a cut go on
-two lanes.
+Use text or both only when the request asks for them.
+
+**One effect at a time.** Two effects cannot overlap in time. To combine two looks at the same
+moment, write them in one shader: an effect is written for what the user asked, not stacked from
+parts.
 
 ## Cost
 

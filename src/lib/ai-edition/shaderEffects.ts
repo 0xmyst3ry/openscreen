@@ -2,7 +2,6 @@ import type {
 	AxcutDocument,
 	AxcutShaderEffect,
 	AxcutShaderEffectParam,
-	AxcutShaderEffectRange,
 	AxcutShaderEffectValue,
 } from "./schema";
 
@@ -151,27 +150,4 @@ export function shaderEffectCostAdvice(tier: ShaderEffectTier, spanSec: number):
 	const lighter =
 		tier === "very-heavy" ? "heavy or lighter" : tier === "heavy" ? "medium or light" : "light";
 	return `${tier} over ${spanSec.toFixed(1)} s: this tier is meant for at most ${TIER_SPAN_SEC[tier]} s; for a region this long, aim ${lighter}. It is a recommendation, not a limit.`;
-}
-
-/** The `frame()` reads of every effect running at the busiest moment of `[startMs, endMs]`. */
-export function busiestShaderEffectReads(
-	document: AxcutDocument,
-	startMs: number,
-	endMs: number,
-): number {
-	const ranges = (document.shaderEffectRanges ?? []).filter(
-		(r) => r.startMs < endMs && r.endMs > startMs,
-	);
-	const reads = (range: AxcutShaderEffectRange) =>
-		findShaderEffect(document, range.effectId)?.cost?.frameReads ?? 0;
-	// The load only changes at a region edge, so the busiest moment is one of the starts.
-	let busiest = 0;
-	for (const at of [startMs, ...ranges.map((r) => r.startMs)]) {
-		if (at < startMs || at >= endMs) continue;
-		const load = ranges
-			.filter((r) => r.startMs <= at && r.endMs > at)
-			.reduce((sum, r) => sum + reads(r), 0);
-		busiest = Math.max(busiest, load);
-	}
-	return busiest;
 }

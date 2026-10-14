@@ -57,13 +57,11 @@ import {
 	shaderEffectValueSchema,
 } from "../../src/lib/ai-edition/schema";
 import {
-	busiestShaderEffectReads,
 	findShaderEffect,
 	SHADER_EFFECT_CONTRACT,
 	type ShaderEffectCheck,
 	type ShaderEffectCheckLookup,
 	shaderEffectCostAdvice,
-	shaderEffectTierOf,
 	storedShaderEffectValues,
 } from "../../src/lib/ai-edition/shaderEffects";
 import { getEditorSettings } from "../../src/lib/ai-edition/store/editorSettings";
@@ -1006,7 +1004,6 @@ export const addCameraFullscreenArgs = z.object({
 });
 
 const effectTargetSchema = z.enum(["image", "text", "both"]);
-const effectLaneSchema = z.number().int().min(0).max(7);
 const effectValuesSchema = z.record(z.string(), shaderEffectValueSchema);
 
 export const addEffectArgs = z.object({
@@ -1023,7 +1020,6 @@ export const addEffectArgs = z.object({
 		.optional(),
 	values: effectValuesSchema.optional(),
 	target: effectTargetSchema.optional(),
-	lane: effectLaneSchema.optional(),
 });
 
 export const setEffectArgs = z.object({
@@ -1032,7 +1028,6 @@ export const setEffectArgs = z.object({
 	endSec: secondsSchema.optional(),
 	values: effectValuesSchema.optional(),
 	target: effectTargetSchema.optional(),
-	lane: effectLaneSchema.optional(),
 });
 
 export const setEffectDefinitionArgs = z.object({
@@ -1483,7 +1478,6 @@ export function documentSnapshotForModel(
 			startSec: roundSec(r.startMs),
 			endSec: roundSec(r.endMs),
 			target: r.target,
-			lane: r.lane,
 			values: r.values,
 		})),
 		effectDefinitions: (document.shaderEffects ?? []).map((e) => ({
@@ -1593,42 +1587,33 @@ export function shaderEffectCheckLookup(
 			: null;
 }
 
-/** Two effects of one lane cannot overlap: the refusal names what is in the way, and the way out. */
-function effectLaneBlocked(
+/** One effect at a time: the refusal names the one in the way, and the way out. */
+function effectBlocked(
 	ranges: AxcutShaderEffectRange[],
-	lane: number,
 	startMs: number,
 	endMs: number,
 	except: ReadonlySet<string> = new Set(),
 ): string | null {
-	const wall = coalesceRegionsForRuler(
-		ranges.filter((r) => r.lane === lane && !except.has(r.id)),
-	).find((pill) => pill.start * 1000 < endMs && pill.end * 1000 > startMs);
+	const wall = coalesceRegionsForRuler(ranges.filter((r) => !except.has(r.id))).find(
+		(pill) => pill.start * 1000 < endMs && pill.end * 1000 > startMs,
+	);
 	if (!wall) return null;
 	return (
 		`${formatSec(startMs / 1000)} – ${formatSec(endMs / 1000)} would run into effect ${wall.ids[0]} ` +
-		`at ${formatSec(wall.start)} – ${formatSec(wall.end)} on lane ${lane}, and two effects of one lane ` +
-		"cannot overlap. Put it on another lane (0–7, applied in order, lane 0 first) or pick a span clear of it."
+		`at ${formatSec(wall.start)} – ${formatSec(wall.end)}, and one effect runs at a time. To combine ` +
+		"two looks, write them in one shader (setEffectDefinition); otherwise pick a span clear of it."
 	);
 }
 
-/** What an effect costs where it was placed: its tier, the busiest moment it shares with the
- *  other effects, and a recommendation when its tier runs longer than it is meant to. */
-function effectCostReport(
-	document: AxcutDocument,
-	definition: AxcutShaderEffect,
-	startSec: number,
-	endSec: number,
-) {
+/** What an effect costs: its tier, and a recommendation when the tier runs longer than it is
+ *  meant to. */
+function effectCostReport(definition: AxcutShaderEffect, startSec: number, endSec: number) {
 	if (!definition.cost) return { cost: null };
-	const busiest = busiestShaderEffectReads(document, startSec * 1000, endSec * 1000);
 	const advice = shaderEffectCostAdvice(definition.cost.tier, endSec - startSec);
 	return {
 		cost: {
 			tier: definition.cost.tier,
 			frameReads: definition.cost.frameReads,
-			busiestTier: shaderEffectTierOf(busiest),
-			busiestFrameReads: busiest,
 			...(advice ? { advice } : {}),
 		},
 	};
@@ -3378,7 +3363,7 @@ export function executeAgentTool(
 		case "addEffect": {
 			const parsed = addEffectArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
-			const { effectId, effect, values = {}, target = "image", lane = 0 } = parsed.data;
+			const { effectId, effect, values = {}, target = "image" } = parsed.data;
 			if ((effectId === undefined) === (effect === undefined)) {
 				return failure(
 					"Pass either `effect` to write a new effect, or `effectId` to reuse one of this project's (getCurrentDocument lists them under effectDefinitions), not both.",
@@ -3407,7 +3392,7 @@ export function executeAgentTool(
 			}
 			const startMs = toMs(Math.min(parsed.data.startSec, parsed.data.endSec));
 			const endMs = toMs(Math.max(parsed.data.startSec, parsed.data.endSec));
-			const blocked = effectLaneBlocked(document.shaderEffectRanges ?? [], lane, startMs, endMs);
+			const blocked = effectBlocked(document.shaderEffectRanges ?? [], startMs, endMs);
 			if (blocked) return failure(`The effect was NOT placed: ${blocked}`);
 			const region = {
 				id: createId("fxr"),
@@ -3416,7 +3401,6 @@ export function executeAgentTool(
 				effectId: definition.id,
 				values: storedShaderEffectValues(definition, values),
 				target,
-				lane,
 			};
 			const placed = anchorForAgent(region, document, "fxr");
 			const landing = landingOf(placed, document);
@@ -3436,7 +3420,7 @@ export function executeAgentTool(
 					effectId: definition.id,
 					...landingReport(landing, startMs / 1000, endMs / 1000),
 					...(created ? { validated: check !== null } : {}),
-					...effectCostReport(next, definition, landing.startSec, landing.endSec),
+					...effectCostReport(definition, landing.startSec, landing.endSec),
 				}),
 				summary:
 					`effect "${definition.name}" ${formatSec(landing.startSec)} – ${formatSec(landing.endSec)}` +
@@ -3455,7 +3439,6 @@ export function executeAgentTool(
 			const pillIds = new Set(resolvePillIds(prev, existing.id));
 			const pill = coalesceRegionsForRuler(prev).find((p) => p.ids.includes(existing.id));
 			const { values, target } = parsed.data;
-			const lane = parsed.data.lane ?? existing.lane;
 			const patched = prev.map((r) =>
 				pillIds.has(r.id)
 					? {
@@ -3465,7 +3448,6 @@ export function executeAgentTool(
 									? r.values
 									: storedShaderEffectValues(definition, { ...r.values, ...values }),
 							target: target ?? r.target,
-							lane,
 						}
 					: r,
 			);
@@ -3476,23 +3458,13 @@ export function executeAgentTool(
 				parsed.data.startSec,
 				parsed.data.endSec,
 			);
-			const blocked = effectLaneBlocked(patched, lane, startMs, endMs, pillIds);
+			const blocked = effectBlocked(patched, startMs, endMs, pillIds);
 			if (blocked) return failure(`The effect was NOT changed: ${blocked}`);
 			const moved = parsed.data.startSec !== undefined || parsed.data.endSec !== undefined;
-			// Clamped against its own lane only, the one `effectLaneBlocked` checked: effects of other
-			// lanes stack with it and must not shorten it.
 			const rebuilt = moved
-				? [
-						...patched.filter((r) => r.lane !== lane),
-						...replacePillSpan(
-							patched.filter((r) => r.lane === lane),
-							existing.id,
-							startMs,
-							endMs,
-							document.timeline.clips,
-							() => createId("fxr"),
-						),
-					]
+				? replacePillSpan(patched, existing.id, startMs, endMs, document.timeline.clips, () =>
+						createId("fxr"),
+					)
 				: patched;
 			const landing = landingAfterPillEdit(prev, rebuilt, pillIds, document);
 			if (!landing.anchored) return coversNoClip("effect", startMs / 1000, endMs / 1000, document);
@@ -3504,7 +3476,7 @@ export function executeAgentTool(
 					effectRegionId: landing.ids[0] ?? existing.id,
 					effectId: definition.id,
 					...landingReport(landing, startMs / 1000, endMs / 1000),
-					...effectCostReport(next, definition, landing.startSec, landing.endSec),
+					...effectCostReport(definition, landing.startSec, landing.endSec),
 				}),
 				summary:
 					`updated effect "${definition.name}" ${formatSec(landing.startSec)} – ${formatSec(landing.endSec)}` +
@@ -3575,7 +3547,6 @@ export function executeAgentTool(
 				startSec: roundSec(r.startMs),
 				endSec: roundSec(r.endMs),
 				target: r.target,
-				lane: r.lane,
 				values: r.values,
 			}));
 			return {
