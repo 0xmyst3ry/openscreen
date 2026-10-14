@@ -460,13 +460,23 @@ export function runCli(command: CliCommand): void {
 					}
 				}
 				if (result.success && command.kind === "captions" && result.projectData !== undefined) {
-					const current = await fs.readFile(command.projectPath, "utf8").catch(() => null);
-					if (current !== captionsSource) {
-						throw new Error(
-							`${command.projectPath} changed while it was being captioned, so nothing was written. Run captions again.`,
-						);
+					// Written beside the file first, checked, then renamed over it: a reader never sees
+					// a half-written project, and the window left for a save to slip in is the rename.
+					// ponytail: no cross-process file lock exists to close it; add one if the app
+					// ever saves this file while the CLI runs.
+					const tmpPath = `${command.projectPath}.${process.pid}.tmp`;
+					try {
+						await fs.writeFile(tmpPath, JSON.stringify(result.projectData, null, 2), "utf8");
+						const current = await fs.readFile(command.projectPath, "utf8").catch(() => null);
+						if (current !== captionsSource) {
+							throw new Error(
+								`${command.projectPath} changed while it was being captioned, so nothing was written. Run captions again.`,
+							);
+						}
+						await fs.rename(tmpPath, command.projectPath);
+					} finally {
+						await fs.rm(tmpPath, { force: true }).catch(() => undefined);
 					}
-					await writeProjectFile(command.projectPath, result.projectData);
 				}
 				// -o writes where no wrapper can redirect. stdout itself is fine --
 				// Chromium logs to stderr -- but a caller does not control what wraps
