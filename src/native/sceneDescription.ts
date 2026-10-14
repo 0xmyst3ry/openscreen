@@ -41,12 +41,16 @@ import {
 	resolvePlaybackSegments,
 } from "@/lib/ai-edition/document/timeline";
 import type { AxcutAudioTrack, AxcutClip, AxcutDocument } from "@/lib/ai-edition/schema";
+import { nativeShaderEffectValue } from "@/lib/ai-edition/shaderEffects";
 import { getEditorSettings } from "@/lib/ai-edition/store/editorSettings";
 import { assetCameraSource } from "@/lib/ai-edition/timeline/camera";
 import { resolveClipSourceEndSec } from "@/lib/ai-edition/timeline/clipDuration";
 import { removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
 import { takeProgramme } from "@/lib/ai-edition/timeline/take-programme";
-import { projectRegionsToSource } from "@/lib/ai-edition/timeline/timelineMap";
+import {
+	coalesceRegionsForRuler,
+	projectRegionsToSource,
+} from "@/lib/ai-edition/timeline/timelineMap";
 import {
 	MAGNIFICATION_REFERENCE_PX,
 	MAX_ZOOM_SCALE,
@@ -118,6 +122,26 @@ export interface SceneZoomRegion {
 	underTrim?: boolean;
 	/** When true, cursor is hidden during this zoom region. */
 	hideCursor?: boolean;
+}
+
+/** One fragment of a shader effect region (`(document.shaderEffectRanges ?? [])`), projected onto its
+ *  clip's source time like the other regions, with its definition. `scene.rs`
+ *  `SceneShaderEffect` reads it; docs/shader-effects.md, B.5. */
+export interface SceneShaderEffect {
+	startSec: number;
+	endSec: number;
+	clipIndex?: number;
+	/** The WHOLE pill on the programme clock (trims skipped, speed applied): the compositor's
+	 *  `ctx.region` runs across it instead of restarting at each fragment. */
+	programmeStartSec: number;
+	programmeEndSec: number;
+	target: "image" | "text" | "both";
+	lane: number;
+	contract: number;
+	code: string;
+	params: Array<{ name: string; type: "number" | "toggle" | "color" | "point" }>;
+	/** Every declared parameter, defaults filled in: one float, or 2 (point) or 4 (color). */
+	values: Record<string, number | number[]>;
 }
 
 /** A "Full Camera" timeline region (from `legacyEditor.cameraFullscreenRegions`). Times in seconds. */
@@ -479,6 +503,8 @@ export interface SceneDescription {
 	 * source-time span after `projectRegionsToSourceTime`). Empty when none set.
 	 */
 	cameraFullscreenRegions: SceneCameraFullscreenRegion[];
+	/** Agent-written shader effects, omitted when there are none. */
+	shaderEffects?: SceneShaderEffect[];
 	/**
 	 * Speed regions projected onto each clip's source time (one entry per
 	 * source-time span after `projectRegionsToSourceTime`). Empty when none set.
@@ -1085,6 +1111,59 @@ export function buildSceneDescription(
 		() => createId("speed"),
 	);
 
+	// Shader effects: projected like the zooms, and each fragment told where its WHOLE pill sits
+	// on the programme clock, through the same projection the exporter plays the timeline with
+	// (trims skipped, speed applied). A pill cut by a trim or a clip boundary keeps one progress.
+	const effectsById = new Map((document.shaderEffects ?? []).map((effect) => [effect.id, effect]));
+	const programmeSec = (rawSec: number) =>
+		projectRawTimelineSecToPlayback(
+			projectedClips,
+			document.timeline.trimRanges,
+			rawSec,
+			rawSpeedRegions,
+		);
+	const pillSpanById = new Map<string, { programmeStartSec: number; programmeEndSec: number }>();
+	for (const pill of coalesceRegionsForRuler(document.shaderEffectRanges ?? [])) {
+		const span = {
+			programmeStartSec: programmeSec(pill.start),
+			programmeEndSec: programmeSec(pill.end),
+		};
+		for (const id of pill.ids) pillSpanById.set(id, span);
+	}
+	const projectedShaderEffects = projectRegionsToSource(
+		(document.shaderEffectRanges ?? []).map((range) => ({
+			...range,
+			...pillSpanById.get(range.id),
+		})),
+		visibleClips,
+		document.timeline.clips,
+		() => createId("fxr"),
+	);
+	const sceneShaderEffects: SceneShaderEffect[] = projectedShaderEffects.flatMap((region) => {
+		const effect = effectsById.get(region.effectId);
+		if (!effect) return [];
+		return [
+			{
+				startSec: region.startMs / 1000,
+				endSec: region.endMs / 1000,
+				clipIndex: region.clipIndex,
+				programmeStartSec: region.programmeStartSec ?? region.startMs / 1000,
+				programmeEndSec: region.programmeEndSec ?? region.endMs / 1000,
+				target: region.target,
+				lane: region.lane,
+				contract: effect.contract,
+				code: effect.code,
+				params: effect.params.map(({ name, type }) => ({ name, type })),
+				values: Object.fromEntries(
+					effect.params.map((param) => [
+						param.name,
+						nativeShaderEffectValue(param, region.values[param.name]),
+					]),
+				),
+			},
+		];
+	});
+
 	// Webcam rect, single source of truth between preview & native :
 	// on résout le rect AVEC LA MÊME maths que `PreviewCanvas.computeCompositeLayout` et on
 	// l'envoie au natif dans `layout.webcamRect` (fractions du cadre de sortie). Le natif le
@@ -1470,6 +1549,7 @@ export function buildSceneDescription(
 				clipIndex: region.clipIndex,
 			})),
 		cropByClip,
+		...(sceneShaderEffects.length > 0 ? { shaderEffects: sceneShaderEffects } : {}),
 		output: { ...pickOutputDims(document, settings.aspectRatio), fps: null },
 		// Omitted rather than sent as `{mode:"none"}`: the Rust side defaults the field, and
 		// every project without a webcam effect would otherwise carry it for nothing.

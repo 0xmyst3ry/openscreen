@@ -5062,6 +5062,7 @@ export function registerIpcHandlers(
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
 		cameraSegmentation: () => loudnessService.probeSegmentation(),
+		checkShaderEffect: (code, params) => loudnessService.checkShaderEffect(code, params),
 		// The editor's own engine, in this process: `openscreen mcp` transcribes without the app.
 		transcribe: (request) => getSttManager().transcribe(request),
 		version: app.getVersion(),
@@ -5234,6 +5235,7 @@ export function registerIpcHandlers(
 			runChat(projectId, sessionId, message, getAiEditionLlmConfig(), document, sink, {
 				cursor: agentCursorTelemetryReader,
 				cameraSegmentation: () => loudnessService.probeSegmentation(),
+				checkShaderEffect: (code, params) => loudnessService.checkShaderEffect(code, params),
 			}),
 		undoAiEditionToolBatch: (_projectId, _sessionId) => ({
 			success: false,

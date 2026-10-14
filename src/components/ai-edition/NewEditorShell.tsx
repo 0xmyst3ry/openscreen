@@ -1173,6 +1173,8 @@ export function NewEditorShell() {
 			return;
 		}
 
+		// The editor has no effect lane yet, so nothing selects a shader effect to copy.
+		if (sel.kind === "shaderEffect") return;
 		const source =
 			sel.kind === "zoom"
 				? tl.zoomRegions
