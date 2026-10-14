@@ -41,8 +41,8 @@ afterAll(() => rmSync(DIRECTORY, { recursive: true, force: true }));
 
 const SCENARIO = getScenario("out-of-scope-styling");
 const ANSWER =
-	"Je ne peux pas changer le fond, l'arrondi des coins ni la police des sous-titres : " +
-	"aucun de mes outils n'atteint ces réglages. Ils se règlent depuis l'éditeur.";
+	"Je ne peux ni réchauffer les couleurs, ni monter la luminosité, ni ajouter du grain : " +
+	"l'éditeur n'a pas d'étalonnage, aucun de mes outils ne l'atteint.";
 
 /** Un tour persisté, écrit par le même code que le CLI live. */
 function persistOneTurn(answer: string): string {
