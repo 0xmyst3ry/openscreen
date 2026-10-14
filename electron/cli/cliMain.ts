@@ -468,11 +468,14 @@ export function runCli(command: CliCommand): void {
 					const target = await fs.realpath(command.projectPath);
 					const { mode } = await fs.stat(target);
 					const tmpPath = `${target}.${process.pid}.tmp`;
+					// "wx": a file or symlink already at that path is refused, never written through,
+					// and so never removed below either.
+					await fs.writeFile(tmpPath, JSON.stringify(result.projectData, null, 2), {
+						encoding: "utf8",
+						mode: 0o600,
+						flag: "wx",
+					});
 					try {
-						await fs.writeFile(tmpPath, JSON.stringify(result.projectData, null, 2), {
-							encoding: "utf8",
-							mode: 0o600,
-						});
 						await fs.chmod(tmpPath, mode & 0o777);
 						const current = await fs.readFile(target, "utf8").catch(() => null);
 						if (current !== captionsSource) {
