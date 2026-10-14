@@ -69,10 +69,10 @@ The model never free-writes the project document. It can only call the fixed set
 | `setEffectDefinition` | Changes an effect's name, description, code or parameters, and so every region using it; new code is checked first. A removed parameter's values drop. | The `shaderEffects` entry and its regions' `values`. |
 | `getEffect` | Reads one effect in full, code included; `getCurrentDocument` lists effects without their code. | Read only. |
 | `removeTrim` | Deletes a trim so its source span plays and exports again. | `timeline.trimRanges`. |
-| `removeModifier` | Resolves and deletes a zoom, speed, annotation, or camera-fullscreen pill by ID; `removedIds` reports every touching storage row deleted with that pill. | The matching modifier collection. |
+| `removeModifier` | Resolves and deletes a zoom, speed, annotation, camera-fullscreen, audio, or effect pill by ID; `removedIds` reports every touching storage row deleted with that pill. | The matching modifier collection. |
 | `removeClip` | Deletes a placed clip, closes the gap, and drops effects anchored only to it. The result names the modifiers and trims it took with it. | Timeline clips and affected anchored modifiers. |
 
-Clips and trims use source time. Zoom, speed, annotation, and camera-fullscreen tools use virtual edited-timeline time; the executor converts these spans to the clip-anchored millisecond representation used by the document.
+Clips and trims use source time. Zoom, speed, annotation, camera-fullscreen, and effect tools use virtual edited-timeline time; the executor converts these spans to the clip-anchored millisecond representation used by the document.
 
 ## Checkpoints and undo
 

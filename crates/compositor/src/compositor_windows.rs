@@ -900,14 +900,15 @@ impl Compositor {
     /// Installe (ou retire) la scène de l'app. Présente → `compose_frame` prend ses placements
     /// depuis le layout preset au lieu du planning fixture.
     pub fn set_scene(&self, s: Option<Scene>) {
+        *self.scene.borrow_mut() = s;
         // Les effets nouveaux partent compiler tout de suite, hors du thread de rendu : à la
-        // première frame qui les montre, ils sont en général déjà prêts.
-        if let Some(scene) = &s {
+        // première frame qui les montre, ils sont en général déjà prêts. Après la pose de la
+        // scène : l'éviction épargne ce qu'elle montre.
+        if let Some(scene) = self.scene.borrow().as_ref() {
             for effect in &scene.shader_effects {
                 self.shader_fx_entry(effect);
             }
         }
-        *self.scene.borrow_mut() = s;
     }
 
     /// Faux pour la preview : voir `shader_fx_blocking`.
@@ -952,9 +953,12 @@ impl Compositor {
                 used: tick,
             })
             .used = tick;
-        // Un agent qui itère crée une entrée par version : on garde les plus récentes.
+        // Un agent qui itère crée une entrée par version : on garde les plus récentes, et toutes
+        // celles que la scène montre.
         if fx.len() > SHADER_FX_CACHE {
-            if let Some(oldest) = fx.iter().min_by_key(|(_, e)| e.used).map(|(k, _)| *k) {
+            let scene = self.scene.borrow();
+            let shown = scene.as_ref().map_or(&[][..], |s| &s.shader_effects[..]);
+            if let Some(oldest) = crate::shader_fx::eviction_victim(fx.iter().map(|(k, e)| (*k, e.used)), shown) {
                 fx.remove(&oldest);
             }
         }

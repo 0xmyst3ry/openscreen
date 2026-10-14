@@ -3431,10 +3431,20 @@ export function executeAgentTool(
 			const blocked = effectLaneBlocked(patched, lane, startMs, endMs, pillIds);
 			if (blocked) return failure(`The effect was NOT changed: ${blocked}`);
 			const moved = parsed.data.startSec !== undefined || parsed.data.endSec !== undefined;
+			// Clamped against its own lane only, the one `effectLaneBlocked` checked: effects of other
+			// lanes stack with it and must not shorten it.
 			const rebuilt = moved
-				? replacePillSpan(patched, existing.id, startMs, endMs, document.timeline.clips, () =>
-						createId("fxr"),
-					)
+				? [
+						...patched.filter((r) => r.lane !== lane),
+						...replacePillSpan(
+							patched.filter((r) => r.lane === lane),
+							existing.id,
+							startMs,
+							endMs,
+							document.timeline.clips,
+							() => createId("fxr"),
+						),
+					]
 				: patched;
 			const landing = landingAfterPillEdit(prev, rebuilt, pillIds, document);
 			if (!landing.anchored) return coversNoClip("effect", startMs / 1000, endMs / 1000, document);

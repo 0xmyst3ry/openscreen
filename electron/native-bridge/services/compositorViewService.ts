@@ -598,10 +598,16 @@ export class CompositorViewService {
 	): ShaderEffectCheck | null {
 		const addon = this.ensureAddon();
 		if (!addon || typeof addon.checkShaderEffect !== "function") return null;
-		return addon.checkShaderEffect(
-			code,
-			JSON.stringify(params.map(({ name, type }) => ({ name, type }))),
-		);
+		try {
+			return addon.checkShaderEffect(
+				code,
+				JSON.stringify(params.map(({ name, type }) => ({ name, type }))),
+			);
+		} catch (err) {
+			// A native throw is the addon failing, not the effect: "not checked", as documented.
+			console.warn("[compositor-view] checkShaderEffect failed:", err);
+			return null;
+		}
 	}
 
 	/** Subject mask for one camera frame, no view needed — see `segmentFrame` in the addon.
