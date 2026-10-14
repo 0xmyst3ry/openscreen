@@ -448,7 +448,19 @@ An agent-written effect (`crates/compositor/src/shader_fx.rs`, [docs/shader-effe
 
 - **The cost is linear in the reads,** about 4 µs per read at 1080p and 17 µs at 4K, over a fixed 0.03 ms (1080p) for the copy and the pass. It is the texture bandwidth that pays, which is why the tiers count reads.
 - **The export does not notice a light effect:** 180 frames at 1752×1080 took 520 ms without, 523 ms with the spike's effect, and 521 ms with a heavier one. The preview held the source's 30 fps either way.
-- **Not measured yet:** an integrated GPU, where the same reads cost several times more, and the Metal and wgpu passes.
+- **On lavapipe, the Linux CPU fallback,** the same bench (`compositor_linux::tests::shader_fx_tier_calibration`, release, best of three runs of 5 frames, WSL on 16 threads) gives about 1.4 ms per read at 1080p, 350 times the RTX:
+
+| `frame()` reads | Tier | 1080p | 4K |
+|---:|---|---:|---:|
+| none (the frame alone) | | 7.5 ms | 29.5 ms |
+| 1 | light | +3.2 ms | +13.4 ms |
+| 8 | light | +11.2 ms | +44.4 ms |
+| 32 | medium | +42.1 ms | +159 ms |
+| 128 | heavy | +234 ms | +958 ms |
+| 512 | very heavy | +1 035 ms | +5 068 ms |
+
+- **The tiers keep their order on lavapipe,** but without a GPU a light effect already doubles the frame. The pipeline is ready 18 ms after `set_scene` there, module and driver compile included.
+- **Not measured yet:** an integrated GPU, where the same reads cost several times more, and the Metal pass.
 
 ## How we got here — the WebCodecs trail
 

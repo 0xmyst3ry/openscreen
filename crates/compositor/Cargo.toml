@@ -53,6 +53,8 @@ naga = { version = "24", features = ["wgsl-in", "hlsl-out"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = "0.38"
 wgpu-hal = { version = "24", features = ["vulkan"] }
+# `shader_fx::check_for_agent` traduit l'effet en SPIR-V, comme wgpu le fera pour Vulkan.
+naga = { version = "24", features = ["spv-out"] }
 
 # Windows : D3D11 + D3D11VA + Direct2D/DirectWrite + HLSL à l'exécution.
 [target.'cfg(windows)'.dependencies]

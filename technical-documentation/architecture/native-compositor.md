@@ -29,7 +29,7 @@ and without that flag the runtime corruption is silent.
 | [`crates/compositor/src/ffi.rs`](../../crates/compositor/src/ffi.rs) | bindgen-generated `libav*` bindings (ffmpeg 8.x headers) |
 | [`crates/compositor/src/compositor.rs`](../../crates/compositor/src/compositor_windows.rs) | HLSL compositor — every per-frame pass (`compose_frame`, background, screen, webcam, cursor, annotations, shadows, blur) |
 | [`crates/compositor/src/scene.rs`](../../crates/compositor/src/scene.rs) | the `Scene` struct parsed from the app's `SceneDescription` JSON |
-| [`crates/compositor/src/shader_fx.rs`](../../crates/compositor/src/shader_fx.rs) | agent-written shader effects: the WGSL contract, validation and loop rule, cost tiers, parameter packing, background compilation (FXC on Windows) |
+| [`crates/compositor/src/shader_fx.rs`](../../crates/compositor/src/shader_fx.rs) | agent-written shader effects: the WGSL contract, validation and loop rule, cost tiers, parameter packing, background compilation (FXC on Windows; on Linux, `compositor_linux.rs` builds wgpu pipelines) |
 | [`crates/compositor/src/regions.rs`](../../crates/compositor/src/regions.rs) | zoom / speed / Full Camera regions — envelope shapes and per-frame state sampling |
 | [`crates/compositor/src/pipeline.rs`](../../crates/compositor/src/pipeline_windows.rs) | demux + `D3D11VA` decode + composite + AMF encode + mux (`run_c0` for decode/encode only, `run_composited` for the full path) |
 | [`crates/compositor/src/audio.rs`](../../crates/compositor/src/audio.rs) | per-clip audio decode, swresample → f32 planar 48 kHz stereo, libavfilter `atempo` speed stretch (WSOLA fallback), multi-track mix, AAC encoder |
@@ -186,11 +186,17 @@ backend-specific.
   parameters, bound at `b3`), then the contract-v1 prelude: `frame()`, `ctx` (`b2`), `fx_px`,
   `fx_hash` and the `fx_vs`/`fx_fs` entry points. Errors therefore point at the agent's lines.
 - **Validation** (`analyze`) is naga's, plus the loop rule: every loop is a `for` with literal
-  bounds, at most 4 096 iterations per pixel. It also estimates the cost, in `frame()` reads per
-  pixel, as an indicative tier (light, medium, heavy, very heavy). Nothing is refused on cost.
+  bounds, at most 4 096 iterations per pixel. An effect declares no binding beyond the prelude's
+  four. It also estimates the cost, in `frame()` reads per pixel, as an indicative tier (light,
+  medium, heavy, very heavy). Nothing is refused on cost.
 - **Compilation never happens on the render thread.** `set_scene` starts one background compile per
-  new source (naga to HLSL SM 5.0, then FXC). The cache is keyed by contract, code and parameter
-  layout, and keeps the 64 most recently used.
+  new source. The cache is keyed by contract, code and parameter layout, and keeps the 64 most
+  recently used.
+  - **Windows:** naga to HLSL SM 5.0, then FXC.
+  - **Linux:** the WGSL goes to wgpu as it is. The thread builds the shader module and the
+    pipeline, against an explicit layout of the prelude's four bindings. wgpu panics on a
+    validation error, since no `on_uncaptured_error` is set: `analyze` runs first so that none
+    can happen, and a panic would only kill that thread, leaving the effect undrawn.
 - **Blocking.** The export compositor waits for a pending compile and never draws a frame without
   its effect. The live view (`set_shader_fx_blocking(false)`) skips the effect until it lands, then
   recomposes the paused frame (`shader_fx_landed`).
@@ -436,10 +442,11 @@ licence. D3D11VA + AMF survive the LGPL-shared build (verified:
   rasteriser: one that needs no D3D device at all. Giving the helper a WARP
   device would add a slow path nobody needs alongside a working one.
 
-### Known gap: shader effects draw on Windows only
+### Known gap: shader effects do not draw on macOS
 
-The Metal and wgpu compositors parse `shader_effects` but do not draw them: an effect is visible on
-Windows only. [docs/shader-effects.md](../../docs/shader-effects.md) (D.5) specifies both passes.
+The Metal compositor parses `shader_effects` but does not draw them: an effect is visible on
+Windows and Linux only. [docs/shader-effects.md](../../docs/shader-effects.md) (D.5) specifies the
+Metal pass.
 
 ### Known gap: the capture fallback is unreachable on a host that fails D3D
 
