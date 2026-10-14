@@ -642,7 +642,8 @@ dit `validated: false`, et les checks lisent le code comme du texte.
 ### F.1 Une piste « Effets » dans la timeline
 
 - **Où.** Une seule rangée « Effets », sous la piste Full Camera : les effets ne se chevauchent
-  pas (K.6).
+  pas (K.6). Elle n'apparaît que si le projet a un effet, puisqu'aucun bouton n'en ajoute, et
+  la timeline grandit alors de sa hauteur (`EFFECT_LANE_EXPANSION_PX`).
 - **La pilule** porte le nom de la définition. La glisser, l'étirer, la sélectionner et la
   supprimer se font comme pour un zoom (`selectPill`, `startPillDrag`, `removeRegions`).
 - **L'annulation** passe par l'historique habituel (`saveDocument({ history: true })`). Une
@@ -675,8 +676,10 @@ faire, et ce serait une vraie surprise.
 
 ### F.3 Textes de l'interface
 
-Les libellés fixes vont dans `timeline.json` (`labels.shaderEffect`) et dans `editor.json`
-(`inspector.effectCode`, `inspector.effectLayer`…), pour les 15 locales.
+Les libellés fixes vont dans `editor.json`, pour les 15 locales : `inspector.effect*` (cible,
+coût et ses quatre paliers, code, erreur) et `regionClipboard.pasteEffectOverlap`. La pilule
+et l'en-tête de l'inspecteur portent le nom de l'effet, que l'agent écrit : la piste n'a pas de
+libellé propre.
 `localeParity.test.ts` et `npm run i18n:check` vérifient leur parité. Les noms et libellés
 écrits par l'agent n'y passent pas.
 
