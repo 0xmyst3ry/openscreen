@@ -33,12 +33,22 @@ added after your code, so compiler errors point at your lines.
 | ctx.clicks[i] | vec4<f32> | The last 4 clicks of the last 2 s, newest first. xy: where it happened, in uv; z: seconds since; w: 1 when the slot holds one. |
 | ctx.footage | vec4<f32> | The recording's rect in uv (x, y, w, h), after zoom and layout; under a 3D tilt, its bounding box. |
 | ctx.camera | vec4<f32> | The webcam's rect in uv; zero-sized without a camera. |
+| ctx.footage_aspect | f32 | The recording's width over height on its own surface, for round distances on it. |
+| ctx.footage_corners, ctx.footage_warp | | What the two functions below read: the recording's corners and its warp. Use the functions. |
+| fx_to_footage(uv) | vec2<f32> | The point of the recording's surface under uv: (0, 0) its top-left corner, (1, 1) its bottom-right, extended past its edges. Far outside 0..1 where no point of the surface lands. |
+| fx_from_footage(p) | vec2<f32> | Back: where point p of the recording's surface lands, in uv. |
 | params.<name> | per type | Your declared parameters. |
 | fx_px(n) | f32 | n pixels of a 1080p output, as a fraction of the height. |
 | fx_hash(p) | f32 | A random number in [0, 1) for a vec2<u32>, identical on every GPU. |
 
 Everything in uv is already placed through zoom, layout, frame and tilt: never recompute where
 the screen, the camera or the pointer sit.
+
+There are two spaces to work in, and the effect picks the one that fits it. Output uv is the
+picture as it is framed. The recording's surface is the recording itself, wherever the zoom, the
+layout and the 3D camera put it, through the same warp the compositor draws it with: something
+computed there moves, scales and tilts with the recording. Map into it with fx_to_footage, compute,
+and map back with fx_from_footage before calling frame().
 
 ## Parameters
 
@@ -92,27 +102,31 @@ multiplied by their bound), and its tier. Measured on a fast GPU (RTX 4070 Ti) a
 
 An integrated GPU pays several times more. The tiers are recommendations, never refusals.
 
-## Example: a ripple on every click
+## Example: a ripple on the recording, on every click
 
 Parameters: strength (number, 0–2, default 1), radius (number, 0.05–0.5, default 0.2),
-duration (number, 0.3–2, default 0.9).
+duration (number, 0.3–2, default 0.9). The wave is computed on the recording's surface, so it
+follows the zoom and lies flat on the recording under the 3D camera.
 
-    fn ripple(uv: vec2<f32>, click: vec4<f32>) -> vec2<f32> {
+    fn ripple(p: vec2<f32>, click: vec4<f32>) -> vec2<f32> {
         if (click.w < 0.5 || click.z > params.duration) { return vec2<f32>(0.0); }
         let t = click.z / params.duration;
-        let d = (uv - click.xy) * vec2<f32>(ctx.aspect, 1.0);
+        let metric = vec2<f32>(ctx.footage_aspect, 1.0);
+        let d = (p - fx_to_footage(click.xy)) * metric;
         let r = length(d);
         let x = params.radius * (1.0 - pow(1.0 - t, 3.0)) - r;
         let env = smoothstep(-0.008, 0.0, x) * exp(-max(x, 0.0) / 0.07);
         let wave = sin(x / 0.03 * 6.2831853) * env * (1.0 - t) * (1.0 - t) * params.strength;
         let dir = select(vec2<f32>(0.0), d / r, r > 1e-5);
-        return dir * wave * 0.01 / vec2<f32>(ctx.aspect, 1.0);
+        return dir * wave * 0.01 / metric;
     }
 
     fn effect(uv: vec2<f32>) -> vec4<f32> {
+        let p = fx_to_footage(uv);
         var offset = vec2<f32>(0.0);
-        for (var i = 0; i < 4; i++) { offset += ripple(uv, ctx.clicks[i]); }
-        return frame(uv - offset);
+        for (var i = 0; i < 4; i++) { offset += ripple(p, ctx.clicks[i]); }
+        if (dot(offset, offset) == 0.0) { return frame(uv); }
+        return frame(fx_from_footage(p - offset));
     }
 
 ## Example: a vignette that breathes across the region

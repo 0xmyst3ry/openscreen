@@ -32,7 +32,13 @@ describe("the effect contract resource", () => {
 	});
 
 	it("names every helper the prelude gives", () => {
-		for (const helper of ["frame(uv)", "fx_px(n)", "fx_hash(p)"]) {
+		for (const helper of [
+			"frame(uv)",
+			"fx_px(n)",
+			"fx_hash(p)",
+			"fx_to_footage(uv)",
+			"fx_from_footage(p)",
+		]) {
 			expect(EFFECTS_CONTRACT).toContain(helper);
 		}
 	});

@@ -11,6 +11,7 @@
 //! pas d'état d'une frame à l'autre. C'est ce qui garde la preview (qui saute d'une frame à
 //! l'autre au seek) et l'export (qui les rend dans l'ordre) d'accord.
 
+use crate::frame_geometry::FootageQuad;
 use crate::scene::{SceneShaderEffect, ShaderEffectTarget, ShaderParamDecl, ShaderParamType, ShaderParamValue};
 use std::hash::{Hash, Hasher};
 
@@ -31,6 +32,9 @@ struct FxContext {
     clicks: array<vec4<f32>, 4>,
     footage: vec4<f32>,
     camera: vec4<f32>,
+    footage_corners: array<vec4<f32>, 2>,
+    footage_aspect: f32,
+    footage_warp: f32,
 };
 @group(0) @binding(0) var fx_frame: texture_2d<f32>;
 @group(0) @binding(1) var fx_sampler: sampler;
@@ -42,6 +46,98 @@ fn frame(uv: vec2<f32>) -> vec4<f32> {
 
 fn fx_px(n: f32) -> f32 {
     return n / 1080.0;
+}
+
+// The recording's surface, wherever the zoom, the layout and the 3D camera put it, through the
+// same warp the compositor draws it with. A point of the surface is (0,0) at the recording's
+// top-left corner and (1,1) at its bottom-right, extended past its edges. Mirror of
+// `quad_forward` in shaders.hlsl.
+fn fx_from_footage(p: vec2<f32>) -> vec2<f32> {
+    let r = ctx.resolution;
+    let c00 = ctx.footage_corners[0].xy * r;
+    let c10 = ctx.footage_corners[0].zw * r;
+    let c11 = ctx.footage_corners[1].xy * r;
+    let c01 = ctx.footage_corners[1].zw * r;
+    if (ctx.footage_warp > 0.5) {
+        let p1 = c10 - c00;
+        let p2 = c11 - c00;
+        let p3 = c01 - c00;
+        let d1 = p1 - p2;
+        let d2 = p3 - p2;
+        let d3 = p2 - p1 - p3;
+        let den = d1.x * d2.y - d2.x * d1.y;
+        let g = (d3.x * d2.y - d2.x * d3.y) / den;
+        let h = (d1.x * d3.y - d3.x * d1.y) / den;
+        return (c00 + (p1 * (1.0 + g) * p.x + p3 * (1.0 + h) * p.y) / (g * p.x + h * p.y + 1.0)) / r;
+    }
+    return (c00 + p.x * (c10 - c00) + p.y * (c01 - c00) + p.x * p.y * (c00 - c10 - c01 + c11)) / r;
+}
+
+fn fx_footage_root(t: f32, e: vec2<f32>, f: vec2<f32>, g: vec2<f32>, h: vec2<f32>) -> vec3<f32> {
+    let dx = e.x + g.x * t;
+    let dy = e.y + g.y * t;
+    var s = (h.y - f.y * t) / dy;
+    if (abs(dx) > abs(dy)) {
+        s = (h.x - f.x * t) / dx;
+    }
+    let inside = s >= -0.02 && s <= 1.02 && t >= -0.02 && t <= 1.02;
+    return vec3<f32>(s, t, select(0.0, 1.0, inside));
+}
+
+// The point of the recording's surface under `uv`: fx_from_footage backwards. Where no point of
+// the surface lands (past its horizon), a point far outside 0..1. Mirror of `quad_inverse` in
+// shaders.hlsl.
+fn fx_to_footage(uv: vec2<f32>) -> vec2<f32> {
+    let none = vec2<f32>(-1.0e4);
+    let r = ctx.resolution;
+    let c00 = ctx.footage_corners[0].xy * r;
+    let c10 = ctx.footage_corners[0].zw * r;
+    let c11 = ctx.footage_corners[1].xy * r;
+    let c01 = ctx.footage_corners[1].zw * r;
+    if (ctx.footage_warp > 0.5) {
+        let p1 = c10 - c00;
+        let p2 = c11 - c00;
+        let p3 = c01 - c00;
+        let d1 = p1 - p2;
+        let d2 = p3 - p2;
+        let d3 = p2 - p1 - p3;
+        let den = d1.x * d2.y - d2.x * d1.y;
+        let g = (d3.x * d2.y - d2.x * d3.y) / den;
+        let h = (d1.x * d3.y - d3.x * d1.y) / den;
+        let q = uv * r - c00;
+        let m00 = p1.x * (1.0 + g) - g * q.x;
+        let m01 = p3.x * (1.0 + h) - h * q.x;
+        let m10 = p1.y * (1.0 + g) - g * q.y;
+        let m11 = p3.y * (1.0 + h) - h * q.y;
+        let det = m00 * m11 - m01 * m10;
+        let st = vec2<f32>(q.x * m11 - m01 * q.y, m00 * q.y - q.x * m10) / det;
+        // Behind the camera: the homography reaches the point, the picture never shows it.
+        if (g * st.x + h * st.y + 1.0 <= 0.0) {
+            return none;
+        }
+        return st;
+    }
+    let e = c10 - c00;
+    let f = c01 - c00;
+    let g = c00 - c10 - c01 + c11;
+    let h = uv * r - c00;
+    let k2 = g.x * f.y - g.y * f.x;
+    let k1 = e.x * f.y - e.y * f.x + h.x * g.y - h.y * g.x;
+    let k0 = h.x * e.y - h.y * e.x;
+    if (abs(k2) < 1e-5 * abs(k1)) {
+        if (abs(k1) < 1e-6) {
+            return none;
+        }
+        return fx_footage_root(-k0 / k1, e, f, g, h).xy;
+    }
+    let disc = k1 * k1 - 4.0 * k2 * k0;
+    if (disc < 0.0) {
+        return none;
+    }
+    let q = -0.5 * (k1 + select(-1.0, 1.0, k1 >= 0.0) * sqrt(disc));
+    let r0 = fx_footage_root(q / k2, e, f, g, h);
+    let r1 = fx_footage_root(select(q / k2, k0 / q, abs(q) > 0.0), e, f, g, h);
+    return select(r1.xy, r0.xy, r0.z > 0.5);
 }
 
 fn fx_pcg(v: u32) -> u32 {
@@ -84,7 +180,7 @@ pub const MAX_ITERATIONS_PER_PIXEL: u64 = 4096;
 /// Taille du constant buffer des paramètres : le plafond technique (32) de `vec4`.
 pub const PARAMS_BUFFER_BYTES: usize = 32 * 16;
 
-/// Le constant buffer `ctx`, au layout de `FxContext` (144 octets).
+/// Le constant buffer `ctx`, au layout de `FxContext` (192 octets).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FxContext {
@@ -96,6 +192,13 @@ pub struct FxContext {
     pub clicks: [[f32; 4]; MAX_CLICKS],
     pub footage: [f32; 4],
     pub camera: [f32; 4],
+    /// Les coins du métrage, TL et TR puis BR et BL, en uv de sortie : `fx_to_footage`.
+    pub footage_corners: [[f32; 4]; 2],
+    /// Largeur sur hauteur du métrage dans son propre plan, avant toute inclinaison.
+    pub footage_aspect: f32,
+    /// 1 : l'homographie des coins (la caméra réelle), 0 : leur warp bilinéaire (`TiltedQuad`).
+    pub footage_warp: f32,
+    pub _pad: [f32; 2],
 }
 
 /// Ce que le plan du curseur et la géométrie de la frame donnent aux effets, en uv de sortie.
@@ -104,7 +207,8 @@ pub struct FxFrameInputs {
     pub cursor: Option<[f32; 2]>,
     /// Les clics récents, du plus récent au plus ancien : point et âge en secondes.
     pub clicks: Vec<([f32; 2], f32)>,
-    pub footage: [f32; 4],
+    pub footage: FootageQuad,
+    pub footage_aspect: f32,
     pub camera: Option<[f32; 4]>,
 }
 
@@ -558,6 +662,7 @@ pub fn context(
     resolution: [f32; 2],
     inputs: &FxFrameInputs,
 ) -> FxContext {
+    let [tl, tr, br, bl] = inputs.footage.corners;
     let mut clicks = [[0.0; 4]; MAX_CLICKS];
     for (slot, ([x, y], age)) in clicks.iter_mut().zip(&inputs.clicks) {
         *slot = [*x, *y, *age, 1.0];
@@ -569,8 +674,12 @@ pub fn context(
         region: region(effect, source_t, programme_t),
         cursor: inputs.cursor.map_or([0.0; 4], |[x, y]| [x, y, 1.0, 0.0]),
         clicks,
-        footage: inputs.footage,
+        footage: bounds(&inputs.footage.corners),
         camera: inputs.camera.unwrap_or([0.0; 4]),
+        footage_corners: [[tl[0], tl[1], tr[0], tr[1]], [br[0], br[1], bl[0], bl[1]]],
+        footage_aspect: inputs.footage_aspect,
+        footage_warp: if inputs.footage.projective { 1.0 } else { 0.0 },
+        _pad: [0.0; 2],
     }
 }
 
@@ -820,6 +929,8 @@ mod tests {
         assert_eq!(offset("region"), &c.region as *const _ as usize - base);
         assert_eq!(offset("clicks"), &c.clicks as *const _ as usize - base);
         assert_eq!(offset("camera"), &c.camera as *const _ as usize - base);
+        assert_eq!(offset("footage_corners"), &c.footage_corners as *const _ as usize - base);
+        assert_eq!(offset("footage_warp"), &c.footage_warp as *const _ as usize - base);
     }
 
     #[test]
@@ -937,13 +1048,19 @@ mod tests {
         let inputs = FxFrameInputs {
             cursor: Some([0.25, 0.5]),
             clicks: vec![([0.3, 0.6], 0.2), ([0.1, 0.1], 1.5)],
-            footage: [0.1, 0.1, 0.8, 0.8],
+            footage: FootageQuad {
+                corners: [[0.25, 0.5], [0.75, 0.25], [0.625, 0.75], [0.25, 0.625]],
+                projective: true,
+            },
+            footage_aspect: 16.0 / 9.0,
             camera: Some([0.7, 0.7, 0.2, 0.2]),
         };
         let ctx = context(&whole, 2.0, 10.0, [1920.0, 1080.0], &inputs);
         assert_eq!(ctx.cursor, [0.25, 0.5, 1.0, 0.0]);
         assert_eq!(ctx.clicks[..3], [[0.3, 0.6, 0.2, 1.0], [0.1, 0.1, 1.5, 1.0], [0.0; 4]]);
-        assert_eq!((ctx.footage, ctx.camera), ([0.1, 0.1, 0.8, 0.8], [0.7, 0.7, 0.2, 0.2]));
+        assert_eq!((ctx.footage, ctx.camera), ([0.25, 0.25, 0.5, 0.5], [0.7, 0.7, 0.2, 0.2]));
+        assert_eq!(ctx.footage_corners, [[0.25, 0.5, 0.75, 0.25], [0.625, 0.75, 0.25, 0.625]]);
+        assert_eq!((ctx.footage_aspect, ctx.footage_warp), (16.0 / 9.0, 1.0));
     }
 
     #[test]

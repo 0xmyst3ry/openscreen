@@ -217,6 +217,10 @@ libre, et les erreurs pointent ainsi les lignes que l'agent a écrites.
 | `ctx.clicks[i]` | `vec4<f32>` | Les 4 derniers clics des 2 dernières secondes, du plus récent au plus ancien. xy : le point du clic en uv de sortie. z : secondes écoulées depuis. w : 1 si l'entrée est occupée. |
 | `ctx.footage` | `vec4<f32>` | Le rect de l'enregistrement en uv de sortie (x, y, w, h), après zoom et layout. Sous un tilt 3D, c'est sa boîte englobante. |
 | `ctx.camera` | `vec4<f32>` | Le rect de la webcam en uv de sortie. Taille nulle sans caméra. |
+| `ctx.footage_aspect` | `f32` | Largeur sur hauteur de l'enregistrement dans son propre plan, pour les distances circulaires sur lui. |
+| `ctx.footage_corners`, `ctx.footage_warp` | | Ce que lisent les deux fonctions suivantes : les coins TL, TR, BR, BL du métrage en uv de sortie, et son warp (1 homographie, 0 bilinéaire). |
+| `fx_to_footage(uv)` | `vec2<f32>` | Le point du plan de l'enregistrement sous `uv` : (0, 0) son coin haut-gauche, (1, 1) le bas-droit, prolongé au-delà de ses bords. Loin hors de 0..1 là où aucun point du plan ne tombe. |
+| `fx_from_footage(p)` | `vec2<f32>` | L'inverse : où tombe en uv de sortie le point `p` du plan. |
 | `params.<nom>` | selon le type | Les paramètres déclarés par l'effet (C.3). |
 | `fx_px(n)` | `f32` | `n` pixels d'une sortie 1080p, en fraction de la hauteur. |
 | `fx_hash(p)` | `f32` | Hasard déterministe dans [0, 1) pour un `vec2<u32>`, identique sur tous les GPU (PCG). |
@@ -224,6 +228,10 @@ libre, et les erreurs pointent ainsi les lignes que l'agent a écrites.
 - **Tout ce qui est en uv de sortie** est déjà passé par le zoom, le layout, le cadre et le
   tilt. Ces valeurs viennent de `plan_frame` et `plan_cursor` (`frame_geometry.rs`), que les
   trois backends partagent.
+- **Le plan de l'enregistrement** suit le warp que le compositeur dessine : bilinéaire sous un
+  angle fixe, homographie sous la caméra réelle (`FootageQuad`, `quad_inverse` des shaders).
+  L'effet choisit son repère : l'image de sortie, ou ce plan. Le contrat ne décide pas lequel
+  convient à quel effet.
 - **Le point d'un clic** est la pointe à l'instant du clic, au même endroit que l'impact intégré
   (mode 16).
 - **Le curseur dessiné** passe par le lissage et peut traîner un instant derrière ce point quand
