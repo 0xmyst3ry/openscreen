@@ -760,13 +760,11 @@ pub fn eviction_victim(entries: impl Iterator<Item = (u64, u64)>, scene: &[Scene
     entries.filter(|(key, _)| !shown.contains(key)).min_by_key(|&(_, used)| used).map(|(key, _)| key)
 }
 
-/// Les régions actives au temps source `t`, dans l'ordre où elles s'appliquent : par lane, puis
-/// dans l'ordre de la scène.
+/// Les régions actives au temps source `t`. Le document n'en tient qu'une à la fois ; une scène
+/// écrite à la main qui en superpose les applique dans son ordre.
 pub fn active_effects(effects: &[SceneShaderEffect], t: f32) -> Vec<&SceneShaderEffect> {
     let t = t as f64;
-    let mut active: Vec<_> = effects.iter().filter(|e| t >= e.start_sec && t < e.end_sec).collect();
-    active.sort_by_key(|e| e.lane);
-    active
+    effects.iter().filter(|e| t >= e.start_sec && t < e.end_sec).collect()
 }
 
 /// La boîte englobante (x, y, w, h) d'un quad, en uv de sortie : `ctx.footage` sous un tilt 3D.
@@ -950,7 +948,6 @@ pub(crate) fn test_effect(code: &str, params: Vec<ShaderParamDecl>, values: &[(&
         programme_start_sec: None,
         programme_end_sec: None,
         target: ShaderEffectTarget::Image,
-        lane: 0,
         contract: CONTRACT,
         code: code.into(),
         params,
@@ -1205,13 +1202,14 @@ mod tests {
     #[test]
     fn the_active_regions_and_their_progress() {
         let mut a = test_effect(VIGNETTE, vec![], &[]);
-        a.lane = 1;
+        (a.start_sec, a.end_sec) = (3.0, 4.0);
         let b = test_effect(VIGNETTE, vec![], &[]);
         let effects = [a, b];
         assert!(active_effects(&effects, 0.5).is_empty());
-        let active = active_effects(&effects, 2.0);
-        assert_eq!(active.iter().map(|e| e.lane).collect::<Vec<_>>(), [0, 1], "par lane");
-        assert!(active_effects(&effects, 3.0).is_empty(), "fin exclusive");
+        let during = active_effects(&effects, 2.0);
+        assert!(during.len() == 1 && std::ptr::eq(during[0], &effects[1]));
+        let after = active_effects(&effects, 3.0);
+        assert!(after.len() == 1 && std::ptr::eq(after[0], &effects[0]), "fin exclusive");
 
         let ctx = context(&effects[1], 2.0, 10.0, [1920.0, 1080.0], &FxFrameInputs::default());
         assert_eq!(ctx.region, [0.5, 2.0, 1.0, 0.0], "fragment, temps source");

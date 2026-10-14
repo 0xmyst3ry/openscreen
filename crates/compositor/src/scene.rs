@@ -564,9 +564,6 @@ pub struct SceneShaderEffect {
     pub programme_end_sec: Option<f64>,
     #[serde(default)]
     pub target: ShaderEffectTarget,
-    /// Ordre d'application : la lane 0 d'abord, au plus près du contenu.
-    #[serde(default)]
-    pub lane: u32,
     /// Version du contrat. Une version que ce compositeur ne connaît pas ne se dessine pas.
     #[serde(default = "default_contract")]
     pub contract: u32,

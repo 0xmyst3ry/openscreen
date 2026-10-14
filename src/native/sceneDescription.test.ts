@@ -3003,7 +3003,6 @@ describe("buildSceneDescription.shaderEffects", () => {
 					effectId: "fx1",
 					values: { tint: "#ff0000", on: true },
 					target: "text",
-					lane: 2,
 				},
 			],
 		});
@@ -3017,7 +3016,6 @@ describe("buildSceneDescription.shaderEffects", () => {
 				programmeStartSec: 1,
 				programmeEndSec: 4,
 				target: "text",
-				lane: 2,
 				contract: 1,
 				code,
 				params: [
@@ -3040,7 +3038,6 @@ describe("buildSceneDescription.shaderEffects", () => {
 					effectId: "fx_gone",
 					values: {},
 					target: "image",
-					lane: 0,
 				},
 			],
 		});

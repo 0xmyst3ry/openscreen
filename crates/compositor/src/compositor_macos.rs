@@ -4802,9 +4802,9 @@ mod tests {
     }
 
     /// Un fragment d'effet de 1 s à 3 s, tel que l'app l'envoie.
-    fn fx(code: &str, target: &str, lane: u32) -> serde_json::Value {
+    fn fx(code: &str, target: &str) -> serde_json::Value {
         serde_json::json!({
-            "clipIndex": 0, "startSec": 1.0, "endSec": 3.0, "target": target, "lane": lane,
+            "clipIndex": 0, "startSec": 1.0, "endSec": 3.0, "target": target,
             "contract": 1, "code": code,
             "params": [{"name": "level", "type": "number"}, {"name": "tint", "type": "color"}],
             "values": {"level": 1.0, "tint": [0.0, 1.0, 0.0, 1.0]},
@@ -4856,7 +4856,7 @@ mod tests {
             return;
         };
         let comp = super::Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
-        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(INVERT, "image", 0)]))));
+        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(INVERT, "image")]))));
         assert_eq!(corner_at(&comp, 0.5), [255, 0, 0], "avant la région : le fond rouge");
         assert_eq!(corner_at(&comp, 2.0), [0, 255, 255], "dans la région : rouge inversé");
         assert_eq!(corner_at(&comp, 3.5), [255, 0, 0], "après la région : le fond rouge");
@@ -4872,7 +4872,7 @@ mod tests {
         };
         let comp = super::Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
         comp.set_shader_fx_blocking(false);
-        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(INVERT, "image", 0)]))));
+        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(INVERT, "image")]))));
         let start = std::time::Instant::now();
         while !comp.shader_fx_landed() {
             assert!(start.elapsed().as_secs() < 10, "la compilation n'a jamais abouti");
@@ -4886,8 +4886,8 @@ mod tests {
     /// pas, la frame reste celle de la composition.
     #[test]
     fn a_broken_or_unknown_effect_leaves_the_frame_untouched() {
-        let broken = fx("fn effect(uv: vec2<f32>) -> vec4<f32> { nope }", "image", 0);
-        let mut future = fx(BLUE, "image", 0);
+        let broken = fx("fn effect(uv: vec2<f32>) -> vec4<f32> { nope }", "image");
+        let mut future = fx(BLUE, "image");
         future["contract"] = serde_json::json!(2);
         for effect in [broken, future] {
             let Some(corner) = corner_under(serde_json::json!([effect])) else { return };
@@ -4899,7 +4899,7 @@ mod tests {
     /// suit le nombre `level` dans le buffer, et se lit telle que l'app l'a écrite.
     #[test]
     fn a_color_parameter_reaches_the_shader() {
-        let Some(corner) = corner_under(serde_json::json!([fx(TINT, "image", 0)])) else { return };
+        let Some(corner) = corner_under(serde_json::json!([fx(TINT, "image")])) else { return };
         assert_eq!(corner, [0, 255, 0]);
     }
 
@@ -4916,7 +4916,7 @@ mod tests {
         };
         const PLANE: &str = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    let p = fx_to_footage(uv);\n    return vec4<f32>(p, distance(fx_from_footage(p), uv) * 100.0, 1.0);\n}\n";
         for (rotation, projective) in [(None, false), (Some("left"), false), (Some("orbit"), true)] {
-            let mut json = shader_fx_json(serde_json::json!([fx(PLANE, "image", 0)]), serde_json::json!([]));
+            let mut json = shader_fx_json(serde_json::json!([fx(PLANE, "image")]), serde_json::json!([]));
             json["clips"] = serde_json::json!([{"screenPath": "/s.mp4", "webcamPath": "", "sourceStartSec": 0,
                 "sourceEndSec": 10, "webcamOffsetSec": 0, "hasAudio": false}]);
             json["layout"]["screenRect"] = serde_json::json!({"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8});
@@ -4968,7 +4968,7 @@ mod tests {
         };
         const SEES: &str = "fn effect(uv: vec2<f32>) -> vec4<f32> { return vec4<f32>(ctx.cursor.z, ctx.clicks[0].w, 0.0, 1.0); }";
         let comp = super::Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
-        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(SEES, "image", 0)]))));
+        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(SEES, "image")]))));
         comp.set_cursor(crate::cursor::CursorTrack::new_with_visibility(
             vec![(0.0, 0.5, 0.5), (4.0, 0.5, 0.5)],
             vec![1.5],
@@ -4979,35 +4979,19 @@ mod tests {
         assert_eq!(corner_at(&comp, 2.0), [255, 255, 0]);
     }
 
-    /// Les lanes s'appliquent dans l'ordre : bleu puis inversion donne jaune, l'inverse donne bleu.
-    #[test]
-    fn lanes_apply_in_order() {
-        let Some(blue_then_invert) =
-            corner_under(serde_json::json!([fx(INVERT, "image", 1), fx(BLUE, "image", 0)]))
-        else {
-            return;
-        };
-        assert_eq!(blue_then_invert, [255, 255, 0]);
-        let invert_then_blue =
-            corner_under(serde_json::json!([fx(INVERT, "image", 0), fx(BLUE, "image", 1)])).unwrap();
-        assert_eq!(invert_then_blue, [0, 0, 255]);
-    }
-
-    /// `text` ne touche que le calque des textes, posé ensuite sur l'image ; `both` voit tout.
-    /// Sans annotation, le calque est transparent : un effet `text` qui le rend tel quel laisse
-    /// l'image intacte, un effet `text` opaque la recouvre.
+    /// `text` ne touche que le calque des textes, posé ensuite sur l'image ; `image` et `both`
+    /// repeignent l'image. Sans annotation, le calque est transparent : un effet `text` qui le
+    /// rend tel quel laisse l'image intacte, un effet `text` opaque la recouvre.
     #[test]
     fn the_three_targets_keep_to_their_layer() {
-        let Some(image_only) = corner_under(serde_json::json!([fx(BLUE, "image", 0)])) else { return };
+        let Some(image_only) = corner_under(serde_json::json!([fx(BLUE, "image")])) else { return };
         assert_eq!(image_only, [0, 0, 255]);
-        let text_untouched =
-            corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(SAME, "text", 0)])).unwrap();
-        assert_eq!(text_untouched, [0, 0, 255], "un calque transparent ne change pas l'image");
-        let text_opaque =
-            corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(TINT, "text", 0)])).unwrap();
+        let text_untouched = corner_under(serde_json::json!([fx(SAME, "text")])).unwrap();
+        assert_eq!(text_untouched, [255, 0, 0], "un calque transparent ne change pas l'image");
+        let text_opaque = corner_under(serde_json::json!([fx(TINT, "text")])).unwrap();
         assert_eq!(text_opaque, [0, 255, 0], "le calque des textes, opaque, posé sur l'image");
-        let both = corner_under(serde_json::json!([fx(BLUE, "image", 0), fx(INVERT, "both", 0)])).unwrap();
-        assert_eq!(both, [255, 255, 0], "`both` voit l'image finale");
+        let both = corner_under(serde_json::json!([fx(INVERT, "both")])).unwrap();
+        assert_eq!(both, [0, 255, 255], "`both` repeint l'image finale");
     }
 
     /// Avec une vraie annotation : un effet `image` passe dessous sans la toucher, un effet `text`
@@ -5038,11 +5022,11 @@ mod tests {
         let arrow_px = count(&bare, [255, 255, 255]);
         assert!(arrow_px > 500, "la flèche est dessinée : {arrow_px} px blancs");
 
-        let image = rgba_under(serde_json::json!([fx(BLUE, "image", 0)]));
+        let image = rgba_under(serde_json::json!([fx(BLUE, "image")]));
         assert_eq!(count(&image, [255, 255, 255]), arrow_px, "l'effet `image` passe sous la flèche");
         assert_eq!([image[0], image[1], image[2]], [0, 0, 255]);
 
-        let text = rgba_under(serde_json::json!([fx(GREEN_TEXT, "text", 0)]));
+        let text = rgba_under(serde_json::json!([fx(GREEN_TEXT, "text")]));
         assert_eq!(count(&text, [255, 255, 255]), 0, "la flèche est passée par l'effet `text`");
         assert_eq!(count(&text, [0, 255, 0]), arrow_px, "et elle seule est verte");
         assert_eq!([text[0], text[1], text[2]], [255, 0, 0], "l'image dessous est intacte");
@@ -5090,7 +5074,7 @@ mod tests {
                 let code = reads_effect(reads);
                 let report = crate::shader_fx::analyze(&code, &[]).expect("analyse").report;
                 let with = (0..5)
-                    .map(|_| per_frame(w, h, serde_json::json!([fx(&code, "image", 0)])))
+                    .map(|_| per_frame(w, h, serde_json::json!([fx(&code, "image")])))
                     .fold(f64::MAX, f64::min);
                 eprintln!(
                     "{w}x{h} : {reads:>3} lectures ({:>10}) : +{:.3} ms/frame",

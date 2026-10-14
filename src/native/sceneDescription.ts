@@ -136,7 +136,6 @@ export interface SceneShaderEffect {
 	programmeStartSec: number;
 	programmeEndSec: number;
 	target: "image" | "text" | "both";
-	lane: number;
 	contract: number;
 	code: string;
 	params: Array<{ name: string; type: "number" | "toggle" | "color" | "point" }>;
@@ -1184,7 +1183,6 @@ export function buildSceneDescription(
 				programmeStartSec: region.programmeStartSec ?? region.startMs / 1000,
 				programmeEndSec: region.programmeEndSec ?? region.endMs / 1000,
 				target: region.target,
-				lane: region.lane,
 				contract: effect.contract,
 				code: effect.code,
 				params: effect.params.map(({ name, type }) => ({ name, type })),
