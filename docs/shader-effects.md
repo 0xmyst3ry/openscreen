@@ -410,7 +410,7 @@ rien y retrouver : il n'existe aucun chemin vers l'image d'avant le flou.
 Il y a deux compilations, à deux moments :
 
 1. **À l'écriture.** Quand un outil pose ou change un code (`addEffect`,
-   `setEffectDefinition`), le processus principal appelle `validateShaderEffect` de l'addon.
+   `setEffectDefinition`), le processus principal appelle `checkShaderEffect(code, params)` de l'addon.
    - **La compilation est réelle,** pour le backend de la machine, en plus de la validation
      naga. « Accepté » veut donc dire « se dessinera ».
    - **Le coût est estimé** depuis le code (C.7), sans rendu ni mesure sur la machine.
@@ -585,13 +585,9 @@ coûte un export complet. Sur un projet de dix minutes, la boucle de l'agent dev
 
 ### E.6 L'agent intégré
 
-Il a les mêmes outils, mais pas le validateur : `ChatRunEnv` ne le transmet pas. Il manque
-quatre ajouts d'une ligne, sur le modèle de `cameraSegmentation` :
-- le champ dans `ChatRunEnv` ;
-- son passage dans `chat-service.ts` ;
-- le champ dans `InvokeArgs`, et son passage à `buildTools` ;
-- `validateShaderEffect: (code) => loudnessService.validateShaderEffect(code)` dans
-  `handlers.ts`, à côté de `cameraSegmentation`.
+Il a les mêmes outils et le même validateur que le serveur MCP : `handlers.ts` passe
+`checkShaderEffect: (code, params) => loudnessService.checkShaderEffect(code, params)` à
+`runChat`, qui le transmet par `ChatRunEnv` et `InvokeArgs` jusqu'à `buildTools`.
 
 ### E.7 Le banc (workbench)
 
@@ -782,7 +778,7 @@ ailleurs (`legacyEditor`, sans ancre).
      `ctx.footage`, `ctx.camera`, `fx_px`, `fx_hash` ; borne littérale des boucles et plafond
      d'itérations ; estimation du coût et paliers, calibrés en ms sur le GPU intégré de
      référence.
-   - `validate_shader_effect` compile pour le backend et rend le palier.
+   - `check_shader_effect` compile pour le backend et rend le palier.
    - `scene.rs` lit la nouvelle forme ; la passe Windows gère les trois cibles (calque de textes
      à part pour `text`), `lane` et l'éviction LRU.
 2. **Modèle de données et DSL (TS).**

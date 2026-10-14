@@ -538,7 +538,14 @@ export function zoomIssues(document: AxcutDocument, options: ZoomHygieneOptions 
 
 // ─── 6. did it do THAT, and nothing else ────────────────────────────────────
 
-export type EditFamily = "clip" | "trim" | "zoom" | "annotation" | "speed" | "cameraFullscreen";
+export type EditFamily =
+	| "clip"
+	| "trim"
+	| "zoom"
+	| "annotation"
+	| "speed"
+	| "cameraFullscreen"
+	| "shaderEffect";
 
 export interface FamilyDelta {
 	family: EditFamily;

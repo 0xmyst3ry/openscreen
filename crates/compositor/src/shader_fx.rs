@@ -389,7 +389,7 @@ struct CostWalk<'a> {
 impl CostWalk<'_> {
     fn block(&mut self, func: &naga::Function, block: &naga::Block) -> Result<Cost, String> {
         let mut total = Cost::default();
-        for (stmt, span) in block.span_iter() {
+        for (at, (stmt, span)) in block.span_iter().enumerate() {
             let c = match stmt {
                 naga::Statement::Emit(range) => {
                     let reads = range
@@ -415,7 +415,7 @@ impl CostWalk<'_> {
                     worst
                 }
                 naga::Statement::Loop { body, continuing, break_if } => {
-                    let trips = self.trip_count(func, block, body, continuing, *break_if, *span)?;
+                    let trips = self.trip_count(func, (block, at), body, continuing, *break_if, *span)?;
                     let inner = self.block(func, body)?.add(self.block(func, continuing)?);
                     Cost { reads: inner.reads, iterations: inner.iterations.saturating_add(1) }.times(trips)
                 }
@@ -447,11 +447,12 @@ impl CostWalk<'_> {
     }
 
     /// Le nombre de tours d'une boucle `for` à bornes littérales. Toute autre forme est refusée :
-    /// une boucle qui ne finit pas bloque le GPU jusqu'au TDR.
+    /// une boucle qui ne finit pas bloque le GPU jusqu'au TDR. `(parent, at)` : le bloc de la
+    /// boucle et son rang dans ce bloc.
     fn trip_count(
         &self,
         func: &naga::Function,
-        parent: &naga::Block,
+        (parent, at): (&naga::Block, usize),
         body: &naga::Block,
         continuing: &naga::Block,
         break_if: Option<naga::Handle<naga::Expression>>,
@@ -486,17 +487,35 @@ impl CostWalk<'_> {
                 _ => return Err(self.refuse(span, "is not bounded by a literal")),
             },
         };
-        let init = func.local_variables[var]
-            .init
-            .and_then(|h| self.literal(func, h))
-            .or_else(|| self.store_before(func, parent, var))
-            .ok_or_else(|| self.refuse(span, "starts its counter from a value that is not a literal"))?;
         let step = self
             .step(func, continuing, var)
             .ok_or_else(|| self.refuse(span, "does not step its counter by a literal in its header"))?;
-        if Self::writes(func, body, var) {
+        if Self::writes(func, body, var) > 0 {
             return Err(self.refuse(span, "changes its counter inside its body"));
         }
+        // La valeur à l'entrée : le dernier `Store` qui précède la boucle dans son bloc, sinon
+        // l'initialisation. Elle n'est sûre que si rien d'autre n'écrit le compteur : une écriture
+        // dans un autre bloc, après la boucle quand son bloc se répète, ou par un pointeur, la
+        // changerait sans que le compte le voie, et le plafond de sécurité serait faux.
+        let is_var = |h: naga::Handle<naga::Expression>| {
+            matches!(func.expressions[h], E::LocalVariable(v) if v == var)
+        };
+        let before: Vec<_> = parent
+            .iter()
+            .take(at)
+            .filter_map(|s| match s {
+                S::Store { pointer, value } if is_var(*pointer) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        if Self::writes(func, &func.body, var) != before.len() + 1 {
+            return Err(self.refuse(span, "writes its counter outside its header"));
+        }
+        let init = match before.last() {
+            Some(&value) => self.literal(func, value),
+            None => func.local_variables[var].init.and_then(|h| self.literal(func, h)),
+        }
+        .ok_or_else(|| self.refuse(span, "starts its counter from a value that is not a literal"))?;
         let trips = match op {
             B::Less if step > 0.0 => ((bound - init) / step).ceil(),
             B::LessEqual if step > 0.0 => ((bound - init) / step).floor() + 1.0,
@@ -540,23 +559,6 @@ impl CostWalk<'_> {
         }
     }
 
-    /// Le dernier `Store` d'un littéral dans `var` qui précède une boucle dans son bloc.
-    fn store_before(&self, func: &naga::Function, parent: &naga::Block, var: naga::Handle<naga::LocalVariable>) -> Option<f64> {
-        let mut found = None;
-        for s in parent.iter() {
-            match s {
-                naga::Statement::Store { pointer, value }
-                    if matches!(func.expressions[*pointer], naga::Expression::LocalVariable(v) if v == var) =>
-                {
-                    found = self.literal(func, *value);
-                }
-                naga::Statement::Loop { .. } => {}
-                _ => {}
-            }
-        }
-        found
-    }
-
     /// Le pas du compteur dans `continuing` : `i = i + k` ou `i = i - k`, `k` littéral.
     fn step(&self, func: &naga::Function, continuing: &naga::Block, var: naga::Handle<naga::LocalVariable>) -> Option<f64> {
         continuing.iter().find_map(|s| match s {
@@ -579,22 +581,28 @@ impl CostWalk<'_> {
         })
     }
 
-    /// Le corps écrit-il le compteur (directement, ou en passant son pointeur à une fonction) ?
-    fn writes(func: &naga::Function, block: &naga::Block, var: naga::Handle<naga::LocalVariable>) -> bool {
+    /// Combien d'instructions du bloc écrivent le compteur, directement ou en passant son pointeur
+    /// à une fonction, blocs imbriqués compris.
+    fn writes(func: &naga::Function, block: &naga::Block, var: naga::Handle<naga::LocalVariable>) -> usize {
         let is_var = |h: naga::Handle<naga::Expression>| {
             matches!(func.expressions[h], naga::Expression::LocalVariable(v) if v == var)
         };
-        block.iter().any(|s| match s {
-            naga::Statement::Store { pointer, .. } => is_var(*pointer),
-            naga::Statement::Call { arguments, .. } => arguments.iter().any(|&a| is_var(a)),
-            naga::Statement::Block(b) => Self::writes(func, b, var),
-            naga::Statement::If { accept, reject, .. } => Self::writes(func, accept, var) || Self::writes(func, reject, var),
-            naga::Statement::Switch { cases, .. } => cases.iter().any(|c| Self::writes(func, &c.body, var)),
-            naga::Statement::Loop { body, continuing, .. } => {
-                Self::writes(func, body, var) || Self::writes(func, continuing, var)
-            }
-            _ => false,
-        })
+        block
+            .iter()
+            .map(|s| match s {
+                naga::Statement::Store { pointer, .. } => usize::from(is_var(*pointer)),
+                naga::Statement::Call { arguments, .. } => usize::from(arguments.iter().any(|&a| is_var(a))),
+                naga::Statement::Block(b) => Self::writes(func, b, var),
+                naga::Statement::If { accept, reject, .. } => {
+                    Self::writes(func, accept, var) + Self::writes(func, reject, var)
+                }
+                naga::Statement::Switch { cases, .. } => cases.iter().map(|c| Self::writes(func, &c.body, var)).sum(),
+                naga::Statement::Loop { body, continuing, .. } => {
+                    Self::writes(func, body, var) + Self::writes(func, continuing, var)
+                }
+                _ => 0,
+            })
+            .sum()
     }
 }
 
@@ -623,6 +631,14 @@ pub fn source_hash(effect: &SceneShaderEffect) -> u64 {
         p.ty.hash(&mut h);
     }
     h.finish()
+}
+
+/// L'entrée à évincer d'un cache plein, parmi `(clé, dernier usage)` : la moins récemment utilisée
+/// de celles que la scène n'emploie pas. Aucune si elle les emploie toutes : le cache dépasse alors
+/// sa taille plutôt que de recompiler à chaque frame un effet qu'elle montre.
+pub fn eviction_victim(entries: impl Iterator<Item = (u64, u64)>, scene: &[SceneShaderEffect]) -> Option<u64> {
+    let shown: std::collections::HashSet<u64> = scene.iter().map(source_hash).collect();
+    entries.filter(|(key, _)| !shown.contains(key)).min_by_key(|&(_, used)| used).map(|(key, _)| key)
 }
 
 /// Les régions actives au temps source `t`, dans l'ordre où elles s'appliquent : par lane, puis
@@ -970,6 +986,28 @@ mod tests {
         }
     }
 
+    /// Le compteur part de la valeur qu'il a à l'entrée de SA boucle : le dernier `Store` qui la
+    /// précède dans son bloc, pas une écriture plus loin. Une écriture ailleurs le rendrait
+    /// inconnu : refusée, pour que le plafond de sécurité ne compte jamais trop peu de tours.
+    #[test]
+    fn the_counter_starts_from_its_value_at_the_loop() {
+        let wrap = |body: &str| format!("fn effect(uv: vec2<f32>) -> vec4<f32> {{\n    var i = 0;\n{body}\n    return frame(uv);\n}}\n");
+        let reused = wrap("    i = 2;\n    for (; i < 6; i++) {}");
+        assert_eq!(analyze(&reused, &[]).expect("analyze").report.iterations, 4);
+        let refused = [
+            // Écrit après la boucle : si son bloc se répète, la valeur d'entrée n'est plus 0.
+            wrap("    for (; i < 4; i++) {}\n    i = -100000;"),
+            // Écrit dans un autre bloc avant la boucle : 100 004 tours, pas 4.
+            wrap("    if (uv.x > 0.5) { i = -100000; }\n    for (; i < 4; i++) {}"),
+            // Deux boucles sur le même compteur : chacune voit le pas de l'autre.
+            wrap("    for (; i < 4; i++) { }\n    for (; i < 8; i++) { }"),
+        ];
+        for code in refused {
+            let err = analyze(&code, &[]).err().unwrap_or_else(|| panic!("accepted: {code}"));
+            assert!(err.contains("writes its counter outside its header"), "{err}");
+        }
+    }
+
     #[test]
     fn a_module_constant_is_a_literal_bound() {
         let code = "const TAPS = 12;\nfn effect(uv: vec2<f32>) -> vec4<f32> {\n    var acc = vec4<f32>(0.0);\n    for (var i = 0; i < TAPS; i += 3) { acc += frame(uv); }\n    return acc;\n}\n";
@@ -1061,6 +1099,16 @@ mod tests {
         assert_eq!((ctx.footage, ctx.camera), ([0.25, 0.25, 0.5, 0.5], [0.7, 0.7, 0.2, 0.2]));
         assert_eq!(ctx.footage_corners, [[0.25, 0.5, 0.75, 0.25], [0.625, 0.75, 0.25, 0.625]]);
         assert_eq!((ctx.footage_aspect, ctx.footage_warp), (16.0 / 9.0, 1.0));
+    }
+
+    #[test]
+    fn eviction_spares_the_effects_the_scene_shows() {
+        let scene = [test_effect(VIGNETTE, vec![], &[]), test_effect("fn effect(uv: vec2<f32>) -> vec4<f32> { return frame(uv); }", vec![], &[])];
+        let (a, b) = (source_hash(&scene[0]), source_hash(&scene[1]));
+        let entries = || [(a, 1), (b, 2), (7, 5), (9, 3)].into_iter();
+        assert_eq!(eviction_victim(entries(), &scene), Some(9), "la plus ancienne hors de la scène");
+        assert_eq!(eviction_victim(entries(), &[]), Some(a), "sans scène, la plus ancienne");
+        assert_eq!(eviction_victim([(a, 1), (b, 2)].into_iter(), &scene), None, "tout est montré");
     }
 
     #[test]
