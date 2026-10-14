@@ -203,7 +203,11 @@ describe("transcribe, on a project's file", () => {
 		);
 		const first = run(TRANSCRIBE_TOOL, { projectId: "proj_1" });
 		await vi.waitFor(() => expect(running).toHaveLength(1));
+		const reads = vi.spyOn(projects, "getProjectForUpdate");
 		const second = run(TRANSCRIBE_TOOL, { projectId: "proj_2" });
+		// Deleted once the call has found the project, while it waits for Whisper.
+		await vi.waitFor(() => expect(reads).toHaveBeenCalledWith("proj_2"));
+		await reads.mock.results.at(-1)?.value;
 		await projects.deleteProject("proj_2");
 		running.shift()?.(SPEECH);
 		await first;
