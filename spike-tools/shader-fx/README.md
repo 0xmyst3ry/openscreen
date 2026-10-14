@@ -16,6 +16,7 @@ les adapter avant de les lancer ailleurs.
 | `bench.py` | Banc D3D11 brut par ctypes (Windows seulement) : temps de `D3DCompile`, coût d'une passe plein cadre. |
 | `ripple.wgsl`, `heavy.wgsl` | L'effet écrit à partir du prompt « effet ripple lors du clic », et un effet lourd de banc. |
 | `spike-resultats.md` | Le compte rendu du spike. |
+| `macos/` | Les mêmes vérifications pour la passe Metal (PR 3), adaptées aux outils de la PR 2, avec leurs résultats. |
 
 **Pièges :**
 - **Profil séparé.** La CLI de dev écrit dans le profil de l'app installée : passer
@@ -23,3 +24,6 @@ les adapter avant de les lancer ailleurs.
 - **Checkpoints.** Ils vivent dans le processus du serveur : un `createCheckpoint` par lancement,
   avant d'éditer.
 - **La vue live démarre en lecture.** Faire `setPlaying(id, false)` avant `presentTime`.
+- **La vue live sans l'éditeur n'a pas ses réglages.** Lui pousser ceux de l'inspecteur par
+  `setParam`, comme `pushAllNativeParams` : sinon son curseur garde sa taille par défaut et
+  diffère de l'export.

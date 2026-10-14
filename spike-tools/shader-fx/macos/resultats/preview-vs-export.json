@@ -1,0 +1,142 @@
+{
+	"export": {
+		"width": 1752,
+		"height": 1080
+	},
+	"results": {
+		"0.5": {
+			"preview vs export (effet)": {
+				"meanAbs": 2.96,
+				"psnr": 30.4
+			},
+			"preview vs export sans effet": {
+				"meanAbs": 2.96,
+				"psnr": 30.4
+			},
+			"preview sans effet vs export sans effet": {
+				"meanAbs": 2.96,
+				"psnr": 30.4
+			},
+			"là où l'effet agit": {
+				"pixels": 0,
+				"excluded": 0,
+				"preview vs export (effet)": null,
+				"preview vs export sans effet": null
+			},
+			"l'effet, preview contre export": null
+		},
+		"0.5 export décalé -1 frame": {
+			"meanAbs": 4.82,
+			"psnr": 22.2
+		},
+		"0.5 export décalé +1 frame": {
+			"meanAbs": 4.83,
+			"psnr": 22.1
+		},
+		"1.3": {
+			"preview vs export (effet)": {
+				"meanAbs": 3.06,
+				"psnr": 30.3
+			},
+			"preview vs export sans effet": {
+				"meanAbs": 3.09,
+				"psnr": 30.1
+			},
+			"preview sans effet vs export sans effet": {
+				"meanAbs": 3.06,
+				"psnr": 30.3
+			},
+			"là où l'effet agit": {
+				"pixels": 2523,
+				"excluded": 5367,
+				"preview vs export (effet)": 10.73,
+				"preview vs export sans effet": 18.82
+			},
+			"l'effet, preview contre export": {
+				"pixels": 7989,
+				"effet à l'export": 17.29,
+				"écart des deux effets": 11.75
+			}
+		},
+		"1.3 export décalé -1 frame": {
+			"meanAbs": 5.21,
+			"psnr": 21.4
+		},
+		"1.3 export décalé +1 frame": {
+			"meanAbs": 5.17,
+			"psnr": 21.5
+		},
+		"2.9": {
+			"preview vs export (effet)": {
+				"meanAbs": 3.08,
+				"psnr": 30.2
+			},
+			"preview vs export sans effet": {
+				"meanAbs": 3.22,
+				"psnr": 29.4
+			},
+			"preview sans effet vs export sans effet": {
+				"meanAbs": 3.1,
+				"psnr": 30.1
+			},
+			"là où l'effet agit": {
+				"pixels": 6773,
+				"excluded": 13030,
+				"preview vs export (effet)": 11.61,
+				"preview vs export sans effet": 24.88
+			},
+			"l'effet, preview contre export": {
+				"pixels": 21175,
+				"effet à l'export": 22.82,
+				"écart des deux effets": 14.14
+			}
+		},
+		"2.9 export décalé -1 frame": {
+			"meanAbs": 6.22,
+			"psnr": 19.8
+		},
+		"2.9 export décalé +1 frame": {
+			"meanAbs": 6.15,
+			"psnr": 19.8
+		},
+		"4.5": {
+			"preview vs export (effet)": {
+				"meanAbs": 3.15,
+				"psnr": 30
+			},
+			"preview vs export sans effet": {
+				"meanAbs": 3.19,
+				"psnr": 29.5
+			},
+			"preview sans effet vs export sans effet": {
+				"meanAbs": 3.14,
+				"psnr": 30
+			},
+			"là où l'effet agit": {
+				"pixels": 3514,
+				"excluded": 7659,
+				"preview vs export (effet)": 13.52,
+				"preview vs export sans effet": 25.13
+			},
+			"l'effet, preview contre export": {
+				"pixels": 11253,
+				"effet à l'export": 20.98,
+				"écart des deux effets": 13.38
+			}
+		},
+		"4.5 export décalé -1 frame": {
+			"meanAbs": 6.48,
+			"psnr": 19.4
+		},
+		"4.5 export décalé +1 frame": {
+			"meanAbs": 6.42,
+			"psnr": 19.5
+		}
+	},
+	"fps": {
+		"avec effet #1": 29.7,
+		"sans effet #1": 29.7,
+		"avec effet #2": 29.7,
+		"sans effet #2": 29.7
+	}
+}

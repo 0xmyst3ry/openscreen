@@ -1,0 +1,84 @@
+[
+	{
+		"name": "createProject",
+		"ms": 433,
+		"isError": false,
+		"texts": [
+			"{\"projectId\":\"proj_5130c648-fd0d-4664-8bf9-ef3b2406a5a2\",\"checkpointId\":\"cp_a55a3a89-d482-4ee2-b567-981e31c23c91\",\"durationSec\":6,\"autoZooms\":0}"
+		],
+		"images": 0
+	},
+	{
+		"name": "createCheckpoint",
+		"ms": 2,
+		"isError": false,
+		"texts": ["{\"checkpointId\":\"cp_59e5a9d0-d354-433a-be30-fcd68203c366\"}"],
+		"images": 0
+	},
+	{
+		"name": "exportVideo",
+		"ms": 6607,
+		"isError": false,
+		"texts": [
+			"{\"path\":\"/private/tmp/claude-501/-Users-m1-Documents-repos-openscreen--claude-worktrees-shader-effects-macos-metal-afe7c0/758476fc-a10c-433e-8c7d-e893e3aeda78/scratchpad/fx/e2e/plain.mp4\",\"format\":\"mp4\",\"width\":1752,\"height\":1080}"
+		],
+		"images": 0
+	},
+	{
+		"name": "addEffect",
+		"ms": 6,
+		"isError": true,
+		"texts": [
+			"{\"error\":\"The effect does not compile:\\nerror: invalid field accessor `strenght`\\n   ┌─ wgsl:10:81\\n   │\\n10 │     let wave = sin(x / 0.03 * 6.2831853) * env * (1.0 - t) * (1.0 - t) * params.strenght;\\n   │                                                                                 ^^^^^^^^ invalid accessor\\n\\n\"}"
+		],
+		"images": 0
+	},
+	{
+		"name": "addEffect",
+		"ms": 152,
+		"isError": false,
+		"texts": [
+			"{\"effectRegionId\":\"fxr_351814bb-e7da-432a-9dc5-da4d4ee4dcf9\",\"effectId\":\"fx_c3a2356b-f531-4a93-b9e4-526b0e481834\",\"startSec\":0,\"endSec\":6,\"ids\":[\"fxr_351814bb-e7da-432a-9dc5-da4d4ee4dcf9\"],\"validated\":true,\"cost\":{\"tier\":\"light\",\"frameReads\":1,\"busiestTier\":\"light\",\"busiestFrameReads\":1}}"
+		],
+		"images": 0
+	},
+	{
+		"name": "exportVideo",
+		"ms": 2540,
+		"isError": false,
+		"texts": [
+			"{\"path\":\"/private/tmp/claude-501/-Users-m1-Documents-repos-openscreen--claude-worktrees-shader-effects-macos-metal-afe7c0/758476fc-a10c-433e-8c7d-e893e3aeda78/scratchpad/fx/e2e/effect.mp4\",\"format\":\"mp4\",\"width\":1752,\"height\":1080}"
+		],
+		"images": 0
+	},
+	{
+		"name": "getFrames",
+		"ms": 3327,
+		"isError": false,
+		"texts": [
+			"4 frame(s) of a 1752x1080 video lasting 6.00s.",
+			"0.50s on the ruler, 0.50s into the video",
+			"1.30s on the ruler, 1.30s into the video",
+			"2.90s on the ruler, 2.90s into the video",
+			"4.50s on the ruler, 4.50s into the video"
+		],
+		"images": 4
+	},
+	{
+		"name": "getCurrentDocument",
+		"ms": 3,
+		"isError": false,
+		"texts": [
+			"{\"timeBaseNote\":\"clips and trims are in source-time seconds; zooms, speedRegions, annotations, cameraFullscreenRegions, effects and audioTracks are in virtual (edited-timeline) seconds: the editor's ruler, where a trim leaves a hole instead of shortening it and a speed region stretches nothing. The exported video's clock skips those holes and plays sped-up spans faster, so it differs from the ruler once there are any.\",\"audioNote\":\"audioTracks are imported voiceover / music files laid over the recording. They are clip-anchored like every other region, so they travel with their clip through reorder and trim, and they play at 1x whatever a speed region does to the picture under them. addAudio places an EXISTING asset of kind 'audio': if the project has none, a file has to be imported first (importMedia, where it is offered), so never invent an id.\",\"zoomNote\":\"renderedScale is what the viewer sees (depth is an ordinal, not a factor: 1=1.25×, 2=1.50×, 3=1.80×, 4=2.20×, 5=3.50×, 6=5.00×). When a zoom carries customScale it wins over depth and depthIsOverridden is true — a setZoom that only changes depth on such a zoom clears customScale so the depth takes effect. startSec–endSec is where the zoom HOLDS: it animates in over zoomInFromSec–startSec and out over endSec–zoomOutUntilSec (transitionSec of screen time each; a speed region scales that on the timeline, longer above 1x and shorter below, so read the bounds rather than adding transitionSec). cutByTrim names the move a trim cuts into (in, out or both), cutByJunction the move a clip junction cuts (the clip ends before the move does): the export jumps at that cut. Two zooms at most 1.5 s apart on screen, with no trim or clip junction between them, are CHAINED: no zoom-out and back in, the camera pans from the first (panToZoomId, panUntilSec: 1 s of screen time from its endSec, which can run into the next span) to the second (panFromZoomId). focusMode auto follows the recorded pointer instead of holding focus; hideCursor: true hides the pointer while the zoom is on screen (absent, it shows).\",\"annotationNote\":\"Each annotation reports its box the way addAnnotation and setAnnotation take it: x/y its centre, width/height its size, in percent of `box`. box 'frame' is the output frame (text and arrows, which padding and zooms never move); box 'footage' is the recording's picture (a blur, which stays on what it hides when the picture moves). A text also reports its look (fontSize, color, background, bold, animation), an arrow (type 'figure') its figureData, a blur its blurData.\",\"project\":{\"id\":\"proj_5130c648-fd0d-4664-8bf9-ef3b2406a5a2\",\"title\":\"shader-fx-macos\"},\"primaryAssetId\":\"asset_927f607c-b595-4e90-a0d6-74eb3fe3ce68\",\"autoFocusAll\":false,\"hasAnyCamera\":false,\"cursorNote\":\"assets[].hasCursorTelemetry says whether recorded pointer telemetry exists for that asset. true — call getCursorTrack to read the recorded pointer track. false — this asset was checked and has none (imported footage, or a recording made without the cursor recorder). null — it was NOT checked from here; say that, and do not report it as the project having no cursor data.\",\"assets\":[{\"id\":\"asset_927f607c-b595-4e90-a0d6-74eb3fe3ce68\",\"label\":\"clicks.mp4\",\"kind\":\"video\",\"durationSec\":6,\"hasCameraTrack\":false,\"cameraVisible\":false,\"hasCursorTelemetry\":true,\"hasTranscript\":false}],\"clips\":[{\"id\":\"clip_300318df-880f-45c3-badf-56ae3b793625\",\"index\":0,\"assetId\":\"asset_927f607c-b595-4e90-a0d6-74eb3fe3ce68\",\"reason\":\"The recorded take\",\"origin\":\"agent\",\"sourceStartSec\":0,\"sourceEndSec\":6,\"timelineStartSec\":0,\"timelineEndSec\":6}],\"trimRanges\":[],\"zoomRanges\":[],\"speedRegions\":[],\"annotations\":[],\"cameraFullscreenRegions\":[],\"effects\":[{\"id\":\"fxr_351814bb-e7da-432a-9dc5-da4d4ee4dcf9\",\"effectId\":\"fx_c3a2356b-f531-4a93-b9e4-526b0e481834\",\"name\":\"Ripple au clic\",\"startSec\":0,\"endSec\":6,\"target\":\"image\",\"lane\":0,\"values\":{}}],\"effectDefinitions\":[{\"effectId\":\"fx_c3a2356b-f531-4a93-b9e4-526b0e481834\",\"name\":\"Ripple au clic\",\"description\":\"Une onde part de chaque clic et réfracte l'image.\",\"contract\":1,\"lines\":20,\"regions\":1,\"cost\":{\"tier\":\"light\",\"frameReads\":1},\"params\":[{\"type\":\"number\",\"name\":\"strength\",\"label\":\"Force\",\"default\":1,\"min\":0,\"max\":2},{\"type\":\"number\",\"name\":\"radius\",\"label\":\"Rayon\",\"default\":0.2,\"min\":0.05,\"max\":0.5},{\"type\":\"number\",\"name\":\"duration\",\"label\":\"Durée\",\"default\":0.9,\"min\":0.3,\"max\":2}]}],\"audioTracks\":[],\"hasTranscript\":false,\"vocabulary\":null,\"settings\":{\"wallpaper\":\"/wallpapers/wallpaper11.jpg\",\"wallpaperMotion\":\"none\",\"frame\":\"none\",\"frameTheme\":\"light\",\"aspectRatio\":\"auto\",\"shadowIntensity\":0.6,\"backgroundBlur\":0,\"motionBlurAmount\":0.2,\"depthOfField\":true,\"borderRadius\":40,\"padding\":50,\"webcamLayoutPreset\":\"picture-in-picture\",\"webcamMaskShape\":\"square\",\"webcamRoundness\":0.7,\"webcamMirrored\":false,\"webcamReactiveZoom\":true,\"webcamSizePreset\":40,\"webcamAnchor\":\"bottom-right\",\"webcamCropRegion\":{\"x\":0,\"y\":0,\"width\":1,\"height\":1},\"webcamCropPan\":{\"x\":0.5,\"y\":0.5},\"webcamBackgroundMode\":\"none\",\"webcamWallpaper\":\"/wallpapers/wallpaper11.jpg\",\"webcamBlurIntensity\":0.5,\"audioGainDb\":0,\"autoFocusAll\":false,\"cursor\":{\"show\":true,\"autoHide\":false,\"theme\":\"default\",\"asArrow\":[\"text\",\"grab\",\"resize\",\"busy\",\"crosshair\",\"not-allowed\",\"help\",\"up-arrow\"],\"size\":3.6,\"smoothing\":0.67,\"motionBlur\":0.35,\"clickBounce\":1,\"clickImpact\":false,\"clickSound\":false,\"clickSoundGainDb\":0,\"model3d\":false}},\"settingsContext\":{\"note\":\"settings uses setEditorSettings' own shape. inactive lists each setting the editor hides in this state, and why: a value set there is stored but changes nothing until that state changes. cameraSegmentation null means this server could not check whether the machine can cut out the camera background. The captions are not here: getCaptions reads them, setCaptionSettings sets them.\",\"aspectRatios\":[\"auto\",\"16:9\",\"9:16\",\"1:1\",\"4:3\",\"4:5\",\"16:10\",\"10:16\"],\"originalAspectRatios\":[{\"token\":\"16:9\",\"width\":1920,\"height\":1080,\"clipCount\":1}],\"formatFill\":\"none\",\"hasTiltedZoom\":false,\"bundledWallpapers\":[\"/wallpapers/wallpaper11.jpg\",\"/wallpapers/wallpaper1.jpg\",\"/wallpapers/wallpaper3.jpg\",\"/wallpapers/wallpaper4.jpg\",\"/wallpapers/wallpaper5.jpg\",\"/wallpapers/wallpaper6.jpg\",\"/wallpapers/wallpaper7.jpg\",\"/wallpapers/wallpaper8.jpg\",\"/wallpapers/wallpaper9.jpg\",\"/wallpapers/wallpaper10.jpg\",\"/wallpapers/wallpaper2.jpg\",\"/wallpapers/wallpaper12.jpg\",\"/wallpapers/wallpaper13.jpg\",\"/wallpapers/wallpaper14.jpg\",\"/wallpapers/wallpaper15.jpg\",\"/wallpapers/wallpaper16.jpg\",\"/wallpapers/wallpaper17.jpg\",\"/wallpapers/wallpaper18.jpg\"],\"cursorThemes\":[{\"id\":\"default\",\"name\":\"Default\"},{\"id\":\"studio-ink\",\"name\":\"Studio Ink\"},{\"id\":\"prism-glow\",\"name\":\"Prism Glow\"},{\"id\":\"pop-coral\",\"name\":\"Pop Coral\"},{\"id\":\"pixel-candy\",\"name\":\"Pixel Candy\"},{\"id\":\"star-sprout\",\"name\":\"Star Sprout\"},{\"id\":\"glass-lens\",\"name\":\"Glass Lens\"}],\"cameraSegmentation\":\"no-runtime\",\"inactive\":{\"formatFollowCursor\":\"The format is auto or the recording's own shape, so the recording already fills it.\",\"frameTheme\":\"No frame is drawn (frame is none).\",\"depthOfField\":\"It only blurs a 3D-tilted zoom (rotationPreset), and there is none.\",\"webcamLayoutPreset\":\"No clip on the timeline has a camera.\",\"webcamMaskShape\":\"No clip on the timeline has a camera.\",\"webcamRoundness\":\"No clip on the timeline has a camera.\",\"webcamMirrored\":\"No clip on the timeline has a camera.\",\"webcamReactiveZoom\":\"No clip on the timeline has a camera.\",\"webcamSizePreset\":\"No clip on the timeline has a camera.\",\"webcamAnchor\":\"No clip on the timeline has a camera.\",\"webcamCropRegion\":\"No clip on the timeline has a camera.\",\"webcamCropPan\":\"No clip on the timeline has a camera.\",\"webcamBackgroundMode\":\"No clip on the timeline has a camera.\",\"webcamWallpaper\":\"No clip on the timeline has a camera.\",\"webcamBlurIntensity\":\"No clip on the timeline has a camera.\",\"cursor.clickSoundGainDb\":\"The click sound is off (cursor.clickSound is false).\"}}}"
+		],
+		"images": 0
+	},
+	{
+		"summary": {
+			"plainExportMs": 6607,
+			"effectExportMs": 2540,
+			"brokenRefused": true,
+			"fixedAccepted": true
+		}
+	}
+]
