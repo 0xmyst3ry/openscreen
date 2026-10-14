@@ -7,7 +7,7 @@ Docusaurus 3 site. Lives in `website/` inside the monorepo. Deployed to Cloudfla
 ```sh
 cd website
 npm install
-npm run dev      # http://localhost:3000/openscreen/
+npm run dev      # http://localhost:3000/
 ```
 
 ## Build
@@ -25,6 +25,4 @@ npm run typecheck
 
 ## Notes
 
-- Site URL: <https://getopenscreen.github.io/openscreen/>
-- The base URL is `/openscreen/` because the org-level Pages site hosts multiple projects.
-- Docs migration from `docs/` (root) → `website/docs/` happens in a follow-up PR. For now only the intro page is published.
+- Site URL: <https://getopenscreen.com/>, served from the domain root (`baseUrl: "/"`).
