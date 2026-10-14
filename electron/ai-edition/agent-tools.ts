@@ -385,8 +385,9 @@ function placeTextOnFrame<T extends AxcutAnnotationRegion>(
 // first region under each — which every set*/remove* tool accepts as the id.
 function coalesceForAgent<T extends { id: string; startMs: number; endMs: number }>(
 	regions: T[],
+	annotations = false,
 ): T[] {
-	return coalesceRegionsForRuler(regions).map((pill) => ({
+	return coalesceRegionsForRuler(regions, 0.001, { annotations }).map((pill) => ({
 		...pill.member,
 		id: pill.ids[0],
 		startMs: Math.round(pill.start * 1000),
@@ -1464,7 +1465,7 @@ export function documentSnapshotForModel(
 			endSec: roundSec(s.endMs),
 			speed: s.speed,
 		})),
-		annotations: coalesceForAgent(document.annotations).map((a) => ({
+		annotations: coalesceForAgent(document.annotations, true).map((a) => ({
 			id: a.id,
 			startSec: roundSec(a.startMs),
 			endSec: roundSec(a.endMs),
@@ -3171,7 +3172,7 @@ export function executeAgentTool(
 						},
 						parsed.data,
 					),
-					zIndex: document.annotations.length + 1,
+					zIndex: Math.max(0, ...document.annotations.map((a) => a.zIndex)) + 1,
 				} as AxcutAnnotationRegion,
 				{ x: parsed.data.x, y: parsed.data.y },
 				document,
@@ -3230,14 +3231,12 @@ export function executeAgentTool(
 			if (!parsed.success) return failure(parsed.error.message);
 			const { annotationId } = parsed.data;
 			const existing = document.annotations.find((a) => a.id === annotationId);
-			const annPill = new Set(resolvePillIds(document.annotations, annotationId));
+			const annPill = new Set(
+				resolvePillIds(document.annotations, annotationId, 0.001, { annotations: true }),
+			);
 			if (!existing) return failure(`Unknown annotation: ${annotationId}`);
 			const { startMs, endMs } = resolveSpanMs(existing, parsed.data.startSec, parsed.data.endSec);
-			const blocked = refuseIfBlocked("annotation", document.annotations, annotationId, {
-				startMs,
-				endMs,
-			});
-			if (blocked) return blocked;
+
 			const { x, y, text, type, width, height } = parsed.data;
 			const mismatch = refuseShapeMismatch(type ?? existing.type, parsed.data);
 			if (mismatch) return mismatch;
@@ -3307,6 +3306,9 @@ export function executeAgentTool(
 				endMs,
 				document.timeline.clips,
 				() => createId("ann"),
+				0.001,
+				{},
+				{ annotations: true },
 			);
 			const landing = landingAfterPillEdit(
 				document.annotations,

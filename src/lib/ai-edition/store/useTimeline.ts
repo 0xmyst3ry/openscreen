@@ -52,6 +52,11 @@ import { appendAutoZoomSuggestions } from "../timeline/apply-auto-zooms";
 import { hasAnyClipWithCamera } from "../timeline/camera";
 import { probeAudioDuration, probeVideoDimensions, probeVideoDuration } from "../timeline/duration";
 import {
+	type AnnotationTrackDrop,
+	annotationDropLayers,
+	annotationTrackPills,
+} from "../timeline/regionTracks";
+import {
 	anchorRegionsWithDerivedMs,
 	dropPillsByIds,
 	replacePillSpan,
@@ -102,8 +107,9 @@ function patchRegionById<T extends { id: string; startMs: number; endMs: number;
 	regions: T[],
 	id: string,
 	patch: Partial<T>,
+	annotations = false,
 ): T[] {
-	const under = new Set(resolveRegionIds(regions, id));
+	const under = new Set(resolveRegionIds(regions, id, 0.001, { annotations }));
 	return regions.map((r) => (under.has(r.id) ? { ...r, ...patch } : r));
 }
 
@@ -520,7 +526,7 @@ export function useTimeline() {
 					textAlign: "center",
 					textAnimation: "none",
 				},
-				zIndex: document.annotations.length + 1,
+				zIndex: Math.max(0, ...document.annotations.map((a) => a.zIndex)) + 1,
 			};
 			const frameAspect = resolveAspectRatioValue(
 				document,
@@ -969,22 +975,41 @@ export function useTimeline() {
 	);
 
 	const updateAnnotationSpan = useCallback(
-		async (id: string, startMs: number, endMs: number) => {
+		async (id: string, startMs: number, endMs: number, drop?: AnnotationTrackDrop) => {
 			if (!document) return;
-			const s = finiteMs(startMs);
-			const e = finiteMs(endMs);
-			const next: AxcutDocument = {
-				...document,
-				annotations: replacePillSpan(
-					document.annotations,
-					id,
-					Math.min(s, e),
-					Math.max(s, e),
-					document.timeline.clips,
-					() => createId("ann"),
-				),
-			};
-			await saveDocument(next, { history: true });
+			const s = Math.min(finiteMs(startMs), finiteMs(endMs));
+			const e = Math.max(finiteMs(startMs), finiteMs(endMs));
+			const pills = annotationTrackPills(document.annotations);
+			const pill = pills.find((p) => p.ids.includes(id));
+			if (!pill) return;
+			const layers = drop
+				? annotationDropLayers(pills, pill.id, { start: s / 1000, end: e / 1000 }, drop)
+				: new Map<string, number>();
+			const layerByRegion = new Map(
+				pills.flatMap((p) => p.ids.map((regionId) => [regionId, layers.get(p.id)] as const)),
+			);
+			const annotations = document.annotations.map((a) => {
+				const layer = layerByRegion.get(a.id);
+				return layer === undefined ? a : { ...a, zIndex: layer };
+			});
+			// Span and compositing order persist together as one undo step.
+			await saveDocument(
+				{
+					...document,
+					annotations: replacePillSpan(
+						annotations,
+						id,
+						s,
+						e,
+						document.timeline.clips,
+						() => createId("ann"),
+						0.001,
+						{},
+						{ annotations: true },
+					),
+				},
+				{ history: true },
+			);
 		},
 		[document, saveDocument],
 	);
@@ -1001,7 +1026,7 @@ export function useTimeline() {
 			if (annotationLiveRef.current !== doc) annotationRollbackRef.current = doc;
 			const next: AxcutDocument = {
 				...doc,
-				annotations: patchRegionById(doc.annotations, id, patch),
+				annotations: patchRegionById(doc.annotations, id, patch, true),
 			};
 			setDocument(next, { history: false });
 			annotationLiveRef.current = next;
@@ -1228,7 +1253,7 @@ export function useTimeline() {
 			const next: AxcutDocument = pruneUnusedShaderEffects({
 				...document,
 				zoomRanges: dropPillsByIds(document.zoomRanges, zoomIds) as AxcutDocument["zoomRanges"],
-				annotations: dropPillsByIds(document.annotations, annotationIds),
+				annotations: dropPillsByIds(document.annotations, annotationIds, { annotations: true }),
 				...(shaderEffectIds.size > 0
 					? {
 							shaderEffectRanges: dropPillsByIds(

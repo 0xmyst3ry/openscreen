@@ -12,6 +12,7 @@ import {
 	clampSpanAgainstNeighbours,
 	coalesceByIdentity,
 	coalesceRegionsForRuler,
+	dropPillById,
 	projectRegionsToSource,
 	regionIdentityKey,
 	replacePillSpan,
@@ -832,6 +833,88 @@ describe("pills wired to the universal rules", () => {
 		expect(wholePillOf(regions, "b")).toEqual({ id: "a", startMs: 20000, endMs: 30000, depth: 3 });
 		expect(wholePillOf(regions, "c")).toEqual(regions[2]);
 		expect(wholePillOf(regions, "gone")).toBeNull();
+	});
+
+	it("keeps identical overlapping annotations separate for selection, edits and deletion", () => {
+		const regions = [
+			{ id: "background", startMs: 0, endMs: 67000, type: "text", content: "Hi", zIndex: 1 },
+			{ id: "second", startMs: 35000, endMs: 40000, type: "text", content: "Hi", zIndex: 1 },
+		];
+		expect(
+			coalesceRegionsForRuler(regions, 0.001, { annotations: true }).map((p) => p.ids),
+		).toEqual([["background"], ["second"]]);
+		expect(resolveRegionIds(regions, "second", 0.001, { annotations: true })).toEqual(["second"]);
+		expect(dropPillById(regions, "second", { annotations: true })).toEqual([regions[0]]);
+		const moved = replacePillSpan(
+			regions,
+			"second",
+			5000,
+			10000,
+			[],
+			ids(),
+			0.001,
+			{},
+			{ annotations: true },
+		);
+		expect(moved).toContainEqual(regions[0]);
+		expect(moved.find((r) => r.id === "second")).toMatchObject({ startMs: 5000, endMs: 10000 });
+	});
+
+	it("lets annotations overlap across layers and preserves a layer change across clip fragments", () => {
+		const regions = [
+			{ id: "low", startMs: 0, endMs: 10000, type: "text", content: "Low", zIndex: 1 },
+			{ id: "high", startMs: 30000, endMs: 40000, type: "text", content: "High", zIndex: 2 },
+		];
+		const moved = replacePillSpan(
+			regions,
+			"high",
+			5000,
+			30000,
+			clips,
+			ids(),
+			0.001,
+			{ zIndex: 0 },
+			{ annotations: true },
+		);
+		expect(moved[0]).toEqual(regions[0]);
+		const fragments = moved.slice(1);
+		expect(fragments.length).toBeGreaterThan(1);
+		expect(fragments.every((r) => r.zIndex === 0)).toBe(true);
+		const pill = coalesceRegionsForRuler(fragments, 0.001, { annotations: true })[0];
+		expect(pill).toMatchObject({ start: 5, end: 30 });
+		expect(resolveRegionIds(moved, "high", 0.001, { annotations: true })).toHaveLength(
+			fragments.length,
+		);
+	});
+
+	it("does not exchange ambiguous identical annotation fragments at a shared clip boundary", () => {
+		const payload = { type: "text", content: "Same", zIndex: 1 };
+		const regions = [
+			{ ...payload, id: "back-a", startMs: 0, endMs: 25000, clipId: "a" },
+			{ ...payload, id: "back-b", startMs: 25000, endMs: 50000, clipId: "b" },
+			{ ...payload, id: "front-a", startMs: 20000, endMs: 25000, clipId: "a" },
+			{ ...payload, id: "front-b", startMs: 25000, endMs: 30000, clipId: "b" },
+		];
+		expect(coalesceRegionsForRuler(regions, 0.001, { annotations: true })).toHaveLength(4);
+		expect(resolveRegionIds(regions, "front-a", 0.001, { annotations: true })).toEqual(["front-a"]);
+		expect(dropPillById(regions, "front-a", { annotations: true })).toEqual(
+			regions.filter((r) => r.id !== "front-a"),
+		);
+	});
+
+	it("keeps ordinary region merge and repulsion rules when they carry a zIndex", () => {
+		const regions = [
+			{ id: "a", startMs: 0, endMs: 1000, zIndex: 1, speed: 2 },
+			{ id: "b", startMs: 500, endMs: 1500, zIndex: 1, speed: 2 },
+		];
+		expect(coalesceRegionsForRuler(regions)).toHaveLength(1);
+		const separate = [
+			{ ...regions[0], endMs: 1000 },
+			{ ...regions[1], startMs: 2000, endMs: 3000 },
+		];
+		expect(
+			replacePillSpan(separate, "a", 1500, 2500, [], ids()).find((r) => r.id === "a"),
+		).toMatchObject({ startMs: 1000, endMs: 2000 });
 	});
 
 	it("keeps adjacent regions with different properties as separate pills", () => {

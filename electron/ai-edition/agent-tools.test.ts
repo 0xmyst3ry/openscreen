@@ -772,6 +772,23 @@ describe("executeAgentTool", () => {
 		expect(() => documentSchema.parse(result.document)).not.toThrow();
 	});
 
+	it("MCP addAnnotation uses the highest saved layer after deletions", () => {
+		const initial = executeAgentTool(
+			fixtureDocument(),
+			"addAnnotation",
+			JSON.stringify({ startSec: 1, endSec: 2, text: "First" }),
+		);
+		const doc = initial.document as AxcutDocument;
+		doc.annotations[0].zIndex = 12;
+		const added = executeAgentTool(
+			doc,
+			"addAnnotation",
+			JSON.stringify({ startSec: 3, endSec: 4, text: "Next" }),
+		);
+		expect(added.ok).toBe(true);
+		expect(added.document?.annotations.map((a) => a.zIndex)).toEqual([12, 13]);
+	});
+
 	it("addAnnotation centres the text on a dark plate by default, and keeps it in frame", () => {
 		const centred = executeAgentTool(
 			fixtureDocument(),
@@ -919,7 +936,7 @@ describe("executeAgentTool", () => {
 		}
 	});
 
-	it("refuses a set that would run into another region, instead of landing it elsewhere", () => {
+	it("allows overlapping annotations while refusing overlapping modifiers", () => {
 		let document = fixtureDocument();
 		const add = (name: string, args: Record<string, unknown>) => {
 			const result = executeAgentTool(document, name, JSON.stringify(args));
@@ -934,9 +951,11 @@ describe("executeAgentTool", () => {
 			"setAnnotation",
 			JSON.stringify({ annotationId: firstId, startSec: 7, endSec: 9 }),
 		);
-		expect(blocked.ok).toBe(false);
-		expect(blocked.document).toBeUndefined();
-		expect(blocked.resultJson).toMatch(/NOT changed.*6\.0|NOT changed/);
+		expect(blocked.ok).toBe(true);
+		expect(blocked.document?.annotations.find((a) => a.id === firstId)).toMatchObject({
+			startMs: 7000,
+			endMs: 9000,
+		});
 
 		// The same rule for every kind of effect.
 		const zoom = add("addZoom", { startSec: 1, endSec: 2, depth: 2 });

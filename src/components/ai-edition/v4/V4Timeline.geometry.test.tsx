@@ -146,6 +146,7 @@ function renderTimeline(
 		...overrides,
 	};
 	const setCurrentTime = vi.fn();
+	const onAnnotationRowCountChange = vi.fn();
 	const timeline = (
 		<ShortcutsProvider>
 			<V4Timeline
@@ -157,6 +158,7 @@ function renderTimeline(
 				onTogglePlay={vi.fn()}
 				onEditClip={vi.fn()}
 				onAddVoiceover={vi.fn()}
+				onAnnotationRowCountChange={onAnnotationRowCountChange}
 			/>
 		</ShortcutsProvider>
 	);
@@ -170,10 +172,11 @@ function renderTimeline(
 		),
 	);
 	return {
+		onAnnotationRowCountChange,
 		// A getter: a test that empties `annotationRegions` renders no such pill, and an eager
 		// lookup would throw before its own assertions ran.
 		get pill() {
-			return screen.getByTitle("toolbar.newAnnotation");
+			return screen.getByTitle(/^toolbar\.newAnnotation/);
 		},
 		clipEls: Array.from(document.querySelectorAll<HTMLElement>("[data-clip-id]")),
 		tl,
@@ -204,6 +207,122 @@ function wheelZoomOn(el: HTMLElement, notches: number) {
 function zoomIn(notches: number) {
 	wheelZoomOn(document.querySelector("[class*=tlTracks]") as HTMLElement, notches);
 }
+
+describe("timeline tracks", () => {
+	afterEach(cleanup);
+
+	it("shows identical nested annotations on separate rows and selects each independently", () => {
+		const { tl } = renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [
+				{ id: "main", startMs: 0, endMs: 67000, type: "text", content: "Same", zIndex: 1 },
+				{ id: "second", startMs: 35000, endMs: 40000, type: "text", content: "Same", zIndex: 1 },
+			],
+		});
+		const pills = [...document.querySelectorAll<HTMLElement>("[data-region-id]")];
+		expect(pills).toHaveLength(2);
+		expect(new Set(pills.map((p) => p.style.top)).size).toBe(2);
+		for (const pill of pills) {
+			fireEvent.keyDown(pill, { key: "Enter" });
+			expect(tl.selectRegion).toHaveBeenLastCalledWith("annotation", pill.dataset.regionId, {
+				additive: false,
+			});
+		}
+	});
+
+	it("reuses a single row for back-to-back annotations and keeps the empty lane free of drag hints", () => {
+		renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: Array.from({ length: 10 }, (_, i) => ({
+				id: `ann-${i}`,
+				startMs: i * 1000,
+				endMs: (i + 1) * 1000,
+				zIndex: i + 1,
+			})),
+		});
+		const lane = document.querySelector<HTMLElement>(
+			'[data-track-kind="annotation"]',
+		) as HTMLElement;
+		expect(lane.style.height).toBe("24px");
+		expect(lane.title).toBe("");
+		expect(
+			new Set([...lane.querySelectorAll<HTMLElement>("[data-region-id]")].map((p) => p.style.top))
+				.size,
+		).toBe(1);
+		expect(lane.querySelector<HTMLElement>("[data-region-id]")?.title).toContain("tracks.dragHint");
+		cleanup();
+		renderTimeline(undefined, undefined, undefined, undefined, { annotationRegions: [] });
+		expect(document.querySelector<HTMLElement>('[data-track-kind="annotation"]')?.title).toBe("");
+	});
+
+	it("creates a separate live row when a horizontal drag moves into an existing annotation", () => {
+		const { tl, onAnnotationRowCountChange } = renderTimeline(
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{
+				annotationRegions: [
+					{ id: "main", startMs: 0, endMs: 100000, zIndex: 1 },
+					{ id: "second", startMs: 200000, endMs: 300000, zIndex: 1 },
+				],
+			},
+		);
+		expect(onAnnotationRowCountChange).toHaveBeenLastCalledWith(1);
+		const second = document.querySelector<HTMLElement>('[data-region-id="second"]') as HTMLElement;
+		const main = document.querySelector<HTMLElement>('[data-region-id="main"]') as HTMLElement;
+		fireEvent.pointerDown(second, { clientX: 100, clientY: 10 });
+		act(() => {
+			window.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 10 }));
+		});
+		expect(onAnnotationRowCountChange).toHaveBeenLastCalledWith(2);
+		expect(second.style.top).not.toBe(main.style.top);
+		expect(
+			document.querySelector<HTMLElement>('[data-track-kind="annotation"]')?.style.height,
+		).toBe("51px");
+		act(() => {
+			window.dispatchEvent(new MouseEvent("pointerup"));
+		});
+		expect(tl.updateAnnotationSpan).toHaveBeenCalledWith("second", 20000, 120000);
+	});
+
+	it("moves annotations vertically between existing layers and creates layers above and below", () => {
+		const { tl } = renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [
+				{ id: "low", startMs: 0, endMs: 100000, zIndex: 0 },
+				{ id: "high", startMs: 0, endMs: 100000, zIndex: 4 },
+			],
+		});
+		const low = document.querySelector<HTMLElement>('[data-region-id="low"]') as HTMLElement;
+		expect(low.dataset.trackRow).toBe("1");
+		for (const dy of [-27, -54, 27]) {
+			fireEvent.pointerDown(low, { clientX: 10, clientY: 100 });
+			act(() => {
+				window.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 100 + dy }));
+			});
+			act(() => {
+				window.dispatchEvent(new MouseEvent("pointerup"));
+			});
+			expect(tl.updateAnnotationSpan).toHaveBeenLastCalledWith("low", 0, 100000, {
+				row: 1 + dy / 27,
+				direction: dy < 0 ? "up" : "down",
+			});
+		}
+	});
+
+	it("keeps speed regions in a single lane", () => {
+		renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [],
+			speedRegions: [
+				{ id: "a", startMs: 0, endMs: 67000, speed: 2 },
+				{ id: "b", startMs: 35000, endMs: 40000, speed: 3 },
+			],
+		});
+		const pills = [
+			...document.querySelectorAll<HTMLElement>('[data-track-kind="speed"] [data-region-id]'),
+		];
+		expect(pills).toHaveLength(2);
+		expect(pills[0].style.top).toBe(pills[1].style.top);
+	});
+});
 
 describe("V4Timeline scrubbing", () => {
 	it("publishes at most one React scrub-state update per animation frame", () => {
@@ -1095,18 +1214,18 @@ describe("V4Timeline toolbar tooltips", () => {
 		for (const button of buttons) expect(button).not.toHaveAttribute("title");
 	});
 
-	it("names a pill on hover only when it cannot draw its own label", () => {
+	it("shows the annotation drag hint on pills of any width", () => {
 		// A hairline pill draws nothing, so the title is the only place its name is.
 		renderTimeline();
-		const hairline = screen.getByTitle("toolbar.newAnnotation");
+		const hairline = screen.getByTitle(/^toolbar\.newAnnotation/);
 		expect(hairline.textContent).toBe("");
 
-		// One that fills the timeline draws its label, and a title would repeat it.
+		// A wide annotation still teaches vertical dragging on hover.
 		cleanup();
 		renderTimeline(undefined, { id: "ann1", startMs: 0, endMs: TOTAL_SEC * 1000 });
 		const wide = document.querySelector("[class*=lanePill]") as HTMLElement;
 		expect(wide).toHaveTextContent("toolbar.newAnnotation");
-		expect(wide).not.toHaveAttribute("title");
+		expect(wide.title).toContain("tracks.dragHint");
 	});
 });
 

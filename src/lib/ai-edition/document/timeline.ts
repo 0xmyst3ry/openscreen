@@ -1178,7 +1178,10 @@ export function removeRegion(document: AxcutDocument, kind: RegionKind, id: stri
 				zoomRanges: dropPillById(document.zoomRanges, id) as AxcutDocument["zoomRanges"],
 			};
 		case "annotation":
-			return { ...document, annotations: dropPillById(document.annotations, id) };
+			return {
+				...document,
+				annotations: dropPillById(document.annotations, id, { annotations: true }),
+			};
 		case "audio":
 			// Not `dropPillById`: an audio track's fragments are grouped by
 			// `trackId`, and deleting the pill has to take the asset with it when

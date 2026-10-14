@@ -43,6 +43,7 @@ import { useTimeline } from "@/lib/ai-edition/store/useTimeline";
 import { isGeneratedAssetId } from "@/lib/ai-edition/timeline/clip-parts";
 import { mergeCloseCuts } from "@/lib/ai-edition/timeline/cut-breath";
 import { newRegionDurationSec } from "@/lib/ai-edition/timeline/newRegionDuration";
+import { REGION_ROW_STEP_PX } from "@/lib/ai-edition/timeline/regionTracks";
 import {
 	dropTrimPillsByIds,
 	trimAppliesToClip,
@@ -253,9 +254,12 @@ export function NewEditorShell() {
 		[document?.audioTracks],
 	);
 	const hasEffects = (document?.shaderEffectRanges?.length ?? 0) > 0;
+	const extraAudioHeightPx = Math.max(0, audioRowCount - 1) * AUDIO_ROW_EXPANSION_PX;
+	// The rendered annotation layout reports its live row count, including a drag preview.
+	const [annotationRowCount, setAnnotationRowCount] = useState(1);
+	const extraAnnotationHeightPx = (annotationRowCount - 1) * REGION_ROW_STEP_PX;
 	const extraLaneHeightPx =
-		Math.max(0, audioRowCount - 1) * AUDIO_ROW_EXPANSION_PX +
-		(hasEffects ? EFFECT_LANE_EXPANSION_PX : 0);
+		extraAudioHeightPx + extraAnnotationHeightPx + (hasEffects ? EFFECT_LANE_EXPANSION_PX : 0);
 	const timelineHeightPx = Math.min(
 		MAX_TIMELINE_HEIGHT_PX,
 		Math.max(MIN_TIMELINE_HEIGHT_PX, timelineBaseHeightPx + extraLaneHeightPx),
@@ -1231,6 +1235,7 @@ export function NewEditorShell() {
 		const region = wholePillOf(
 			source as Array<{ id: string; startMs: number; endMs: number }>,
 			sel.id,
+			{ annotations: sel.kind === "annotation" },
 		);
 		if (!region) return;
 		copyRegion({ kind: sel.kind, region: region as unknown as Record<string, unknown> });
@@ -1715,6 +1720,7 @@ export function NewEditorShell() {
 						/>
 					) : null}
 					<V4Timeline
+						onAnnotationRowCountChange={setAnnotationRowCount}
 						tl={tl}
 						setCurrentTime={handleSeek}
 						variant={mode === "media" ? "media" : "edit"}
