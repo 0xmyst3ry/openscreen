@@ -7,7 +7,8 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
 
 ### 2.0.0 against main `9dc48b5c7`, Windows, 15/10/2026
 
-**Verdict: main is as smooth and as fast as 2.0.0 at 279 Hz, with one small slowdown to fix.**
+**Verdict: main is as smooth and as fast as 2.0.0, at 279 Hz and at 60 Hz, with one small slowdown
+to fix.**
 
 - **One regression over 5%**: the editor takes 53 ms longer (+5.2%) to show its first frame on
   the heavy project. Starting the app to the HUD takes 31 ms longer (+4.9%). Both are
@@ -16,9 +17,11 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
   late paints are 17% higher at the median but not significantly so (see below).
 - **Two improvements.** GIF export is 30 times faster. A recorded screen video keeps a regular
   60 fps clock, where 2.0.0's timestamps wander.
-- **Two defects both versions share.** The heavy preview alternates between a smooth and a
-  stuttering mode from one session to the next. The GPU process's dedicated GPU memory grows by
-  80 to 105 MB per second of playback, past the card's 12 GB.
+- **Three defects both versions share.** On a 60 Hz display the preview paints 55 to 57 frames a
+  second and the cursor steps backwards dozens of times: the fidget a tester reported on 2.1 is
+  already in 2.0.0. The heavy preview alternates between a smooth and a stuttering mode from one
+  session to the next. The GPU process's dedicated GPU memory grows by 80 to 105 MB per second of
+  playback, past the card's 12 GB.
 
 **Setup**
 
@@ -31,7 +34,8 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
 - Background load: other sessions' Electron processes (an `openscreen mcp` set and a dev build of
   #1189) stayed open and idle. Early runs where another window covered the editor were discarded
   and run again with the editor pinned on top.
-- Not covered: a 60 Hz display, macOS and Linux.
+- 60 Hz: the same display switched to 60 Hz by hand, 3 light and 6 heavy sessions per build.
+- Not covered: macOS and Linux.
 
 **Flags**
 
@@ -39,7 +43,8 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
 |---|---|---|---|---|
 | 1 | Editor open +53 ms (1025 → 1078 ms), startup to HUD +31 ms (620 → 651 ms) | Regression, p < 0.05 | More work at launch since 2.0.0: the in-app MCP server (`b81cd3760`, `65444df3e`), the shader effects in the document and the Effects lane (`1b704ff6e`, `74c89035e`), the daily usage ping (`b5ff5a348`). Not bisected. | Bisect editor open on the heavy project |
 | 2 | Heavy preview: 87 → 102 paints later than 25 ms per 30 s (+17%) | Within noise, p ≈ 0.2 | Both builds land in a slow mode (paint p95 28.5 ms instead of 22 ms) in about half the sessions: 2.0.0 6 of 12, main 7 of 12. The mode follows the session, not the build. | Find what sets the mode |
-| 3 | GPU process dedicated memory, one traced session each: 0.8 GB (2.0.0) and 1.4 GB (main) at 11 s of playback, 9.8 GB and 12.8 GB at 2 min | Pre-existing, both builds | Grows linearly with playback, so something per frame is kept: the shared-texture preview path is the first suspect | Trace the shared frames' lifetime |
+| 3 | At 60 Hz the preview paints 51 to 58 frames a second, and the cursor steps backwards 24 to 153 times in 18 s (2.0.0 median 31, main 53) | Pre-existing, both builds; main's count within noise | Not established. First hypothesis: the compositor's own 60 Hz pacing beats against the display's 60 Hz vsync, so a frame composed for one instant shows a vsync early or late | Pace the preview on the display's vsync, measure at 60 Hz |
+| 4 | GPU process dedicated memory, one traced session each: 0.8 GB (2.0.0) and 1.4 GB (main) at 11 s of playback, 9.8 GB and 12.8 GB at 2 min | Pre-existing, both builds | Grows linearly with playback, so something per frame is kept: the shared-texture preview path is the first suspect | Trace the shared frames' lifetime |
 
 #### Preview, light project (3 sessions each)
 
@@ -92,6 +97,42 @@ on-screen rows are wide because the desktop capture itself misses frames now and
 Late paints per session, sorted: 2.0.0 `53 61 67 71 76 84 90 105 106 107 111 113`, main
 `54 75 76 83 88 92 111 111 111 112 114 119`. Sessions in the slow mode also use more GPU 3D in
 the main process (about 4% against 2.5 to 3%), in both builds.
+
+#### Preview at 60 Hz, light project (3 sessions each)
+
+| Metric | 2.0.0 | main | Delta | Verdict |
+|---|---|---|---|---|
+| Preview paints per second | 54.8 [53.6–57.9] | 57.2 [51.5–57.9] | +4.3% | same |
+| Paint interval p95 (ms) | 33.4 [18.0–33.4] | 18.4 [18.1–33.6] | -44.9% | within noise |
+| Paint interval p99 (ms) | 33.9 [33.6–33.9] | 33.8 [33.5–34.3] | -0.3% | same |
+| Paints later than 25 ms, per 30 s | 154 [62–190] | 76 [64–253] | -50.6% | within noise |
+| UI rAF interval p99 (ms) | 16.90 [16.80–16.90] | 16.90 [16.90–16.90] | +0.0% | same |
+| UI rAF over 1.5 vsync (%) | 0.00 [0.00–0.00] | 0.00 [0.00–0.06] | +0.0% | same |
+| CPU, all processes (% of one core) | 59.9 [57.6–59.9] | 60.9 [59.5–64.1] | +1.7% | same |
+| GPU, all engines of the app (%) | 16.7 [15.5–20.1] | 17.3 [13.4–22.7] | +4.0% | same |
+| On screen: preview updates per second | 54.0 [50.2–57.2] | 53.8 [53.5–55.7] | -0.3% | same |
+| On screen: updates skipping a video frame (%) | 17.87 [13.08–24.44] | 13.87 [13.79–42.87] | -22.4% | within noise |
+| On screen: cursor off its path, RMS (source px) | 8.30 [8.14–12.88] | 9.68 [9.22–10.46] | +16.6% | within noise |
+| On screen: cursor off its path, p99 (source px) | 27.20 [27.11–36.81] | 28.69 [23.44–32.60] | +5.5% | within noise |
+| On screen: cursor steps backwards | 31 [24–97] | 53 [40–153] | +71.0% | within noise |
+
+#### Preview at 60 Hz, heavy project (6 sessions each)
+
+| Metric | 2.0.0 | main | Delta | Verdict |
+|---|---|---|---|---|
+| Preview paints per second | 56.6 [55.8–58.0] | 56.4 [55.5–57.7] | -0.3% | same |
+| Paint interval p95 (ms) | 32.9 [17.7–33.3] | 33.0 [17.8–33.2] | +0.2% | same |
+| Paint interval p99 (ms) | 33.7 [33.4–33.8] | 33.6 [33.6–33.8] | -0.3% | same |
+| Paints later than 25 ms, per 30 s | 101 [57–125] | 107 [70–135] | +5.4% | within noise (p ≥ 0.05) |
+| UI rAF interval p99 (ms) | 16.90 [16.90–16.90] | 16.90 [16.80–16.90] | +0.0% | same |
+| UI rAF over 1.5 vsync (%) | 0.00 [0.00–0.00] | 0.00 [0.00–0.00] | +0.0% | same |
+| CPU, all processes (% of one core) | 47.8 [45.5–57.9] | 49.8 [48.1–53.9] | +4.0% | same |
+| GPU, all engines of the app (%) | 31.7 [27.9–36.6] | 30.3 [26.8–33.7] | -4.4% | same |
+
+At 60 Hz both builds miss frames: a paint interval p95 of 33 ms means a frame held for two vsyncs.
+Sessions again split into a good mode (p95 18 ms) and a bad one (33 ms) in both builds. The cursor
+residual grows from 6 px to 8 to 10 px and backward steps appear: that is the fidget, and 2.0.0
+shows it too.
 
 #### Startup (15 sessions each)
 
