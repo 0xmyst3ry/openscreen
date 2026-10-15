@@ -117,10 +117,19 @@ export type DownloadClick = {
 	file: string | null;
 };
 
-/** What a link downloads, for the analytics event, or null when it downloads nothing. */
+const RELEASE_ASSET_PATH = /^\/getopenscreen\/openscreen\/releases\/download\/([^/]+)\/([^/]+)$/;
+
+/** What a link downloads, for the analytics event, or null when it downloads nothing: an
+ *  OpenScreen release asset on github.com, or the Store installer. */
 export function downloadClick(href: string): DownloadClick | null {
 	if (href.startsWith(STORE_INSTALLER_URL)) return { kind: "store", version: null, file: null };
-	const match = /\/releases\/download\/([^/]+)\/([^/?#]+)/.exec(href);
+	let url: URL;
+	try {
+		url = new URL(href);
+	} catch {
+		return null;
+	}
+	const match = url.hostname === "github.com" ? RELEASE_ASSET_PATH.exec(url.pathname) : null;
 	if (!match) return null;
 	const file = decodeURIComponent(match[2]);
 	const kind = (Object.keys(ASSET_PATTERNS) as AssetKind[]).find((k) =>
