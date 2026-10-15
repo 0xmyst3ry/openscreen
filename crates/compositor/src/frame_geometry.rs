@@ -3054,7 +3054,17 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         let clock = scene
             .map(|s| crate::regions::ScreenClock::new(&s.speed_regions, s.active_clip_index))
             .unwrap_or_default();
+        // Bornée au début du clip : la frame qui précède la première d'un clip n'est pas dans ce
+        // clip, elle tombe dans le trou d'un trim ou dans le clip d'avant. Les régions y valent
+        // ce qu'elles valent hors du clip (Full Camera coupée par un trim : 0), et le flou de
+        // mouvement traînait la caméra plein cadre jusqu'à son coin PiP sur la frame de la coupe.
         let source_t_prev = clock.source_at(clock.at(source_t) - 1.0 / FPS);
+        let source_t_prev = match scene.and_then(|s| s.clips.get(s.active_clip_index)) {
+            Some(clip) if f64::from(source_t) >= clip.source_start_sec => {
+                source_t_prev.max(clip.source_start_sec as f32)
+            }
+            _ => source_t_prev,
+        };
         // le focus "auto" (suivi curseur) réutilise la même piste que le rendu du curseur.
         let cursor_for_zoom = cursor;
         // `pp` porte le zoom de la frame précédente, pour le flou de mouvement ; celui du plan
@@ -4804,6 +4814,39 @@ mod tests {
         // Et sans zoom, l'ancre EST la boîte écran : `s_ann` ne doit pas devenir un rect
         // parallèle qui dériverait de `s_dst` pour d'autres raisons (padding, cover, crop).
         assert_eq!(a.s_ann, a.s_dst, "sans zoom, ancre et boîte écran coïncident");
+    }
+
+    /// Full Camera coupée par un trim (source 15 → 16) : la première frame après la coupe garde
+    /// la caméra plein cadre ET sa frame précédente aussi. Celle-ci tombait dans le trou du trim,
+    /// où aucun morceau de la région ne vit, donc au coin PiP : le flou de mouvement traînait la
+    /// caméra du plein cadre au coin sur cette frame-là (passe e2e de v2.1.0-rc.1).
+    #[test]
+    fn the_first_frame_after_a_cut_inside_full_camera_has_no_trail() {
+        let cfg = crate::config::all().pop().expect("au moins une config");
+        let scene = Scene::from_json(
+            r##"{
+            "clips":[{"screenPath":"/s.mp4","webcamPath":"/w.mp4","sourceStartSec":0,"sourceEndSec":15,"webcamOffsetSec":0,"hasAudio":true},
+                     {"screenPath":"/s.mp4","webcamPath":"/w.mp4","sourceStartSec":16,"sourceEndSec":20,"webcamOffsetSec":0,"hasAudio":true}],
+            "layout":{"preset":"picture-in-picture","webcamSize":0.44,"webcamShape":"circle","webcamMirror":false,
+                      "webcamPosition":{"cx":0.8577,"cy":0.8159},"webcamReactiveZoom":false},
+            "effects":{"padding":0.51,"blur":false,"shadow":0.35,"roundnessFrac":0.0255,"motionBlur":0.35},
+            "background":{"kind":"color","color":"#1e1e2e"},
+            "zoomRegions":[],
+            "cameraFullscreenRegions":[{"clipIndex":0,"startSec":13,"endSec":15,"continuesAfter":true},
+                                       {"clipIndex":1,"startSec":16,"endSec":18,"continuesBefore":true}],
+            "cursor":{"show":true,"size":7.76,"smoothing":0,"motionBlur":0.35,"clickBounce":1,"clipToBounds":false,"theme":"default"},
+            "output":{"width":1170,"height":658,"fps":60}
+        }"##,
+        )
+        .expect("scène coupée")
+        .for_clip_window(1, 16.0, 20.0);
+        let mut input = golden_input(&scene, &cfg);
+        // Une frame écran à 60 i/s qui tombe juste après la coupe, comme 16.0008 s dans la passe.
+        input.timeline_t_override = Some(16.0008);
+        let g = plan_frame(&input);
+
+        assert_eq!(g.w_dst, [0.0, 0.0, 1.0, 1.0], "la caméra reste plein cadre à travers le trim");
+        assert_eq!(g.w_dst_prev, g.w_dst, "pas de traînée depuis le trou du trim");
     }
 
     /// La caméra en orbite, en focus auto : celle qui bouge avec le pointeur. Sans piste, elle
