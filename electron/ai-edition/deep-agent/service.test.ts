@@ -388,7 +388,7 @@ describe("the sink announces each call exactly once, with the real verdict", () 
 			trim.invoke({ startSec: 20, endSec: 21 }),
 		]);
 
-		expect(events.filter((e) => e.kind === "toolEnd").every((e) => e.ok)).toBe(true);
+		expect(events.filter((e) => e.kind === "toolEnd").map((e) => e.ok)).toEqual([true, true, true]);
 		expect(holder.current.zoomRanges).toHaveLength(1);
 		expect(holder.current.timeline.trimRanges).toHaveLength(3);
 	});
