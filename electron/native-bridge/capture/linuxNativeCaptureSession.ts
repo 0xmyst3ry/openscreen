@@ -43,6 +43,11 @@ const STOP_TIMEOUT_MS = 15_000;
  * delivers leave the HUD waiting forever, with nothing on screen to say so.
  */
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
+/**
+ * The most of the helper's output [`helperOutput`] keeps, the 64 KiB Save Diagnostics
+ * writes of each helper. Only the newest is kept, as on Windows and macOS.
+ */
+const HELPER_OUTPUT_MAX_CHARS = 64 * 1024;
 
 export interface LinuxCaptureConfig {
 	outputPath: string;
@@ -107,6 +112,7 @@ export class LinuxNativeCaptureSession {
 	private videoEncoder: string | undefined;
 	private lastError: string | null = null;
 	private paused = false;
+	private helperOutputText = "";
 
 	constructor(private readonly config: LinuxCaptureConfig) {
 		this.cursor = new PipeWireCursorAccumulator(config.maxCursorSamples);
@@ -148,6 +154,7 @@ export class LinuxNativeCaptureSession {
 		child.stdout.on("data", (chunk: string) => this.handleStdout(chunk));
 		child.stderr.setEncoding("utf8");
 		child.stderr.on("data", (chunk: string) => {
+			this.appendHelperOutput(chunk);
 			const message = chunk.trim();
 			if (message) {
 				console.error("[capture-linux]", message);
@@ -326,6 +333,23 @@ export class LinuxNativeCaptureSession {
 	}
 
 	/**
+	 * What the helper said in this session, for Save Diagnostics' `helperOutput.linux`:
+	 * its stderr as written and every stdout line except `cursor-sample`, which comes
+	 * at the capture rate and would push everything else out. Still readable after the
+	 * helper exits, which is when a bug report asks for it.
+	 */
+	get helperOutput(): string {
+		return this.helperOutputText;
+	}
+
+	private appendHelperOutput(text: string) {
+		this.helperOutputText += text;
+		if (this.helperOutputText.length > HELPER_OUTPUT_MAX_CHARS) {
+			this.helperOutputText = this.helperOutputText.slice(-HELPER_OUTPUT_MAX_CHARS);
+		}
+	}
+
+	/**
 	 * Asks the helper to write the trailer and exit, then returns what it made.
 	 *
 	 * Waits for the PROCESS to exit rather than for `capture-stopped` alone: the
@@ -401,8 +425,12 @@ export class LinuxNativeCaptureSession {
 			try {
 				payload = JSON.parse(line) as PipeWireHelperEvent;
 			} catch (error) {
+				this.appendHelperOutput(`${line}\n`);
 				console.error("Failed to parse Linux capture helper output:", error, line);
 				return;
+			}
+			if (payload.event !== "cursor-sample") {
+				this.appendHelperOutput(`${line}\n`);
 			}
 			this.handleEvent(payload);
 		});

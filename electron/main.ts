@@ -39,7 +39,7 @@ import {
 import { parseCliArgs } from "./cli/args";
 import { runCli } from "./cli/cliMain";
 import { disableHttpCacheForDevServer } from "./dev-http-cache";
-import { isDiagnosticModeEnabled, mainLogBuffer } from "./diagnostics/main-log-buffer";
+import { mainLogBuffer } from "./diagnostics/main-log-buffer";
 import { buildEditMenuSubmenu, type EditorUndoRedoChannel, routeEditorUndoRedo } from "./edit-menu";
 import {
 	loadAndRegisterGlobalShortcut,
@@ -609,10 +609,10 @@ function runUpdateCheck() {
  * in folder" gives, so there is no need for a second dialog on top of the
  * native Save dialog the user already went through.
  *
- * No renderer `projectState`/`logs` to attach from here, unlike the in-app
- * crash path this shares a payload shape with — the diagnostic value for a
- * capture bug is almost entirely `helperOutput`/`mainProcessLogs`, which
- * `exportDiagnosticFile` reads straight from the main process regardless.
+ * No renderer `projectState`/`logs` to pass from here, unlike the in-app crash
+ * path this shares a payload shape with. `exportDiagnosticFile` asks the open
+ * editor for its document instead, and reads `helperOutput`/`mainProcessLogs`,
+ * where most of a capture bug's diagnostic value is, from the main process.
  */
 function runSaveDiagnostics() {
 	exportDiagnosticFile({ error: "Manual diagnostic export", projectState: null, logs: [] })
@@ -1227,10 +1227,10 @@ app.on("will-quit", () => {
 const appReady = !cliCommand && hasSingleInstanceLock ? app.whenReady() : null;
 
 appReady?.then(async () => {
-	if (isDiagnosticModeEnabled()) {
-		mainLogBuffer.install();
-		console.info("[diagnostic] OPENSCREEN_DIAGNOSTIC=1, capturing console.* into ring buffer");
-	}
+	// On every launch, not only under OPENSCREEN_DIAGNOSTIC: these lines are the
+	// `mainProcessLogs` of "Save Diagnostics", and a user who saves a bundle from the
+	// tray started the app where no such variable can be set.
+	mainLogBuffer.install();
 
 	// Force "regular" activation policy so the Dock icon appears. The HUD overlay
 	// (transparent, frameless, skipTaskbar) is the first window, and AppKit would

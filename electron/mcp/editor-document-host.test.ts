@@ -100,6 +100,22 @@ describe("EditorDocumentHost", () => {
 		await expect(pending).resolves.toBeNull();
 	});
 
+	it("gives up on a snapshot after the bound it is given, not the usual 30 s", async () => {
+		vi.useFakeTimers();
+		const { host, fromRenderer } = setup();
+		const editor = new FakeWebContents();
+		fromRenderer(editor, AI_EDITION_MCP_HOST_CHANNEL, true);
+		let settled = false;
+		const pending = host.snapshot(5_000).then((snapshot) => {
+			settled = true;
+			return snapshot;
+		});
+		await vi.advanceTimersByTimeAsync(4_999);
+		expect(settled).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+		await expect(pending).resolves.toBeNull();
+	});
+
 	it("forgets an editor that unregisters or is destroyed", async () => {
 		const { host, fromRenderer } = setup();
 		const first = new FakeWebContents();
