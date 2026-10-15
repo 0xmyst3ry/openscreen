@@ -7,12 +7,12 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
 
 ### 2.0.0 against main `9dc48b5c7`, Windows, 15/10/2026
 
-**Verdict: main is as smooth and as fast as 2.0.0, at 279 Hz and at 60 Hz, with one small slowdown
-to fix.**
+**Verdict: main is as smooth and as fast as 2.0.0, at 279 Hz and at 60 Hz, except that it takes
+47 ms longer to show the HUD.**
 
-- **One regression over 5%**: the editor takes 53 ms longer (+5.2%) to show its first frame on
-  the heavy project. Starting the app to the HUD takes 31 ms longer (+4.9%). Both are
-  significant over 12 and 15 sessions.
+- **One regression over 5%**: from process start to a ready HUD, 625 → 672 ms (+7.5%, p < 0.001,
+  12 sessions each). The editor-open slowdown first logged here (+53 ms) did not survive a
+  controlled rerun: 1143 → 1136 ms. See [the bisection](#bisecting-the-startup-slowdown).
 - **No preview regression established.** The light project is identical. On the heavy project,
   late paints are 17% higher at the median but not significantly so (see below).
 - **Two improvements.** GIF export is 30 times faster. A recorded screen video keeps a regular
@@ -41,7 +41,7 @@ to fix.**
 
 | # | Finding | Status | Likely cause | Next step |
 |---|---|---|---|---|
-| 1 | Editor open +53 ms (1025 → 1078 ms), startup to HUD +31 ms (620 → 651 ms) | Regression, p < 0.05 | More work at launch since 2.0.0: the in-app MCP server (`b81cd3760`, `65444df3e`), the shader effects in the document and the Effects lane (`1b704ff6e`, `74c89035e`), the daily usage ping (`b5ff5a348`). Not bisected. | Bisect editor open on the heavy project |
+| 1 | Startup to a ready HUD +47 ms (625 → 672 ms). Editor open unchanged (1143 → 1136 ms) | Startup: regression, p < 0.001. Editor open: retracted | No single commit. +18 ms before the HUD page starts, which is not main-process JavaScript; +12 ms of CPU in the HUD's first render, spread over a dozen modules | Try a HUD entry of its own, without the editor's code, and measure it |
 | 2 | Heavy preview: 87 → 102 paints later than 25 ms per 30 s (+17%) | Within noise, p ≈ 0.2 | Both builds land in a slow mode (paint p95 28.5 ms instead of 22 ms) in about half the sessions: 2.0.0 6 of 12, main 7 of 12. The mode follows the session, not the build. | Find what sets the mode |
 | 3 | At 60 Hz the preview paints 51 to 58 frames a second, and the cursor steps backwards 24 to 153 times in 18 s (2.0.0 median 31, main 53) | Pre-existing, both builds; main's count within noise | Not established. First hypothesis: the compositor's own 60 Hz pacing beats against the display's 60 Hz vsync, so a frame composed for one instant shows a vsync early or late | Pace the preview on the display's vsync, measure at 60 Hz |
 | 4 | GPU process dedicated memory, one traced session each: 0.8 GB (2.0.0) and 1.4 GB (main) at 11 s of playback, 9.8 GB and 12.8 GB at 2 min | Pre-existing, both builds | Grows linearly with playback, so something per frame is kept: the shared-texture preview path is the first suspect | Trace the shared frames' lifetime |
@@ -92,7 +92,7 @@ on-screen rows are wide because the desktop capture itself misses frames now and
 | Private memory, main process (MB) | 634 [633–641] | 624 [623–639] | -1.6% | same |
 | Private memory, renderer (MB) | 337 [337–344] | 329 [305–343] | -2.4% | same |
 | GPU dedicated memory, GPU process, after 2 min (MB) | 9252 [8989–12847] | 8567 [8009–11063] | -7.4% | within noise |
-| Editor open to first preview frame (ms) | 1025 [991–1101] | 1078 [1025–1244] | +5.2% | **regression** (p < 0.05) |
+| Editor open to first preview frame (ms) | 1025 [991–1101] | 1078 [1025–1244] | +5.2% | not confirmed, see below |
 
 Late paints per session, sorted: 2.0.0 `53 61 67 71 76 84 90 105 106 107 111 113`, main
 `54 75 76 83 88 92 111 111 111 112 114 119`. Sessions in the slow mode also use more GPU 3D in
@@ -133,6 +133,43 @@ At 60 Hz both builds miss frames: a paint interval p95 of 33 ms means a frame he
 Sessions again split into a good mode (p95 18 ms) and a bad one (33 ms) in both builds. The cursor
 residual grows from 6 px to 8 to 10 px and backward steps appear: that is the fidget, and 2.0.0
 shows it too.
+
+#### Bisecting the startup slowdown
+
+The editor-open and startup timings above came from sessions where the editor opened behind
+whatever window was in front. A dedicated bench (`open-bench.mjs`: no playback, every window of the
+app pinned on top from its first frame, phases read from inside each page) reran the two packages,
+12 sessions each, interleaved:
+
+| Metric | 2.0.0 | main | Delta | z |
+|---|---|---|---|---|
+| Process start to HUD navigation (ms) | 449 | 467 | +18 | 2.19 |
+| HUD page: navigation to DOMContentLoaded (ms) | 129 | 134 | +4 | 1.36 |
+| HUD page: navigation to first React render (ms) | 173 | 205 | +32 | 3.84 |
+| Process start to HUD ready (ms) | 625 | 672 | **+47** | 3.81 |
+| Editor open to first preview frame (ms) | 1143 | 1136 | -7 | -0.06 |
+
+Where the 47 ms go:
+
+- **Before the HUD page starts (+18 ms): not JavaScript.** A CPU profile of the main process from
+  its first line to the HUD (`profile-startup.mjs`, `--inspect-brk`) gives the same busy time,
+  507 ms for 2.0.0 and 510 ms for main.
+- **In the HUD's first render (+12 ms of CPU): many small costs.** Profiles of the HUD renderer
+  mapped through source maps (`profile-hud.mjs`, `attribute-hud.cjs`), 8 each: 194 → 206 ms busy.
+  `LaunchWindow` +2.5 ms, i18next +2.4, the HUD's own toaster (`3a77ef890`) +1.7, zod +1.5,
+  tailwind-merge +1.0, Radix +1.0. The bundle itself barely grew (index chunk 1.33 → 1.37 MB).
+- **No commit owns it.** The HUD-ready time per CI build of main (10 sessions each) moves by
+  steps within the noise: 695 (2.0.0), 755 (`b519f236e`), 708 (`e3bde938a`), 675 (`cb8f89c9d`),
+  743 (`b668b2c8d`), 782 (`4f4bb997c`), 725 ms (`9dc48b5c7`). The largest step, between
+  `cb8f89c9d` and `b668b2c8d` (first React render, z = 2.80), gave contradictory grafts: on a
+  package built from `b668b2c8d`, its main process and `65444df3e` alone cost 100 to 140 ms, but on
+  a package built from `9dc48b5c7` the same main process started as fast as 2.0.0's (688 ms).
+  Opening the MCP app channel only after the HUD has loaded was built and measured there:
+  688 → 687 ms, no gain, so it was not kept.
+
+The lever large enough to win the 47 ms back is untested: the HUD evaluates the editor's whole
+bundle (the 1.37 MB index chunk, every zod schema, i18next) to draw a bar of buttons. A HUD entry
+of its own would skip most of it; trimming the dozen small costs above one by one would not.
 
 #### Startup (15 sessions each)
 
@@ -227,6 +264,10 @@ media, so neither build's recorder decides the input:
    analysed and deleted at once: it holds the webcam picture.
 5. `node summarize-gui.mjs <outDir>`, `node summarize-record.mjs <scratch>/out/record`, then
    `node doc-tables.mjs` on the three summaries prints these tables.
+6. Startup and editor open alone: `open-bench.mjs` (about 10 s a session) and
+   `summarize-open.mjs`. To see where the time goes, `profile-startup.mjs` profiles the main
+   process and `profile-hud.mjs` the HUD renderer from their first line; `attribute-hud.cjs` maps
+   the HUD profiles onto the sources of a `vite build --sourcemap` of the same commit.
 
 Keep the desktop to the bench while it runs. A window a background process opens lands behind
 the foreground one, which is why `topmost.ps1` pins the editor and the pattern player. A covered

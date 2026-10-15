@@ -41,11 +41,11 @@ export async function connect(target) {
 			for (const l of listeners) l(msg);
 		}
 	};
-	const send = (method, params = {}) =>
+	const send = (method, params = {}, sessionId = undefined) =>
 		new Promise((ok, ko) => {
 			const id = next++;
 			pending.set(id, { ok, ko });
-			ws.send(JSON.stringify({ id, method, params }));
+			ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 		});
 	const evaluate = async (expression) => {
 		const r = await send("Runtime.evaluate", {
