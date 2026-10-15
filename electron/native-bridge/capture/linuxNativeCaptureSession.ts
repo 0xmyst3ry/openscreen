@@ -44,10 +44,11 @@ const STOP_TIMEOUT_MS = 15_000;
  */
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 /**
- * The most of the helper's output [`helperOutput`] keeps, the 64 KiB Save Diagnostics
- * writes of each helper. Only the newest is kept, as on Windows and macOS.
+ * The most of the helper's output [`helperOutput`] keeps, in UTF-8 bytes: the 64 KiB
+ * Save Diagnostics writes of each helper. Only the newest is kept, as on Windows and
+ * macOS.
  */
-const HELPER_OUTPUT_MAX_CHARS = 64 * 1024;
+const HELPER_OUTPUT_MAX_BYTES = 64 * 1024;
 
 export interface LinuxCaptureConfig {
 	outputPath: string;
@@ -344,9 +345,17 @@ export class LinuxNativeCaptureSession {
 
 	private appendHelperOutput(text: string) {
 		this.helperOutputText += text;
-		if (this.helperOutputText.length > HELPER_OUTPUT_MAX_CHARS) {
-			this.helperOutputText = this.helperOutputText.slice(-HELPER_OUTPUT_MAX_CHARS);
+		if (Buffer.byteLength(this.helperOutputText, "utf8") <= HELPER_OUTPUT_MAX_BYTES) {
+			return;
 		}
+		const bytes = Buffer.from(this.helperOutputText, "utf8");
+		let start = bytes.length - HELPER_OUTPUT_MAX_BYTES;
+		// A continuation byte (0b10xxxxxx) is the middle of a character: start at the
+		// next one, so the kept text never opens on a replacement character.
+		while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
+			start += 1;
+		}
+		this.helperOutputText = bytes.subarray(start).toString("utf8");
 	}
 
 	/**

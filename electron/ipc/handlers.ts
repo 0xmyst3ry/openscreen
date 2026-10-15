@@ -72,6 +72,7 @@ import { StylePresetService } from "../ai-edition/style-preset-service";
 import { AppSettingsStore } from "../app-settings";
 import { createRunnerHost } from "../cli/runnerHost";
 import { isDiagnosticModeEnabled, mainLogBuffer } from "../diagnostics/main-log-buffer";
+import { resolveDiagnosticProjectState } from "../diagnostics/project-state";
 import { mainT } from "../i18n";
 import { getInstallChannel } from "../install-channel";
 import {
@@ -1928,11 +1929,6 @@ async function resolveMediaLinksForVideo(videoPath: string): Promise<{
  * registerIpcHandlers.
  */
 let editorDocumentHost: EditorDocumentHost | null = null;
-/**
- * How long Save Diagnostics waits for the editor's document. A hung editor is exactly
- * when a bundle is wanted, so it must not hold the save for an MCP call's 30 s.
- */
-const DIAGNOSTIC_PROJECT_STATE_TIMEOUT_MS = 5_000;
 
 /**
  * Writes the diagnostic bundle a bug report needs: app/OS facts, the native
@@ -1959,10 +1955,10 @@ export async function exportDiagnosticFile(payload: {
 
 	const HELPER_OUTPUT_MAX_BYTES = 64 * 1024;
 	const tail = (s: string, max: number) => (s.length <= max ? s : s.slice(s.length - max));
-	const projectState =
-		payload.projectState ??
-		(await editorDocumentHost?.snapshot(DIAGNOSTIC_PROJECT_STATE_TIMEOUT_MS)) ??
-		null;
+	const projectState = await resolveDiagnosticProjectState(
+		payload.projectState,
+		editorDocumentHost,
+	);
 
 	const diagnostic = {
 		timestamp: new Date().toISOString(),

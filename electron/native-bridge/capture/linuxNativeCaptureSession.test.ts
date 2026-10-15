@@ -634,5 +634,17 @@ describe("LinuxNativeCaptureSession", () => {
 			expect(session.helperOutput).toContain("warning 999 ");
 			expect(session.helperOutput).not.toContain('"event":"ready"');
 		});
+
+		it("counts the cap in UTF-8 bytes and cuts it between characters", async () => {
+			const session = newSession();
+			await startReady(session);
+			// 90 000 bytes of a 3-byte character: the 64 KiB cut lands 2 bytes into one,
+			// so the whole characters that fit are the 21 845 after it.
+			helper.stderr.write("€".repeat(30_000));
+			await flushStdout();
+
+			expect(Buffer.byteLength(session.helperOutput, "utf8")).toBeLessThanOrEqual(64 * 1024);
+			expect(session.helperOutput).toBe("€".repeat(21_845));
+		});
 	});
 });
