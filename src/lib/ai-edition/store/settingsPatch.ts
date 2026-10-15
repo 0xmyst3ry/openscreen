@@ -23,6 +23,9 @@ export function applySettingsPatch(
 	// ponytail: only a settings patch refits. Under Auto the frame can also reshape when clips
 	// change (a crop, a new first clip), and those annotations keep their shares of the frame;
 	// refit there too if that shows up in practice.
+	// Every slider move lands here, and resolving Auto's shape costs up to ~55 µs with a device
+	// frame: skip it when nothing sits on the frame.
+	if (!next.annotations.some((annotation) => annotation.space === "frame")) return next;
 	const annotations = refitFrameAnnotations(
 		next.annotations,
 		resolveAspectRatioValue(doc, getEditorSettings(doc).aspectRatio),
