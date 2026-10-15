@@ -609,10 +609,12 @@ function runUpdateCheck() {
  * in folder" gives, so there is no need for a second dialog on top of the
  * native Save dialog the user already went through.
  *
- * No renderer `projectState`/`logs` to pass from here, unlike the in-app crash
- * path this shares a payload shape with. `exportDiagnosticFile` asks the open
- * editor for its document instead, and reads `helperOutput`/`mainProcessLogs`,
- * where most of a capture bug's diagnostic value is, from the main process.
+ * No renderer `projectState`/`logs` to attach from here, unlike the in-app
+ * crash path this shares a payload shape with — the diagnostic value for a
+ * capture bug is almost entirely `helperOutput`/`mainProcessLogs`, which
+ * `exportDiagnosticFile` reads straight from the main process regardless. The
+ * open project is left out on purpose: a bundle may be attached to a public
+ * issue, and a project carries its transcripts.
  */
 function runSaveDiagnostics() {
 	exportDiagnosticFile({ error: "Manual diagnostic export", projectState: null, logs: [] })
