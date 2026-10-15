@@ -234,9 +234,24 @@ function watchHudWorkAreaChanges() {
 	screen.on("display-removed", reclampHud);
 }
 
+// Linux hides the bar instead of minimizing it, because a Wayland client cannot bring a
+// minimized window back. xdg-shell has set_minimized and no request to undo it, and
+// Chromium's Wayland Show() returns early on a toplevel that still exists, so the tray's
+// restore() and show() did nothing; focus() then asked for activation without a fresh token,
+// which GNOME turns into an "is ready" notification while the bar stays minimized. hide()
+// destroys the toplevel and show() maps a new one, which every compositor displays. The cost
+// is the position: the compositor places the new toplevel itself. X11 takes the same path:
+// there `skipTaskbar` already left a minimized HUD no taskbar entry, so the tray was its only
+// way back anyway.
+const HUD_HIDES_INSTEAD_OF_MINIMIZING = process.platform === "linux";
+
 ipcMain.on("hud-overlay-hide", () => {
 	if (hudOverlayWindow && !hudOverlayWindow.isDestroyed()) {
-		hudOverlayWindow.minimize();
+		if (HUD_HIDES_INSTEAD_OF_MINIMIZING) {
+			hudOverlayWindow.hide();
+		} else {
+			hudOverlayWindow.minimize();
+		}
 	}
 });
 
