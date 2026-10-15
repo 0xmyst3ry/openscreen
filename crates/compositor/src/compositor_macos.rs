@@ -3469,6 +3469,30 @@ mod tests {
         assert_eq!(cpu_storage_for(false), metal::MTLStorageMode::Managed);
     }
 
+    /// Pas une assertion : le relevé du device que le job Intel de la CI imprime
+    /// (`-- --nocapture`), pour qu'un run dise lequel des deux chemins de `cpu_storage` il a
+    /// pris (#1238). Le GPU d'une VM GitHub est paravirtuel : `apple1` y dit ce que Metal
+    /// annonce, pas ce que ferait l'UHD 630 ou la Radeon Pro d'un vrai Mac Intel.
+    #[test]
+    fn report_the_metal_device_and_its_cpu_storage() {
+        let Some(device) = metal::Device::system_default() else {
+            println!("[metal-device] arch={} aucun MTLDevice", std::env::consts::ARCH);
+            return;
+        };
+        println!(
+            "[metal-device] arch={} name={:?} apple1={} mac2={} unified_memory={} low_power={} \
+             headless={} cpu_storage={:?}",
+            std::env::consts::ARCH,
+            device.name(),
+            device.supports_family(metal::MTLGPUFamily::Apple1),
+            device.supports_family(metal::MTLGPUFamily::Mac2),
+            device.has_unified_memory(),
+            device.is_low_power(),
+            device.is_headless(),
+            cpu_storage(&device),
+        );
+    }
+
     /// Le chemin d'un Mac Intel (#1238), joué sur le GPU qu'on a : un GPU Apple accepte aussi
     /// les textures `Managed`. Deux couleurs à la suite, parce que le défaut rapporté est une
     /// preview vide puis figée : une seule lecture ne verrait pas la seconde moitié.
