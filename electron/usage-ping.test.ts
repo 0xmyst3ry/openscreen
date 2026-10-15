@@ -51,6 +51,7 @@ describe("planUsagePing", () => {
 		const today = { ...fresh, ...periodKeys(wednesday) };
 		expect(planUsagePing(today, "store", {}, wednesday)).toBeNull();
 		expect(planUsagePing(fresh, "store", { DO_NOT_TRACK: "0" }, wednesday)).not.toBeNull();
+		expect(planUsagePing(fresh, "store", { CI: "false" }, wednesday)).not.toBeNull();
 	});
 
 	it("flags the first ping of each week and month, so actives count without an ID", () => {
