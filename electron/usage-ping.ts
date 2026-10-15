@@ -38,10 +38,13 @@ export interface UsagePingFacts {
 
 const DEFAULT_STATE: UsagePingState = { enabled: true, day: null, week: null, month: null };
 
+/** An environment flag counts as set unless it is empty, "0" or "false": `CI=false` is off. */
+const isSet = (value: string | undefined) =>
+	value !== undefined && !["", "0", "false"].includes(value.toLowerCase());
+
 /** The usual opt-out convention (consoledonottrack.com). */
 export function doNotTrack(env: Readonly<Record<string, string | undefined>>): boolean {
-	const value = env.DO_NOT_TRACK;
-	return value !== undefined && value !== "" && value !== "0";
+	return isSet(env.DO_NOT_TRACK);
 }
 
 /** UTC, so the flags fall in the same buckets as PostHog's UTC days. */
@@ -66,7 +69,7 @@ export function planUsagePing(
 	env: Readonly<Record<string, string | undefined>>,
 	now: Date,
 ): { firstThisWeek: boolean; firstThisMonth: boolean; keys: ReturnType<typeof periodKeys> } | null {
-	if (!state.enabled || channel === "dev" || doNotTrack(env) || env.CI) return null;
+	if (!state.enabled || channel === "dev" || doNotTrack(env) || isSet(env.CI)) return null;
 	const keys = periodKeys(now);
 	if (state.day === keys.day) return null;
 	return {
