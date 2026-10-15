@@ -836,6 +836,29 @@ describe("getFrames without an export that shows the project", () => {
 		renderFrames = async () => null;
 		expect(textOf(await call("getFrames", { projectId, atSec: [1] }))).toContain("no export yet");
 	});
+
+	it("names a frame the render did not return, and refuses a clip without media", async () => {
+		const { projectId } = await recordTake();
+		renderFrames = async () => [];
+		const short = await call("getFrames", { projectId, atSec: [1] });
+		expect(short.content).toContainEqual({
+			type: "text",
+			text: "No frame here: the rendered video ends before it.",
+		});
+
+		const document = await documents.getProject(projectId);
+		// The schema requires a path on every asset: a clip has no media when its asset is gone.
+		await documents.saveProject({
+			...document,
+			timeline: {
+				...document.timeline,
+				clips: document.timeline.clips.map((clip) => ({ ...clip, assetId: "gone" })),
+			},
+		});
+		const missing = await call("getFrames", { projectId, atSec: [1] });
+		expect(missing.isError).toBe(true);
+		expect(textOf(missing)).toContain("no media file");
+	});
 });
 
 describe("getFrames", () => {

@@ -383,8 +383,10 @@ Une région choisit sa cible (`target`). Sans demande explicite, c'est `image`.
 - **`image`** : l'image sans les textes. La passe s'insère avant les annotations et les
   sous-titres. Un effet déforme l'écran, la webcam, le curseur et le fond, jamais le texte que
   l'utilisateur a posé pour être lu.
-- **`text`** : les textes seuls (annotations et sous-titres). Les textes sont dessinés dans un
-  calque transparent à part, l'effet s'y applique, puis le calque est composé par-dessus l'image
+- **`text`** : le calque posé sur l'image, c'est-à-dire les annotations de tout type (textes,
+  images, flèches) et les sous-titres. Un effet `text` touche donc aussi une flèche ou un logo :
+  les séparer casserait leur ordre de superposition (`zIndex`). Ce calque est dessiné à
+  part, transparent, l'effet s'y applique, puis le calque est composé par-dessus l'image
   (« over » prémultiplié). L'image dessous reste intacte. Le calque n'existe que si une région
   `text` couvre la frame.
 - **`both`** : l'image finale, textes compris, par exemple pour un fondu au noir qui doit couvrir
@@ -586,8 +588,9 @@ lente.
   frame, sur la grille à 60 i/s de `exportVideo`, et demande ces frames à l'addon
   (`renderFrames`).
 - **L'addon rend par la marche de l'export,** `timeline_walk::render_frames` : mêmes clips, mêmes
-  vitesses, même frame source à chaque instant. Les frames non demandées ne sont ni décodées ni
-  composées.
+  vitesses, même frame source à chaque instant. Les frames non demandées ne sont pas composées.
+  Le décodeur ne lit que ce qui mène à chaque frame demandée : depuis la précédente quand elle
+  est à moins de 2 s, sinon depuis une image clé.
 - **Un saut de plus de 2 s repart d'une image clé** (`catch_up`). `seek_to` rend la première
   frame à ou après le point visé ; on recule donc ce point jusqu'à tomber avant l'instant voulu,
   puis on avance comme l'export : la frame montrée est la dernière dont le pts le précède.
