@@ -3862,6 +3862,28 @@ describe("shader effects", () => {
 		});
 	});
 
+	it("moves only its own pill when a re-tune makes it match the neighbour it touches", () => {
+		const first = add(fixtureDocument(), { values: { level: 0.5 } }).document as AxcutDocument;
+		const effectId = first.shaderEffects?.[0].id;
+		const doc = run(first, "addEffect", { startSec: 6, endSec: 8, effectId })
+			.document as AxcutDocument;
+		const regionId = doc.shaderEffectRanges?.find((r) => r.startMs === 2000)?.id;
+		const moved = run(doc, "setEffect", {
+			effectRegionId: regionId,
+			values: { level: 1 },
+			endSec: 5,
+		});
+		expect(moved.ok).toBe(true);
+		expect(
+			[...(moved.document?.shaderEffectRanges ?? [])]
+				.sort((a, b) => a.startMs - b.startMs)
+				.map((r) => [r.startMs, r.endMs, r.values]),
+		).toEqual([
+			[2000, 5000, {}],
+			[6000, 8000, {}],
+		]);
+	});
+
 	it("refuses to move an effect onto another one", () => {
 		const first = add(fixtureDocument()).document as AxcutDocument;
 		const doc = add(first, { startSec: 8, endSec: 9 }).document as AxcutDocument;

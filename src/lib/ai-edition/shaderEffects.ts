@@ -153,25 +153,44 @@ export function shaderEffectCostAdvice(tier: ShaderEffectTier, spanSec: number):
 	return `${tier} over ${spanSec.toFixed(1)} s: this tier is meant for at most ${TIER_SPAN_SEC[tier]} s; for a region this long, aim ${lighter}. It is a recommendation, not a limit.`;
 }
 
+/** Two definitions that draw and read the same: everything but the cached cost. */
+function sameShaderEffect(a: AxcutShaderEffect, b: AxcutShaderEffect): boolean {
+	return (
+		a.name === b.name &&
+		a.description === b.description &&
+		a.contract === b.contract &&
+		a.code === b.code &&
+		JSON.stringify(a.params) === JSON.stringify(b.params)
+	);
+}
+
 /**
  * `document` with a pasted effect region (its fragments, already anchored) and its definition,
- * recreated when the project does not have it: a region copied from another project. `null`
- * when the region would overlap an effect already there, since one effect runs at a time.
+ * recreated when the project does not have it: a region copied from another project. A project
+ * holding a different definition under that id (the effect was copied, then edited on one side)
+ * keeps it, and the paste gets its own (`newId`). `null` when the region would overlap an effect
+ * already there, since one effect runs at a time.
  */
 export function withPastedShaderEffect(
 	document: AxcutDocument,
 	definition: AxcutShaderEffect,
 	fragments: AxcutShaderEffectRange[],
+	newId: () => string,
 ): AxcutDocument | null {
 	const ranges = document.shaderEffectRanges ?? [];
 	const overlaps = fragments.some((f) =>
 		ranges.some((r) => r.startMs < f.endMs && r.endMs > f.startMs),
 	);
 	if (overlaps) return null;
-	const known = (document.shaderEffects ?? []).some((e) => e.id === definition.id);
+	const effects = document.shaderEffects ?? [];
+	const held = effects.find((e) => e.id === definition.id);
+	if (held && sameShaderEffect(held, definition)) {
+		return { ...document, shaderEffectRanges: [...ranges, ...fragments] };
+	}
+	const pasted = held ? { ...definition, id: newId() } : definition;
 	return {
 		...document,
-		shaderEffects: known ? document.shaderEffects : [...(document.shaderEffects ?? []), definition],
-		shaderEffectRanges: [...ranges, ...fragments],
+		shaderEffects: [...effects, pasted],
+		shaderEffectRanges: [...ranges, ...fragments.map((f) => ({ ...f, effectId: pasted.id }))],
 	};
 }
