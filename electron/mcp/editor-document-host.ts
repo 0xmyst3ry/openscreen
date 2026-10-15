@@ -102,7 +102,7 @@ export class EditorDocumentHost implements McpDocumentHost {
 		});
 	}
 
-	/** `timeoutMs`: Save Diagnostics waits less than an MCP call, see exportDiagnosticFile. */
+	/** `timeoutMs`: shorter for Save Diagnostics, see diagnostics/project-state.ts. */
 	async snapshot(timeoutMs = REQUEST_TIMEOUT_MS): Promise<AiEditionMcpHostSnapshot | null> {
 		const result = await this.request({ op: "snapshot" }, timeoutMs);
 		if (!result || result === TIMED_OUT || typeof result !== "object") return null;
