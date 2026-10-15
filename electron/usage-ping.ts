@@ -15,7 +15,7 @@ import path from "node:path";
 import type { InstallChannel } from "./install-channel";
 
 // A project token is public by design: it can only send events, not read them.
-const POSTHOG_TOKEN = "phc_TODO";
+const POSTHOG_TOKEN = "phc_zhJDJHBBRDAJBwSb7zf2JuQ59v6RwBN96ZksM2y4oq8C";
 const CAPTURE_URL = "https://eu.i.posthog.com/i/v0/e/";
 
 /** Often enough that an app left running in the tray for days still counts every day. */
