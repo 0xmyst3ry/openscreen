@@ -96,6 +96,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // HUD/tray/menu. Parsed before any GUI side effects; see electron/cli/.
 const cliCommand = parseCliArgs(process.argv, app.isPackaged ? 1 : 2);
 
+// On every app launch, not only under OPENSCREEN_DIAGNOSTIC: these lines are the
+// `mainProcessLogs` of "Save Diagnostics", and a user who saves a bundle from the tray
+// started the app where no such variable can be set. Installed here, before anything
+// below logs, rather than once the app is ready. Never in a CLI run, whose stdout is
+// its own protocol.
+if (!cliCommand) {
+	mainLogBuffer.install();
+}
+
 // Use Screen & System Audio Recording permissions instead of the CoreAudio Tap API on macOS.
 // Tap needs NSAudioCaptureUsageDescription in the parent app's Info.plist, which breaks when
 // running from a terminal/IDE during dev.
@@ -1229,11 +1238,6 @@ app.on("will-quit", () => {
 const appReady = !cliCommand && hasSingleInstanceLock ? app.whenReady() : null;
 
 appReady?.then(async () => {
-	// On every launch, not only under OPENSCREEN_DIAGNOSTIC: these lines are the
-	// `mainProcessLogs` of "Save Diagnostics", and a user who saves a bundle from the
-	// tray started the app where no such variable can be set.
-	mainLogBuffer.install();
-
 	// Force "regular" activation policy so the Dock icon appears. The HUD overlay
 	// (transparent, frameless, skipTaskbar) is the first window, and AppKit would
 	// otherwise classify us as an accessory app.
