@@ -102,8 +102,9 @@ export class EditorDocumentHost implements McpDocumentHost {
 		});
 	}
 
-	async snapshot(): Promise<AiEditionMcpHostSnapshot | null> {
-		const result = await this.request({ op: "snapshot" });
+	/** `timeoutMs`: Save Diagnostics waits less than an MCP call, see exportDiagnosticFile. */
+	async snapshot(timeoutMs = REQUEST_TIMEOUT_MS): Promise<AiEditionMcpHostSnapshot | null> {
+		const result = await this.request({ op: "snapshot" }, timeoutMs);
 		if (!result || result === TIMED_OUT || typeof result !== "object") return null;
 		// The revision is the apply guard: one that is missing or not a number would
 		// reach `applyAgentDocumentIfCurrent` as `undefined`, which skips the

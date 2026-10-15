@@ -581,4 +581,58 @@ describe("LinuxNativeCaptureSession", () => {
 			expect(helper.killed).toBe(false);
 		});
 	});
+
+	/**
+	 * Save Diagnostics' `helperOutput.linux`. Before it, a Linux bundle had no entry for
+	 * the helper at all, where Windows and macOS keep their helper's raw output.
+	 */
+	describe("helper output", () => {
+		it("keeps the helper's stderr and events past its exit, without cursor samples", async () => {
+			const session = newSession();
+			await startReady(session);
+			helper.stderr.write("pipewire: format negotiated\n");
+			helper.emitEvent({ event: "encoder-selection", video: "h264_vaapi" });
+			helper.emitEvent({
+				event: "cursor-sample",
+				timestampMs: 1_150,
+				x: 10,
+				y: 20,
+				width: 1280,
+				height: 720,
+				visible: true,
+			});
+			helper.emitEvent({ event: "warning", code: "dmabuf", message: "falling back to shm" });
+			await flushStdout();
+			helper.emit("exit", 1, null);
+
+			const output = session.helperOutput;
+			expect(output).toContain('"event":"ready"');
+			expect(output).toContain("pipewire: format negotiated\n");
+			expect(output).toContain('"video":"h264_vaapi"');
+			expect(output).toContain('"message":"falling back to shm"');
+			expect(output).not.toContain("cursor-sample");
+		});
+
+		it("keeps a line the helper wrote that is not JSON", async () => {
+			const session = newSession();
+			await startReady(session);
+			helper.stdout.write("thread 'main' panicked at src/main.rs:12\n");
+			await flushStdout();
+
+			expect(session.helperOutput).toContain("thread 'main' panicked at src/main.rs:12\n");
+		});
+
+		it("keeps the newest 64 KiB of a helper that keeps talking", async () => {
+			const session = newSession();
+			await startReady(session);
+			for (let i = 0; i < 1_000; i += 1) {
+				helper.stderr.write(`warning ${i} ${"x".repeat(100)}\n`);
+			}
+			await flushStdout();
+
+			expect(session.helperOutput.length).toBe(64 * 1024);
+			expect(session.helperOutput).toContain("warning 999 ");
+			expect(session.helperOutput).not.toContain('"event":"ready"');
+		});
+	});
 });

@@ -882,6 +882,13 @@ let nativeMacStopInFlight = false;
 // Global frame of the region captured by the SCK helper (see getSelectedSourceBounds).
 let activeMacCaptureBounds: Rectangle | null = null;
 let linuxNativeCaptureSession: LinuxNativeCaptureSession | null = null;
+/**
+ * The Linux capture helper spawned last, kept after its take ends for Save Diagnostics'
+ * `helperOutput.linux`: the same "until the next take starts" lifetime as
+ * `nativeWindowsCaptureOutput`. A prepare that was cancelled counts, since its picker
+ * answer is what a report about it needs.
+ */
+let lastLinuxCaptureSession: LinuxNativeCaptureSession | null = null;
 let linuxNativeCaptureRecordingId: number | null = null;
 let linuxNativeCaptureCursorMode: CursorCaptureMode = "editable-overlay";
 /** What the portal granted for the running capture, for the tray's label. */
@@ -1917,12 +1924,25 @@ async function resolveMediaLinksForVideo(videoPath: string): Promise<{
 }
 
 /**
+ * The open editor's live document, for a bundle saved from the tray or a menu, which
+ * has no renderer state to pass. The host the MCP server reads it through, set by
+ * registerIpcHandlers.
+ */
+let editorDocumentHost: EditorDocumentHost | null = null;
+/**
+ * How long Save Diagnostics waits for the editor's document. A hung editor is exactly
+ * when a bundle is wanted, so it must not hold the save for an MCP call's 30 s.
+ */
+const DIAGNOSTIC_PROJECT_STATE_TIMEOUT_MS = 5_000;
+
+/**
  * Writes the diagnostic bundle a bug report needs: app/OS facts, the native
  * helpers' raw stdout/stderr (which is where `[stop-timing]` and
  * `encoder-selection` land — see nativeWindowsCaptureStop.ts), and the main
  * process's own recent console output. Shared by the renderer's IPC call and
  * the menu/tray "Save Diagnostics" entry point in main.ts, which has no
- * renderer-side `projectState`/`logs` to offer and does not need to.
+ * renderer-side `projectState`/`logs` to offer: the open editor's document is
+ * asked for instead.
  */
 export async function exportDiagnosticFile(payload: {
 	error: string;
@@ -1940,6 +1960,10 @@ export async function exportDiagnosticFile(payload: {
 
 	const HELPER_OUTPUT_MAX_BYTES = 64 * 1024;
 	const tail = (s: string, max: number) => (s.length <= max ? s : s.slice(s.length - max));
+	const projectState =
+		payload.projectState ??
+		(await editorDocumentHost?.snapshot(DIAGNOSTIC_PROJECT_STATE_TIMEOUT_MS)) ??
+		null;
 
 	const diagnostic = {
 		timestamp: new Date().toISOString(),
@@ -1958,11 +1982,12 @@ export async function exportDiagnosticFile(payload: {
 		chromeVersion: process.versions.chrome,
 		error: payload.error,
 		stack: payload.stack,
-		projectState: payload.projectState,
+		projectState,
 		recentLogs: payload.logs,
 		helperOutput: {
 			windows: tail(nativeWindowsCaptureOutput, HELPER_OUTPUT_MAX_BYTES),
 			mac: tail(nativeMacCaptureOutput, HELPER_OUTPUT_MAX_BYTES),
+			linux: tail(lastLinuxCaptureSession?.helperOutput ?? "", HELPER_OUTPUT_MAX_BYTES),
 		},
 		mainProcessLogs: mainLogBuffer.snapshot(),
 	};
@@ -2672,6 +2697,7 @@ export function registerIpcHandlers(
 					maxCursorSamples: MAX_CURSOR_SAMPLES,
 					deferStart: true,
 				});
+				lastLinuxCaptureSession = session;
 
 				await session.start();
 				// The picker is up now. No timeout: a human is reading a dialog.
@@ -2756,6 +2782,7 @@ export function registerIpcHandlers(
 						},
 						maxCursorSamples: MAX_CURSOR_SAMPLES,
 					});
+				lastLinuxCaptureSession = session;
 
 				console.info("[native-linux] starting capture", {
 					outputPath,
@@ -5065,9 +5092,11 @@ export function registerIpcHandlers(
 	// read on every call: "MCP edits", separate from the in-app agent's "Agent edits",
 	// so turning the server on grants a client read access and nothing more.
 	const mcpSettings = new McpSettingsStore(app.getPath("userData"), safeStorage);
+	const documentHost = new EditorDocumentHost(ipcMain);
+	editorDocumentHost = documentHost;
 	const mcpToolDeps: McpToolDeps = {
 		transport: "http",
-		host: new EditorDocumentHost(ipcMain),
+		host: documentHost,
 		projects: aiEditionDocuments,
 		editsAllowed: () => mcpSettings.getSettings().allowEdits,
 		cursor: agentCursorTelemetryReader,
