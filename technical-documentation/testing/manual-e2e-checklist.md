@@ -33,6 +33,8 @@ Sections and checks marked **post-2.0.0** cover what has landed on `main` since 
 
      On macOS 26 the Screen Recording and Accessibility prompts are windows of `universalAccessAuthWarn` (measured 2026-10-14). It is not an installed app, so `request_access` cannot grant it: the prompt stays masked and the operator answers it. `UserNotificationCenter` is an installed app that `request_access` does resolve: granting it unmasks the system alerts it draws, an Automation consent dialog among them, so the agent can see what is blocking its clicks. That grant is computer-use access to those windows, not the Automation (Apple Events) permission itself, which stays the operator's answer to the prompt. The save panel shows nothing in screenshots either; typing the base name and pressing Return still saves.
 
+   **On Windows, an ungranted window does not just stay masked: it gets minimized.** computer-use minimizes every window it was not granted whenever it brings an app forward, and leaves it so. Anything the pass checks on screen must therefore be granted, even a window the agent never clicks, such as the Hide desktop icons cover (see that check).
+
    **Apple's source picker (macOS 15.2+) cannot be granted.** It is drawn by Control Centre, which computer-use refuses, so an agent sees the picker and cannot click it: every take started through it waits for a human (rc.8, rc.12 and rc.13 runs). Do not try to grant it. Run the pass on the app's own picker instead, and keep Apple's picker for a short human slice: [Running the pass unattended on macOS](#running-the-pass-unattended-on-macos).
 
    **Name them the way the Start menu does, in the system's own language.** The resolver matches installed-app display names, not executables: on a French Windows the shell is `Explorateur de fichiers` and `explorer.exe` fails outright — `notInstalled`, with a nonsense suggestion attached — which then voids every other name in the same call. On an English install it is `File Explorer`. When unsure, ask rather than guess; the tool lists the installed names it knows.
@@ -152,6 +154,8 @@ Record mode is the editor's pre-flight panel for the HUD: it edits the same sett
 - [ ] Turn Auto-zoom after recording Off, record again, and confirm the new take opens with no zoom region; restart the app and confirm the row is still Off.
 - [ ] Turn Editable cursor Off and confirm the Auto-zoom after recording row disappears; confirm a take recorded that way opens without automatic zooms.
 - [ ] On Windows, turn Hide desktop icons On, record a screen, and confirm the recording shows the wallpaper where the icons were, and that the icons are back when the take stops. On macOS, confirm the icons are absent from the recording while they stay on the desktop.
+
+  **On Windows, grant `wgc-capture.exe` once the take is running, before the first click.** The cover over the icons is a window of that helper, and computer-use minimizes every window it was not granted as soon as it brings an app forward. Ungranted, the icons come back at the agent's first click and stay for the rest of the take: that reads as a product defect and is not one (measured 2026-10-15 on v2.1.0-rc.1, Windows 11 26200). A user's own clicks never move the cover. The helper only exists while recording, so the step-4 batch cannot resolve it unless a take is already running.
 
 ### Webcam capture quality — v2.0.0
 
