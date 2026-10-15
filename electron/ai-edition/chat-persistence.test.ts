@@ -106,6 +106,30 @@ describe("local Agent chat history", () => {
 		]);
 	});
 
+	it("drops the rewound message from the saved history and the next turn's payload", async () => {
+		const session = createSession("proj_rewound");
+		const document = createEmptyDocument({ title: "Test", projectId: "proj_rewound" });
+		await runChat("proj_rewound", session.id, "smart cuts", config(), document);
+		await runChat("proj_rewound", session.id, "add an annotation and a zoom", config(), document);
+		const rewound = selectSession("proj_rewound", session.id)?.messages[2];
+		const undo = rewindToMessage("proj_rewound", session.id, rewound?.id ?? "");
+		expect(undo.success && undo.prompt).toBe("add an annotation and a zoom");
+		const kept = selectSession("proj_rewound", session.id)?.messages;
+		expect(kept?.map((m) => m.content)).toEqual(["smart cuts", "reply"]);
+		// The earlier message can still be rewound.
+		expect(kept?.[0]?.checkpointId).toBeTruthy();
+		await flushChatPersistence();
+		expect(readFileSync(path.join(root, "proj_rewound.chat.json"), "utf8")).not.toContain(
+			"add an annotation",
+		);
+
+		await restart();
+		await runChat("proj_rewound", session.id, "export it", config());
+		const sent = invokeMock.mock.lastCall?.[0];
+		const payload = [...(sent?.history ?? []).map((m) => m.content), sent?.userMessage];
+		expect(payload).not.toContain("add an annotation and a zoom");
+	});
+
 	it("restores compaction boundary for the model while keeping the full transcript", async () => {
 		modelMock.mockImplementation(
 			async () =>
