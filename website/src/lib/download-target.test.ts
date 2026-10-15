@@ -163,4 +163,6 @@ test("a download click names the asset kind and the release, and other links are
 	assert.equal(downloadClick(STORE_INSTALLER_URL)?.kind, "store");
 	assert.equal(downloadClick("https://github.com/getopenscreen/openscreen/releases/latest"), null);
 	assert.equal(downloadClick(STORE_URL), null);
+	assert.equal(downloadClick("https://github.com/someone/else/releases/download/v1/x.dmg"), null);
+	assert.equal(downloadClick(`https://example.com/?next=${base}/Openscreen-mac-arm64.dmg`), null);
 });
