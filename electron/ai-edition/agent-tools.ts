@@ -3439,18 +3439,6 @@ export function executeAgentTool(
 			const pillIds = new Set(resolvePillIds(prev, existing.id));
 			const pill = coalesceRegionsForRuler(prev).find((p) => p.ids.includes(existing.id));
 			const { values, target } = parsed.data;
-			const patched = prev.map((r) =>
-				pillIds.has(r.id)
-					? {
-							...r,
-							values:
-								values === undefined
-									? r.values
-									: storedShaderEffectValues(definition, { ...r.values, ...values }),
-							target: target ?? r.target,
-						}
-					: r,
-			);
 			const { startMs, endMs } = resolveSpanMs(
 				pill
 					? { startMs: Math.round(pill.start * 1000), endMs: Math.round(pill.end * 1000) }
@@ -3458,14 +3446,29 @@ export function executeAgentTool(
 				parsed.data.startSec,
 				parsed.data.endSec,
 			);
-			const blocked = effectBlocked(patched, startMs, endMs, pillIds);
+			const blocked = effectBlocked(prev, startMs, endMs, pillIds);
 			if (blocked) return failure(`The effect was NOT changed: ${blocked}`);
 			const moved = parsed.data.startSec !== undefined || parsed.data.endSec !== undefined;
-			const rebuilt = moved
-				? replacePillSpan(patched, existing.id, startMs, endMs, document.timeline.clips, () =>
+			// The span is replaced before the patch: patched first, the pill could take the same
+			// values as a touching neighbour, coalesce with it, and move it along.
+			const spanned = moved
+				? replacePillSpan(prev, existing.id, startMs, endMs, document.timeline.clips, () =>
 						createId("fxr"),
 					)
-				: patched;
+				: prev;
+			const others = new Set(prev.filter((r) => !pillIds.has(r.id)).map((r) => r.id));
+			const rebuilt = spanned.map((r) =>
+				others.has(r.id)
+					? r
+					: {
+							...r,
+							values:
+								values === undefined
+									? r.values
+									: storedShaderEffectValues(definition, { ...r.values, ...values }),
+							target: target ?? r.target,
+						},
+			);
 			const landing = landingAfterPillEdit(prev, rebuilt, pillIds, document);
 			if (!landing.anchored) return coversNoClip("effect", startMs / 1000, endMs / 1000, document);
 			const next: AxcutDocument = { ...document, shaderEffectRanges: rebuilt };

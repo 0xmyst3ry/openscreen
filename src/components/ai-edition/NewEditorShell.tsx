@@ -1135,6 +1135,7 @@ export function NewEditorShell() {
 				doc,
 				snapshot.definition,
 				anchored as AxcutShaderEffectRange[],
+				() => createId("fx"),
 			);
 			if (!next) {
 				toast.error(te("regionClipboard.pasteEffectOverlap"));
@@ -1202,14 +1203,22 @@ export function NewEditorShell() {
 			return;
 		}
 
-		// An effect region goes with its definition (`RegionSnapshot`).
+		// An effect region goes with its definition (`RegionSnapshot`), and with the span of the
+		// whole pill: one cut by a clip boundary is several fragments.
 		if (sel.kind === "shaderEffect") {
-			const region = tl.shaderEffectRanges.find((r) => r.id === sel.id);
-			const definition = region && tl.shaderEffects.find((e) => e.id === region.effectId);
-			if (!region || !definition) return;
+			const { coalesceRegionsForRuler } = await import("@/lib/ai-edition/timeline/timelineMap");
+			const pill = coalesceRegionsForRuler(tl.shaderEffectRanges).find((p) =>
+				p.ids.includes(sel.id),
+			);
+			const definition = pill && tl.shaderEffects.find((e) => e.id === pill.member.effectId);
+			if (!pill || !definition) return;
 			copyRegion({
 				kind: "shaderEffect",
-				region: region as unknown as Record<string, unknown>,
+				region: {
+					...pill.member,
+					startMs: Math.round(pill.start * 1000),
+					endMs: Math.round(pill.end * 1000),
+				} as unknown as Record<string, unknown>,
 				definition,
 			});
 			setCopiedClipId(null);

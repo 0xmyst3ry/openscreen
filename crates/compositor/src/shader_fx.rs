@@ -763,8 +763,9 @@ pub fn eviction_victim(entries: impl Iterator<Item = (u64, u64)>, scene: &[Scene
 /// Les régions actives au temps source `t`. Le document n'en tient qu'une à la fois ; une scène
 /// écrite à la main qui en superpose les applique dans son ordre.
 pub fn active_effects(effects: &[SceneShaderEffect], t: f32) -> Vec<&SceneShaderEffect> {
-    let t = t as f64;
-    effects.iter().filter(|e| t >= e.start_sec && t < e.end_sec).collect()
+    // En f32 comme `t` et comme les annotations : `0.7_f32 as f64` tombe sous `0.7_f64`, et la
+    // frame posée sur le début de la région la manquerait.
+    effects.iter().filter(|e| t >= e.start_sec as f32 && t < e.end_sec as f32).collect()
 }
 
 /// La boîte englobante (x, y, w, h) d'un quad, en uv de sortie : `ctx.footage` sous un tilt 3D.
@@ -1210,6 +1211,11 @@ mod tests {
         assert!(during.len() == 1 && std::ptr::eq(during[0], &effects[1]));
         let after = active_effects(&effects, 3.0);
         assert!(after.len() == 1 && std::ptr::eq(after[0], &effects[0]), "fin exclusive");
+        let mut c = test_effect(VIGNETTE, vec![], &[]);
+        (c.start_sec, c.end_sec) = (0.7, 1.3);
+        let fractional = [c];
+        assert_eq!(active_effects(&fractional, 0.7).len(), 1, "début fractionnaire inclus");
+        assert!(active_effects(&fractional, 1.3).is_empty(), "fin fractionnaire exclue");
 
         let ctx = context(&effects[1], 2.0, 10.0, [1920.0, 1080.0], &FxFrameInputs::default());
         assert_eq!(ctx.region, [0.5, 2.0, 1.0, 0.0], "fragment, temps source");
