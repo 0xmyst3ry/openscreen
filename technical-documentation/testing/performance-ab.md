@@ -41,7 +41,7 @@ log of every comparison run so far. The scripts live in [`scripts/perf-ab/`](../
 
 | # | Finding | Status | Likely cause | Next step |
 |---|---|---|---|---|
-| 1 | Startup to a ready HUD +47 ms (625 → 672 ms). Editor open unchanged (1143 → 1136 ms) | Startup: regression, p < 0.001. Editor open: retracted | No single commit. +18 ms before the HUD page starts, which is not main-process JavaScript; +12 ms of CPU in the HUD's first render, spread over a dozen modules | Try a HUD entry of its own, without the editor's code, and measure it |
+| 1 | Startup to a ready HUD +47 ms (625 → 672 ms). Editor open unchanged (1143 → 1136 ms) | Startup: regression, p < 0.001. Editor open: retracted | No single commit found, bisection to rerun on a quiet machine. +18 ms before the HUD page starts, which is not main-process JavaScript; +12 ms of CPU in the HUD's first render, spread over a dozen modules | Try a HUD entry of its own, without the editor's code, and measure it |
 | 2 | Heavy preview: 87 → 102 paints later than 25 ms per 30 s (+17%) | Within noise, p ≈ 0.2 | Both builds land in a slow mode (paint p95 28.5 ms instead of 22 ms) in about half the sessions: 2.0.0 6 of 12, main 7 of 12. The mode follows the session, not the build. | Find what sets the mode |
 | 3 | At 60 Hz the preview paints 51 to 58 frames a second, and the cursor steps backwards 24 to 153 times in 18 s (2.0.0 median 31, main 53) | Pre-existing, both builds; main's count within noise | Not established. First hypothesis: the compositor's own 60 Hz pacing beats against the display's 60 Hz vsync, so a frame composed for one instant shows a vsync early or late | Pace the preview on the display's vsync, measure at 60 Hz |
 | 4 | GPU process dedicated memory, one traced session each: 0.8 GB (2.0.0) and 1.4 GB (main) at 11 s of playback, 9.8 GB and 12.8 GB at 2 min | Pre-existing, both builds | Grows linearly with playback, so something per frame is kept: the shared-texture preview path is the first suspect | Trace the shared frames' lifetime |
@@ -149,16 +149,21 @@ app pinned on top from its first frame, phases read from inside each page) reran
 | Process start to HUD ready (ms) | 625 | 672 | **+47** | 3.81 |
 | Editor open to first preview frame (ms) | 1143 | 1136 | -7 | -0.06 |
 
+Another session's dev build ran an A/B in its editor from 21:45 to 22:29 that evening. The table
+above (22:35), the deferred-channel test (22:32) and the source-mapped HUD profiles (22:42) came
+after it. The per-build bisection, the grafts and the main-process profile came during it: treat
+them as leads to rerun, not results.
+
 Where the 47 ms go:
 
-- **Before the HUD page starts (+18 ms): not JavaScript.** A CPU profile of the main process from
+- **Before the HUD page starts (+18 ms): probably not JavaScript (to rerun).** A CPU profile of the main process from
   its first line to the HUD (`profile-startup.mjs`, `--inspect-brk`) gives the same busy time,
   507 ms for 2.0.0 and 510 ms for main.
 - **In the HUD's first render (+12 ms of CPU): many small costs.** Profiles of the HUD renderer
   mapped through source maps (`profile-hud.mjs`, `attribute-hud.cjs`), 8 each: 194 → 206 ms busy.
   `LaunchWindow` +2.5 ms, i18next +2.4, the HUD's own toaster (`3a77ef890`) +1.7, zod +1.5,
   tailwind-merge +1.0, Radix +1.0. The bundle itself barely grew (index chunk 1.33 → 1.37 MB).
-- **No commit owns it.** The HUD-ready time per CI build of main (10 sessions each) moves by
+- **No commit owns it, as far as the noisy runs go (to rerun).** The HUD-ready time per CI build of main (10 sessions each) moves by
   steps within the noise: 695 (2.0.0), 755 (`b519f236e`), 708 (`e3bde938a`), 675 (`cb8f89c9d`),
   743 (`b668b2c8d`), 782 (`4f4bb997c`), 725 ms (`9dc48b5c7`). The largest step, between
   `cb8f89c9d` and `b668b2c8d` (first React render, z = 2.80), gave contradictory grafts: on a
