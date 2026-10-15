@@ -237,11 +237,12 @@ electron/native/bin/linux-x64/openscreen-pipewire-helper '{"probeOnly":true}'
   never keystrokes (see `pipewire-capture/src/input.rs`), and
   `OPENSCREEN_DISABLE_CLICK_CAPTURE=1` turns it off entirely. User setup:
   [Mouse clicks on Wayland](../../website/docs/installation.md#mouse-clicks-on-wayland).
-- **Window takes keep the client-side shadow as a black border, and have cursor
-  data only while the pointer is over the window.** Both come from what mutter
-  puts in a window stream: its crop is the window's whole buffer, shadow
-  included, and it attaches the cursor only while the window has the pointer.
-  Details and measurements:
+- **Window takes keep the client-side shadow as a black border, and are
+  expected to have cursor data only while the pointer is over the window.**
+  Both come from what mutter puts in a window stream: its crop is the window's
+  whole buffer, shadow included (measured), and its source attaches the cursor
+  only while the window has the pointer (read from the mutter 46.2 code, not
+  yet observed live). Details and measurements:
   [recording.md, Known gaps](../../technical-documentation/architecture/recording.md#known-gaps).
 - **The user picks a source twice.** Electron's `desktopCapturer` raises its own
   portal dialog for the video, and this helper raises a second one for the cursor.
