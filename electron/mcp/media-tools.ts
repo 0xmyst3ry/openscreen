@@ -523,6 +523,12 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		why: string,
 	): Promise<CallToolResult | null> {
 		if (!deps.renderFrames) return null;
+		// The frame grid below counts every clip, the render only those with media: past a clip
+		// without one, the two would disagree on which frame a moment is.
+		const paths = new Map(document.assets.map((asset) => [asset.id, asset.originalPath]));
+		if (document.timeline.clips.some((clip) => !paths.get(clip.assetId))) {
+			return text("A clip on this timeline has no media file: its frames cannot be placed.", true);
+		}
 		const clips = buildNativeClipList(document);
 		if (clips.length === 0) return text("This project's timeline has no clip to show.", true);
 		const rulerEndSec = Math.max(0, ...document.timeline.clips.map((clip) => clip.timelineEndSec));
@@ -550,13 +556,11 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 		times.forEach((sec, i) => {
 			content.push({ type: "text", text: `${sec.toFixed(2)}s on the ruler` });
 			const frame = byIndex.get(indices[i]);
-			if (frame) {
-				content.push({
-					type: "image",
-					data: frame.jpeg.toString("base64"),
-					mimeType: "image/jpeg",
-				});
-			}
+			content.push(
+				frame
+					? { type: "image", data: frame.jpeg.toString("base64"), mimeType: "image/jpeg" }
+					: { type: "text", text: "No frame here: the rendered video ends before it." },
+			);
 		});
 		return { content };
 	}
