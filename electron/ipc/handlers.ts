@@ -71,6 +71,7 @@ import { LlmConfigStore } from "../ai-edition/llm-config-store";
 import { StylePresetService } from "../ai-edition/style-preset-service";
 import { AppSettingsStore } from "../app-settings";
 import { createRunnerHost } from "../cli/runnerHost";
+import { hideCountdownOverlay } from "../countdownOverlay";
 import { isDiagnosticModeEnabled, mainLogBuffer } from "../diagnostics/main-log-buffer";
 import { mainT } from "../i18n";
 import { getInstallChannel } from "../install-channel";
@@ -2536,7 +2537,11 @@ export function registerIpcHandlers(
 		return { success: true };
 	});
 
+	// Counts the countdowns that showed the overlay, so a Linux hide still waiting on its cleared
+	// frame can tell that a newer countdown has taken the overlay over (`countdownOverlay.ts`).
+	let countdownOverlayShows = 0;
 	ipcMain.handle("countdown-overlay-show", async (_, value: number, runId: number) => {
+		countdownOverlayShows += 1;
 		const overlayWindow = getCountdownOverlayWindow?.() ?? createCountdownOverlayWindow();
 		if (overlayWindow.isDestroyed()) {
 			return;
@@ -2566,14 +2571,19 @@ export function registerIpcHandlers(
 		overlayWindow.webContents.send("countdown-overlay-value", value, runId);
 	});
 
-	ipcMain.handle("countdown-overlay-hide", (_, runId: number) => {
+	// Resolves once the overlay is hidden, and the renderer starts the take only then: on Linux
+	// that is after a frame without the digit has been painted, so the capture cannot record it.
+	ipcMain.handle("countdown-overlay-hide", async (_, runId: number) => {
 		const overlayWindow = getCountdownOverlayWindow?.();
 		if (!overlayWindow || overlayWindow.isDestroyed()) {
 			return;
 		}
 
-		overlayWindow.webContents.send("countdown-overlay-value", null, runId);
-		overlayWindow.hide();
+		const showsAtHide = countdownOverlayShows;
+		await hideCountdownOverlay(overlayWindow, runId, {
+			platform: process.platform,
+			isSuperseded: () => countdownOverlayShows !== showsAtHide,
+		});
 	});
 
 	ipcMain.handle("is-native-windows-capture-available", async () => {
