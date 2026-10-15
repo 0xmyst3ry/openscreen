@@ -1,7 +1,7 @@
 import { downloadClick } from "./lib/download-target";
 
 // A project token is public by design: it can only send events, not read them.
-const POSTHOG_TOKEN = "phc_TODO";
+const POSTHOG_TOKEN = "phc_zhJDJHBBRDAJBwSb7zf2JuQ59v6RwBN96ZksM2y4oq8C";
 
 // The live domain only, so neither `npm run dev`, a local `serve` nor a preview
 // deployment counts. posthog-js is fetched as its own chunk, after hydration has
