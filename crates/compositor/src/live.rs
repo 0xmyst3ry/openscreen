@@ -57,6 +57,89 @@ fn webcam_seek_time(screen_source_time_sec: f64, webcam_offset_sec: f64) -> f64 
     (screen_source_time_sec - webcam_offset_sec).max(0.0)
 }
 
+/// What `seek_held` needs from a decoder: a trait only so the search runs in tests without a GPU.
+trait HeldSeek {
+    unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame>;
+    unsafe fn cur_frame(&self) -> *mut crate::ffi::AVFrame;
+    unsafe fn cur_time_sec(&self) -> f64;
+    unsafe fn fps(&self) -> f64;
+    unsafe fn peek_next_time_sec(&mut self) -> Result<NextFrameTime>;
+    unsafe fn commit_peek(&mut self) -> Result<*mut crate::ffi::AVFrame>;
+}
+
+impl HeldSeek for Decoder {
+    unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+        Decoder::seek_to_or_last(self, seconds)
+    }
+    unsafe fn cur_frame(&self) -> *mut crate::ffi::AVFrame {
+        Decoder::cur_frame(self)
+    }
+    unsafe fn cur_time_sec(&self) -> f64 {
+        Decoder::cur_time_sec(self)
+    }
+    unsafe fn fps(&self) -> f64 {
+        Decoder::fps(self)
+    }
+    unsafe fn peek_next_time_sec(&mut self) -> Result<NextFrameTime> {
+        Decoder::peek_next_time_sec(self)
+    }
+    unsafe fn commit_peek(&mut self) -> Result<*mut crate::ffi::AVFrame> {
+        Decoder::commit_peek(self)
+    }
+}
+
+/// Positions the screen decoder on the frame on screen at `t`: the last one whose pts is at
+/// or before it. ScreenCaptureKit and PipeWire write a frame only when the screen changes, so a
+/// still stretch is one frame held for seconds. `seek_to` lands on the first frame at or after
+/// `t`, which inside such a stretch is the frame that ENDS it: the preview showed the change
+/// early, its clock ran ahead of the app's playhead, and the drift watch re-anchored it every
+/// 600 ms for the rest of the playback (1–2 updates/s). A constant-rate take lands within half
+/// a frame of `t` and keeps its single seek.
+unsafe fn seek_held<D: HeldSeek>(dec: &mut D, t: f64) -> Result<*mut crate::ffi::AVFrame> {
+    let tol = 0.5 / dec.fps().max(1.0);
+    let due = |time: f64| time <= t + tol;
+    // Already on it, the common case of a re-anchor or a scrub inside a still stretch: no seek.
+    if !dec.cur_frame().is_null() && due(dec.cur_time_sec()) {
+        match dec.peek_next_time_sec()? {
+            NextFrameTime::At(next) if !due(next) => return Ok(dec.cur_frame()),
+            NextFrameTime::Eof => return Ok(dec.cur_frame()),
+            _ => {}
+        }
+    }
+    let mut frame = dec.seek_to_or_last(t)?;
+    if frame.is_null() || due(dec.cur_time_sec()) {
+        return Ok(frame);
+    }
+    // Landed on the frame that ends a still stretch covering `t`: back off until a seek lands at
+    // or before `t`, then walk forward to the last due frame.
+    let mut back = 1.0;
+    loop {
+        let from = (t - back).max(0.0);
+        frame = dec.seek_to_or_last(from)?;
+        if frame.is_null() || due(dec.cur_time_sec()) || from == 0.0 {
+            break;
+        }
+        back *= 2.0;
+    }
+    if frame.is_null() {
+        return Ok(frame);
+    }
+    // ponytail: capped like `advance_webcam_to`; a still stretch holds few frames.
+    for _ in 0..10_000 {
+        match dec.peek_next_time_sec()? {
+            NextFrameTime::At(next) if due(next) => frame = dec.commit_peek()?,
+            _ => break,
+        }
+    }
+    Ok(frame)
+}
+
+/// The playback accumulator that puts the clock at `t` on a frame just positioned there. The
+/// clock is the frame's pts plus `acc`, and a held frame's pts can be seconds before `t`.
+fn anchor_acc(t: f64, pts: f64) -> f64 {
+    (t - pts).max(0.0)
+}
+
 /// Décodeurs déjà ouverts ET positionnés au bon playhead pour un clip à venir — le résultat
 /// d'un préchargement en tâche de fond (voir `open_and_seek_clip`/`maybe_start_prefetch`
 /// dans `render_thread`). Appliquer ceci à un `Player` (`apply_prefetched`) ne fait plus
@@ -160,7 +243,7 @@ unsafe fn open_and_seek_clip(
     let source_time_sec = source_time_sec.max(0.0);
     let mut sdec = Decoder::open(screen_path, gpu)?;
     let (mut wdec, webcam_decoder_is_real) = open_webcam_or_stand_in(screen_path, webcam_path, gpu)?;
-    let sf = sdec.seek_to_or_last(source_time_sec)?;
+    let sf = seek_held(&mut sdec, source_time_sec)?;
     // La caméra aussi tient sa dernière image au-delà de sa fin. L'ancien repli `seek_to(0.0)`
     // y montrait sa PREMIÈRE image (#990).
     if webcam_decoder_is_real {
@@ -202,7 +285,7 @@ unsafe fn seek_pair(
     source_time_sec: f64,
     webcam_offset_sec: f64,
 ) -> Result<bool> {
-    let sf = sdec.seek_to_or_last(source_time_sec)?;
+    let sf = seek_held(sdec, source_time_sec)?;
     if sf.is_null() {
         return Ok(false);
     }
@@ -592,7 +675,13 @@ impl Player {
         }
 
         self.has_current_frame = true;
-        self.sync_time(comp);
+        if use_current {
+            // A frame just positioned by a seek or a clip switch can be a held one, seconds
+            // before the playhead: compose it at the clock, which the caller anchored there.
+            self.sync_time_at(comp, target_source_time.max(self.sdec.cur_time_sec()));
+        } else {
+            self.sync_time(comp);
+        }
         comp.compose_frame(sf, wf, self.idx as f32, cfg)?;
         self.idx = self.idx.wrapping_add(1);
         Ok(true)
@@ -700,7 +789,7 @@ impl Player {
     /// aucun raccourci keyframe pour les seeks avant lointains (lent ET, combiné au bug de
     /// `set_time`, incorrect au-delà de 6s sur un enregistrement réel).
     pub unsafe fn present_frame(&mut self, comp: &Compositor, cfg: &Cfg, target_sec: f64) -> Result<bool> {
-        let sf = self.sdec.seek_to_or_last(target_sec)?;
+        let sf = seek_held(&mut self.sdec, target_sec)?;
         // La caméra aussi, au-delà de sa dernière image comprise : sans frame webcam, la frame
         // ne serait pas composée. Sans caméra, la frame écran tient sa place.
         let wf = if self.webcam_decoder_is_real {
@@ -715,7 +804,9 @@ impl Player {
         }
         self.has_current_frame = true;
         self.use_current_on_next_step = false;
-        self.sync_time(comp);
+        // At `target_sec`, not at the held frame's pts: the cursor and zooms show where the
+        // playhead is, and the published position matches the app's.
+        self.sync_time_at(comp, target_sec.max(self.sdec.cur_time_sec()));
         // "idx" ne sert plus qu'au fallback fixture (jamais lu si une scène est posée) — dérivé
         // du temps réel pour rester cohérent si jamais consulté.
         self.idx = (target_sec * self.sdec.fps()).round().max(0.0) as u32;
@@ -1418,6 +1509,9 @@ unsafe fn maybe_start_prefetch(
 /// bascule est instantanée (juste un échange de champs, `Player::apply_prefetched`) ; sinon
 /// on retombe sur l'ouverture synchrone habituelle (`Player::set_active_clip`) — correct dans
 /// tous les cas, juste plus lent quand le préchargement n'a pas eu le temps de finir.
+///
+/// Returns the source time the next clip starts at when the switch happened, for the caller to
+/// anchor its clock there (`anchor_acc`): the clip can start inside a still stretch.
 #[allow(clippy::too_many_arguments)]
 unsafe fn advance_to_next_scene_clip(
     player: &mut Player,
@@ -1431,9 +1525,9 @@ unsafe fn advance_to_next_scene_clip(
     raw_cursor: &mut Option<CursorTrack>,
     loaded_cursor_path: &mut String,
     last_smoothing: &mut f32,
-) {
+) -> Option<f64> {
     let Some(next_index) = next_clip_index(scene, *active_clip_index) else {
-        return;
+        return None;
     };
     let next_clip = &scene.clips[next_index];
 
@@ -1505,8 +1599,12 @@ unsafe fn advance_to_next_scene_clip(
                 None => comp.clear_cursor(),
             }
             *last_smoothing = -1.0;
+            Some(next_clip.source_start_sec)
         }
-        Err(e) => eprintln!("[live] auto-advance clip: {e:#}"),
+        Err(e) => {
+            eprintln!("[live] auto-advance clip: {e:#}");
+            None
+        }
     }
 }
 
@@ -1666,6 +1764,8 @@ unsafe fn render_thread(
             };
             match switch_result {
                 Ok(()) => {
+                    // The app's re-anchor names the playhead: the clock restarts there.
+                    acc = anchor_acc(request.source_time_sec, player.screen_time_sec());
                     // Condition sur `repositioned`, pas sur `same_media` : un repositionnement
                     // qui a échoué est retombé sur l'ouverture complète, donc des décodeurs
                     // ONT été fermés et le cache doit être vidé malgré des médias identiques.
@@ -1861,7 +1961,9 @@ unsafe fn render_thread(
                 // affiché jusqu'à ce qu'une autre action provoque un compose.
                 (settle_until, last_settle) = open_settle_window(now);
             }
-            acc = 0.0; // resynchronise l'accumulateur de lecture libre après un seek
+            // Resynchronise l'accumulateur de lecture libre après un seek : l'horloge repart du
+            // temps demandé, pas du pts de la frame tenue (`anchor_acc`).
+            acc = anchor_acc(target, player.screen_time_sec());
         } else if shared.playing.load(Ordering::Relaxed) {
             // BUG corrigé : la lecture libre décodait auparavant exactement 1 frame RÉELLE par
             // tranche de 1/60s de temps réel écoulé, quelle que soit la densité effective de
@@ -1928,7 +2030,7 @@ unsafe fn render_thread(
                             break;
                         }
                         if player.screen_time_sec() >= clip.source_end_sec {
-                            advance_to_next_scene_clip(
+                            if let Some(start) = advance_to_next_scene_clip(
                                 &mut player,
                                 &comp,
                                 scene,
@@ -1940,7 +2042,9 @@ unsafe fn render_thread(
                                 &mut raw_cursor,
                                 &mut loaded_cursor_path,
                                 &mut last_smoothing,
-                            );
+                            ) {
+                                acc = anchor_acc(start, player.screen_time_sec());
+                            }
                         }
                     }
                 }
@@ -1954,9 +2058,10 @@ unsafe fn render_thread(
                 // finit alors par boucler tout seul sur l'EOF réel (temps qui recule
                 // brutalement). On détecte ce recul et on corrige immédiatement en enchaînant
                 // sur le clip suivant, plutôt que de rester bloqué sur le 1er clip.
+                let mut crossed_anchor = None;
                 if let (Some(scene), Some(t_before)) = (&full_scene, screen_time_before_step) {
                     if player.screen_time_sec() < t_before {
-                        advance_to_next_scene_clip(
+                        crossed_anchor = advance_to_next_scene_clip(
                             &mut player,
                             &comp,
                             scene,
@@ -1968,8 +2073,12 @@ unsafe fn render_thread(
                             &mut raw_cursor,
                             &mut loaded_cursor_path,
                             &mut last_smoothing,
-                        );
+                        )
+                        .map(|start| anchor_acc(start, player.screen_time_sec()));
                     }
+                }
+                if let Some(anchored) = crossed_anchor {
+                    acc = anchored;
                 }
                 if !committed {
                     // Rien n'est dû pour l'instant (hold) : `acc` reste tel quel — il continue
@@ -1978,7 +2087,8 @@ unsafe fn render_thread(
                 }
                 stepped = true;
                 let after = player.screen_time_sec();
-                acc = consume_acc(acc, before, after);
+                // A switch just anchored the clock on the new clip: nothing of the old one to consume.
+                acc = crossed_anchor.unwrap_or_else(|| consume_acc(acc, before, after));
                 n += 1;
                 if n >= max_steps {
                     // Rattrapage plafonné : le contenu dû est plus dense que ce qu'on peut décoder
@@ -2407,6 +2517,131 @@ mod tests {
     }
 
     use super::*;
+
+    /// A decoder over a list of pts with `pipeline_windows::Decoder`'s seek: the first frame at
+    /// or after the target (half a tick early still counts), or the last one. Counts its seeks.
+    struct HeldTake {
+        pts: Vec<f64>,
+        cur: Option<usize>,
+        peeked: bool,
+        seeks: usize,
+    }
+
+    impl HeldTake {
+        fn new(pts: &[f64]) -> Self {
+            Self { pts: pts.to_vec(), cur: None, peeked: false, seeks: 0 }
+        }
+        fn frame(&self) -> *mut crate::ffi::AVFrame {
+            match self.cur {
+                Some(_) => std::ptr::NonNull::dangling().as_ptr(),
+                None => std::ptr::null_mut(),
+            }
+        }
+    }
+
+    impl HeldSeek for HeldTake {
+        unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+            self.seeks += 1;
+            self.peeked = false;
+            let first = self.pts.iter().position(|&p| p >= seconds - 1e-4);
+            self.cur = first.or(Some(self.pts.len() - 1));
+            Ok(self.frame())
+        }
+        unsafe fn cur_frame(&self) -> *mut crate::ffi::AVFrame {
+            self.frame()
+        }
+        unsafe fn cur_time_sec(&self) -> f64 {
+            self.cur.map_or(0.0, |i| self.pts[i])
+        }
+        unsafe fn fps(&self) -> f64 {
+            30.0
+        }
+        unsafe fn peek_next_time_sec(&mut self) -> Result<NextFrameTime> {
+            let next = self.cur.map_or(0, |i| i + 1);
+            Ok(match self.pts.get(next) {
+                Some(&t) => {
+                    self.peeked = true;
+                    NextFrameTime::At(t)
+                }
+                None => NextFrameTime::Eof,
+            })
+        }
+        unsafe fn commit_peek(&mut self) -> Result<*mut crate::ffi::AVFrame> {
+            assert!(self.peeked, "commit without a peek");
+            self.peeked = false;
+            self.cur = Some(self.cur.map_or(0, |i| i + 1));
+            Ok(self.frame())
+        }
+    }
+
+    #[test]
+    fn a_seek_inside_a_still_stretch_lands_on_the_held_frame() {
+        let mut take = HeldTake::new(&[0.0, 0.1, 2.0, 2.1]);
+        unsafe {
+            seek_held(&mut take, 1.0).unwrap();
+            assert_eq!(take.cur_time_sec(), 0.1, "the frame on screen at 1.0 s, not the one at 2.0 s");
+            seek_held(&mut take, 5.0).unwrap();
+            assert_eq!(take.cur_time_sec(), 2.1, "past the end: the last frame");
+        }
+    }
+
+    #[test]
+    fn a_seek_between_two_close_frames_takes_the_earlier_one() {
+        let mut take = HeldTake::new(&[0.0, 0.1, 2.0, 2.1]);
+        unsafe {
+            seek_held(&mut take, 2.05).unwrap();
+        }
+        assert_eq!(unsafe { take.cur_time_sec() }, 2.0);
+    }
+
+    #[test]
+    fn a_seek_into_a_long_still_stretch_backs_off_until_it_finds_the_held_frame() {
+        let mut take = HeldTake::new(&[0.0, 10.0]);
+        unsafe {
+            seek_held(&mut take, 9.0).unwrap();
+        }
+        assert_eq!(unsafe { take.cur_time_sec() }, 0.0);
+    }
+
+    #[test]
+    fn a_seek_before_the_first_frame_shows_the_first_frame() {
+        let mut take = HeldTake::new(&[0.5, 1.0]);
+        unsafe {
+            seek_held(&mut take, 0.2).unwrap();
+        }
+        assert_eq!(unsafe { take.cur_time_sec() }, 0.5);
+    }
+
+    #[test]
+    fn a_constant_rate_take_keeps_its_single_seek() {
+        let pts: Vec<f64> = (0..300).map(|i| i as f64 / 30.0).collect();
+        let mut take = HeldTake::new(&pts);
+        unsafe {
+            seek_held(&mut take, 4.0).unwrap();
+            assert!((take.cur_time_sec() - 4.0).abs() < 1e-9);
+        }
+        assert_eq!(take.seeks, 1);
+    }
+
+    #[test]
+    fn a_seek_inside_the_stretch_already_shown_does_not_seek_again() {
+        // The drift watch re-anchors the view while it plays through a still stretch.
+        let mut take = HeldTake::new(&[0.0, 0.1, 2.0, 2.1]);
+        unsafe {
+            seek_held(&mut take, 1.0).unwrap();
+            let seeks = take.seeks;
+            seek_held(&mut take, 1.5).unwrap();
+            assert_eq!(take.cur_time_sec(), 0.1);
+            assert_eq!(take.seeks, seeks, "no decoder seek for the frame already on screen");
+        }
+    }
+
+    #[test]
+    fn the_clock_restarts_at_the_requested_time_on_a_held_frame() {
+        // Before: the clock restarted at the held frame's pts, 0.9 s behind the playhead.
+        assert_eq!(hold_clock_sec(0.1, anchor_acc(1.0, 0.1), Some(5.0)), 1.0);
+        assert_eq!(anchor_acc(1.0, 1.02), 0.0, "never behind the frame's own pts");
+    }
 
     fn multiclip_scene() -> Scene {
         Scene::from_json(r##"{
