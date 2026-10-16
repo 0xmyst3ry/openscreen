@@ -6,6 +6,14 @@
 //!
 //! The camera test also needs `OPENSCREEN_LIVE_WEBCAM`, a camera file with a frame between 1 s and
 //! 1.25 s (any constant-frame-rate recording). The source itself does not count as a camera.
+//!
+//! The still-stretch test needs `OPENSCREEN_LIVE_HELD_SOURCE` and `OPENSCREEN_LIVE_HELD_AT`. A take
+//! that reproduces the B-frame keyframe trap, made with an ffmpeg that has libx264:
+//!
+//! ```sh
+//! ffmpeg -f lavfi -i "testsrc2=size=1280x720:rate=60:duration=14" //!   -vf "select='lt(t\,7)+gte(t\,8.02)'" -fps_mode vfr -c:v libx264 //!   -force_key_frames "0,5.95,8.02" -pix_fmt yuv420p held-x264.mp4
+//! OPENSCREEN_LIVE_HELD_SOURCE=held-x264.mp4 OPENSCREEN_LIVE_HELD_AT=7.5 cargo test ...
+//! ```
 
 #![cfg(any(windows, target_os = "macos"))]
 
@@ -72,6 +80,41 @@ fn a_held_frame_follows_the_playback_clock() {
         assert!(player.recompose(&comp, &cfg).expect("recompose"));
         assert_eq!(comp.programme_time(), Some(at_pts), "recompose stays at the pts");
         assert_eq!(player.composed_time_sec(), held);
+    }
+}
+
+/// `OPENSCREEN_LIVE_HELD_SOURCE`: a take with a still stretch (no frame written for a while), and
+/// `OPENSCREEN_LIVE_HELD_AT`: a time inside it. B-frames welcome: the D3D11 decoder reorders them.
+#[test]
+fn a_seek_into_a_still_stretch_lands_on_the_frame_held_there() {
+    let (Ok(source), Some(at)) = (
+        std::env::var("OPENSCREEN_LIVE_HELD_SOURCE"),
+        std::env::var("OPENSCREEN_LIVE_HELD_AT").ok().and_then(|s| s.parse::<f64>().ok()),
+    ) else {
+        println!("SKIP: set OPENSCREEN_LIVE_HELD_SOURCE and OPENSCREEN_LIVE_HELD_AT.");
+        return;
+    };
+    let gpu = Gpu::create(false).expect("device");
+    let mut cfg = config::all().pop().expect("at least one config");
+    cfg.zoom = false;
+    cfg.layout_anim = false;
+    let comp = Compositor::new_sized(&gpu, 480, 270).expect("compositor");
+    let scene = Scene::from_json(&scene_json(&source)).expect("valid scene");
+    comp.set_live_params(live_params_from_scene(&scene));
+    comp.set_scene(Some(scene.clone()));
+    comp.clear_cursor();
+
+    unsafe {
+        let mut player = Player::open(&source, "", &gpu).expect("open the source");
+        player.set_programme_clock(Some(&scene), 0);
+        // From afar (a keyframe seek), from just before (a walk forward), and from inside it.
+        for from in [0.0, at - 0.3, at - 0.1] {
+            assert!(player.present_frame(&comp, &cfg, from).expect("seek"));
+            assert!(player.present_frame(&comp, &cfg, at).expect("seek"));
+            let landed = player.screen_time_sec();
+            assert!(landed <= at + 1e-3, "from {from:.2} s: landed on {landed:.3} s, past {at} s");
+            assert_eq!(player.composed_time_sec(), at, "from {from:.2} s: a seek reports the playhead");
+        }
     }
 }
 

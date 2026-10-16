@@ -130,6 +130,19 @@ unsafe fn seek_held<D: HeldSeek>(dec: &mut D, t: f64) -> Result<*mut crate::ffi:
         }
     }
     let mut frame = dec.seek_keyframe_before(t)?;
+    // The demuxer seeks on decode times. With B-frames, the keyframe that ends a still stretch
+    // decodes before the stretch is over and shows after it, so a target inside the stretch lands
+    // on it, past `t`. Back off to the keyframe before: decoding from there is what showing the
+    // held frame costs, the price of any seek on a constant-rate take.
+    let mut back = 1.0;
+    while !frame.is_null() && !due(dec.cur_time_sec()) {
+        let from = (t - back).max(0.0);
+        frame = dec.seek_keyframe_before(from)?;
+        if from == 0.0 {
+            break;
+        }
+        back *= 2.0;
+    }
     if frame.is_null() {
         // Nothing decodable from there: keep `seek_to_or_last`'s answer, last frame included.
         return dec.seek_to_or_last(t);
@@ -2528,10 +2541,12 @@ mod tests {
 
     use super::*;
 
-    /// A decoder over a list of pts and keyframe positions. Counts its keyframe seeks.
+    /// A decoder over a list of pts and keyframe positions, each keyframe indexed at its decode
+    /// time as the MP4 demuxer does. Counts its keyframe seeks.
     struct HeldTake {
         pts: Vec<f64>,
         keyframes: Vec<usize>,
+        key_decode_times: Vec<f64>,
         cur: Option<usize>,
         peeked: bool,
         seeks: usize,
@@ -2542,7 +2557,18 @@ mod tests {
             Self::with_keyframes(pts, &[0])
         }
         fn with_keyframes(pts: &[f64], keyframes: &[usize]) -> Self {
-            Self { pts: pts.to_vec(), keyframes: keyframes.to_vec(), cur: None, peeked: false, seeks: 0 }
+            let decode_times = keyframes.iter().map(|&k| pts[k]).collect::<Vec<_>>();
+            Self::with_decode_times(pts, keyframes, &decode_times)
+        }
+        fn with_decode_times(pts: &[f64], keyframes: &[usize], decode_times: &[f64]) -> Self {
+            Self {
+                pts: pts.to_vec(),
+                keyframes: keyframes.to_vec(),
+                key_decode_times: decode_times.to_vec(),
+                cur: None,
+                peeked: false,
+                seeks: 0,
+            }
         }
         fn frame(&self) -> *mut crate::ffi::AVFrame {
             match self.cur {
@@ -2556,8 +2582,8 @@ mod tests {
         unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
             self.seeks += 1;
             self.peeked = false;
-            let key = self.keyframes.iter().rev().find(|&&k| self.pts[k] <= seconds).copied();
-            self.cur = Some(key.unwrap_or(self.keyframes[0]));
+            let key = (0..self.keyframes.len()).rev().find(|&i| self.key_decode_times[i] <= seconds);
+            self.cur = Some(self.keyframes[key.unwrap_or(0)]);
             Ok(self.frame())
         }
         unsafe fn seek_to_or_last(&mut self, _seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
@@ -2605,6 +2631,21 @@ mod tests {
             seek_held(&mut take, 5.0).unwrap();
             assert_eq!(take.cur_time_sec(), 2.1, "past the end: the last frame");
         }
+    }
+
+    #[test]
+    fn a_keyframe_decoded_before_the_target_but_shown_after_it_is_backed_off() {
+        // x264 with B-frames: the keyframe that ends the still stretch (shown at 8.02 s) decodes
+        // at 6.97 s, inside the stretch, so a seek to 7.5 s lands on it first.
+        let mut pts: Vec<f64> = (0..419).map(|i| i as f64 / 60.0).collect();
+        let after = pts.len();
+        pts.extend((0..60).map(|i| 8.02 + i as f64 / 60.0));
+        let mut take = HeldTake::with_decode_times(&pts, &[0, 357, after], &[0.0, 5.92, 6.97]);
+        unsafe {
+            seek_held(&mut take, 7.5).unwrap();
+            assert!((take.cur_time_sec() - 418.0 / 60.0).abs() < 1e-9, "at {}", take.cur_time_sec());
+        }
+        assert_eq!(take.seeks, 2, "the keyframe past the target, then the one before it");
     }
 
     #[test]
