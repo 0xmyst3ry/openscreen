@@ -2,7 +2,14 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, sharedTexture, type WebFrameMain } from "electron";
+import {
+	app,
+	BrowserWindow,
+	screen,
+	sharedTexture,
+	type WebFrameMain,
+	webContents,
+} from "electron";
 import type { ShaderEffectCheck } from "../../../src/lib/ai-edition/shaderEffects";
 import {
 	type CursorKind,
@@ -231,6 +238,9 @@ export interface CompositorViewServiceOptions {
 	/** Whether Chromium composites on the GPU, where a shared texture is imported. Injectable
 	 *  for tests; defaults to `app.getGPUFeatureStatus()`. */
 	gpuCompositing?: () => boolean;
+	/** Refresh rate of the display the frame's window is on, `null` when unknown. Injectable for
+	 *  tests; defaults to Electron's `screen`. */
+	displayHz?: (target: WebFrameMain) => number | null;
 }
 
 /**
@@ -239,10 +249,27 @@ export interface CompositorViewServiceOptions {
  * has issued the draw into the canvas, not once the GPU has run it: the copy runs when the frame
  * carrying it is drawn, up to a vsync later. A slot written again before that copy put a later
  * frame on the canvas, then the one in between, so the picture and the cursor stepped back a frame
- * (tens of times in 18 s at 60 Hz, a few at 280 Hz). 40 ms is more than two vsyncs at 60 Hz; it
- * took the steps back to none at both rates, and the four slots still keep up with 60 fps.
+ * (tens of times in 18 s at 60 Hz, a few at 280 Hz). 40 ms took the steps back to none at both
+ * rates. On a slower display the copy can come later still: see `sharedSlotHoldMs`.
  */
 export const SHARED_SLOT_RELEASE_DELAY_MS = 40;
+
+/** How long to hold a released slot for a window on a `hz` display: two of its frames, never less
+ *  than `SHARED_SLOT_RELEASE_DELAY_MS` (67 ms at 30 Hz, 40 ms from 50 Hz up). */
+export function sharedSlotHoldMs(hz: number | null): number {
+	if (!hz || !Number.isFinite(hz) || hz <= 0) return SHARED_SLOT_RELEASE_DELAY_MS;
+	return Math.max(SHARED_SLOT_RELEASE_DELAY_MS, Math.ceil(2000 / hz));
+}
+
+function defaultDisplayHz(target: WebFrameMain): number | null {
+	try {
+		const contents = webContents.fromFrame(target);
+		const win = contents && BrowserWindow.fromWebContents(contents);
+		return win ? screen.getDisplayMatching(win.getBounds()).displayFrequency : null;
+	} catch {
+		return null;
+	}
+}
 
 /** The two calls a shared preview frame needs from Electron's `sharedTexture` module. */
 export type SharedTextureApi = Pick<
@@ -746,6 +773,7 @@ export class CompositorViewService {
 			sourceTimeSec: frame.sourceTimeSec,
 		};
 		const api = this.sharedTextureApi();
+		const holdMs = sharedSlotHoldMs((this.options.displayHz ?? defaultDisplayHz)(target));
 		let imported: Electron.SharedTextureImported | undefined;
 		try {
 			if (!api) {
@@ -760,10 +788,7 @@ export class CompositorViewService {
 				// Chromium is done with the texture in every process: after a grace period, the slot
 				// may be written again (SHARED_SLOT_RELEASE_DELAY_MS says why it waits).
 				allReferencesReleased: () => {
-					setTimeout(
-						() => addon.releaseSharedFrame?.(id, frame.slot, frame.gen),
-						SHARED_SLOT_RELEASE_DELAY_MS,
-					);
+					setTimeout(() => addon.releaseSharedFrame?.(id, frame.slot, frame.gen), holdMs);
 				},
 			});
 			await api.sendSharedTexture({ frame: target, importedSharedTexture: imported }, meta);
