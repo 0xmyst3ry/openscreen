@@ -3,6 +3,9 @@
 //! ```sh
 //! OPENSCREEN_LIVE_SOURCE=/path/source.mp4 cargo test -p openscreen-compositor --test held_frame_clock -- --nocapture
 //! ```
+//!
+//! The camera test also needs `OPENSCREEN_LIVE_WEBCAM`, a camera file with a frame between 1 s and
+//! 1.25 s (any constant-frame-rate recording). The source itself does not count as a camera.
 
 #![cfg(any(windows, target_os = "macos"))]
 
@@ -67,5 +70,46 @@ fn a_held_frame_follows_the_playback_clock() {
         assert!(player.recompose(&comp, &cfg).expect("recompose"));
         assert_eq!(comp.programme_time(), Some(at_pts), "recompose stays at the pts");
         assert_eq!(player.composed_time_sec(), held);
+    }
+}
+
+#[test]
+fn a_held_frame_advances_the_camera_to_the_clock() {
+    let (Ok(source), Ok(camera)) =
+        (std::env::var("OPENSCREEN_LIVE_SOURCE"), std::env::var("OPENSCREEN_LIVE_WEBCAM"))
+    else {
+        println!("SKIP: set OPENSCREEN_LIVE_SOURCE and OPENSCREEN_LIVE_WEBCAM (file header).");
+        return;
+    };
+    let gpu = Gpu::create(false).expect("device");
+    let mut cfg = config::all().pop().expect("at least one config");
+    cfg.zoom = false;
+    cfg.layout_anim = false;
+    let comp = Compositor::new_sized(&gpu, 480, 270).expect("compositor");
+    let scene = Scene::from_json(&scene_json(&source)).expect("valid scene");
+    comp.set_live_params(live_params_from_scene(&scene));
+    comp.set_scene(Some(scene.clone()));
+    comp.clear_cursor();
+
+    unsafe {
+        let mut player = Player::open(&source, &camera, &gpu).expect("open the source");
+        assert!(player.webcam_decoder_is_real(), "the camera file must open");
+        player.set_programme_clock(Some(&scene), 0);
+        assert!(player.present_frame(&comp, &cfg, 1.0).expect("seek"), "paused seek");
+        let held = player.screen_time_sec();
+        let camera_before = player.webcam_time_sec();
+
+        let clock = held + 0.25;
+        assert!(player.hold_at(&comp, &cfg, clock).expect("hold_at"));
+        assert_eq!(player.screen_time_sec(), held, "the screen frame must stay the held one");
+        let camera_after = player.webcam_time_sec();
+        assert!(
+            camera_after > camera_before,
+            "the camera stood still at {camera_before:.3} s through the hold"
+        );
+        assert!(
+            camera_after <= clock + 1e-6,
+            "camera at {camera_after:.3} s, ahead of the clock {clock:.3} s"
+        );
     }
 }
