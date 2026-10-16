@@ -233,6 +233,17 @@ export interface CompositorViewServiceOptions {
 	gpuCompositing?: () => boolean;
 }
 
+/**
+ * How long a shared frame's ring slot stays out of the render thread's reach after Chromium has
+ * let go of it. Chromium lets go when the renderer drops its references, which is as soon as it
+ * has issued the draw into the canvas, not once the GPU has run it: the copy runs when the frame
+ * carrying it is drawn, up to a vsync later. A slot written again before that copy put a later
+ * frame on the canvas, then the one in between, so the picture and the cursor stepped back a frame
+ * (tens of times in 18 s at 60 Hz, a few at 280 Hz). 40 ms is more than two vsyncs at 60 Hz; it
+ * took the steps back to none at both rates, and the four slots still keep up with 60 fps.
+ */
+export const SHARED_SLOT_RELEASE_DELAY_MS = 40;
+
 /** The two calls a shared preview frame needs from Electron's `sharedTexture` module. */
 export type SharedTextureApi = Pick<
 	Electron.SharedTexture,
@@ -746,8 +757,14 @@ export class CompositorViewService {
 					codedSize: { width: frame.width, height: frame.height },
 					handle: { ntHandle: frame.handle },
 				},
-				// Chromium is done with the texture in every process: the slot may be written again.
-				allReferencesReleased: () => addon.releaseSharedFrame?.(id, frame.slot, frame.gen),
+				// Chromium is done with the texture in every process: after a grace period, the slot
+				// may be written again (SHARED_SLOT_RELEASE_DELAY_MS says why it waits).
+				allReferencesReleased: () => {
+					setTimeout(
+						() => addon.releaseSharedFrame?.(id, frame.slot, frame.gen),
+						SHARED_SLOT_RELEASE_DELAY_MS,
+					);
+				},
 			});
 			await api.sendSharedTexture({ frame: target, importedSharedTexture: imported }, meta);
 			return { ...meta, shared: true };
