@@ -1,6 +1,6 @@
 // CLI export benchmark: wall time, output frames/fps, CPU seconds and peak memory of the process tree.
 // node export-bench.mjs <scratch> <reps>   — runs interleaved v200/main for each case.
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -36,9 +36,10 @@ const cases = [
 	},
 ];
 
+// Asynchronous, so the export's exit event is timed when it happens, not after a sample.
 const procsnap = (root) =>
-	JSON.parse(
-		execFileSync(
+	new Promise((resolve) =>
+		execFile(
 			"powershell",
 			[
 				"-NoProfile",
@@ -50,7 +51,8 @@ const procsnap = (root) =>
 				root,
 			],
 			{ encoding: "utf8" },
-		) || "[]",
+			(error, out) => resolve(error ? [] : JSON.parse(out || "[]")),
+		),
 	);
 
 const probe = (file) => {
@@ -105,9 +107,13 @@ async function runOne(ver, c, rep) {
 	p.stdout.on("data", (b) => (stdout += b));
 	const seen = new Map();
 	let done = false;
-	p.on("exit", () => (done = true));
+	let exitedAt = 0;
+	p.on("exit", () => {
+		exitedAt = performance.now();
+		done = true;
+	});
 	while (!done) {
-		for (const s of procsnap(app)) {
+		for (const s of await procsnap(app)) {
 			const prev = seen.get(s.pid);
 			seen.set(s.pid, {
 				role: s.role,
@@ -118,7 +124,7 @@ async function runOne(ver, c, rep) {
 		}
 		await new Promise((r) => setTimeout(r, 500));
 	}
-	const wallSec = (performance.now() - t0) / 1000;
+	const wallSec = (exitedAt - t0) / 1000;
 	const last = stdout
 		.trim()
 		.split("\n")

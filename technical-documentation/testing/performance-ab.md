@@ -182,6 +182,10 @@ of its own would skip most of it; trimming the dozen small costs above one by on
 |---|---|---|---|---|
 | Process start to HUD ready (ms) | 620 [595–678] | 651 [635–684] | +4.9% | under 5%, but significant |
 
+This is the first measure, taken with the editor sometimes behind other windows. The verdict uses
+the controlled rerun in [the bisection](#bisecting-the-startup-slowdown): 625 → 672 ms, +7.5%,
+p < 0.001.
+
 #### Recording, 60 s full screen with the webcam (3 takes each)
 
 | Metric | 2.0.0 | main | Delta | Verdict |
@@ -212,6 +216,10 @@ camera, a Logitech StreamCam, delivers 1080p at 30 fps under the default 2160p r
 | MP4 1080p 30 fps: frames written | n/a | 1800 [1800–1800] | n/a | n/a |
 | GIF 720p 15 fps: wall time (s) | 488.7 [484.3–493.0] | 16.2 [15.9–16.3] | -96.7% | improvement |
 | GIF 720p 15 fps: frames written | 900 [900–900] | 900 [900–900] | +0.0% | info |
+
+These wall times ran up to about 1.3 s long: the bench took a synchronous process sample
+(~0.8 s) and slept 500 ms before it noticed an export had ended. Both builds carry the same
+overshoot, so the comparison holds; `export-bench.mjs` now times the exit event itself.
 
 2.0.0 exports MP4 at 60 fps only (its CLI has no `--fps`, its dialog no frame rate), so 1080p30 has
 no baseline. Both builds write the same frames at nearly the same size (MP4 144.9 MB each, GIF 475.2

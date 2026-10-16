@@ -13,6 +13,8 @@ public static class Win {
 	[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 	[DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
 	[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+	[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+	[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
 }
 "@
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId
@@ -27,6 +29,8 @@ $done = 0
 	$p = 0
 	[void][Win]::GetWindowThreadProcessId($h, [ref]$p)
 	if ($pids.ContainsKey([int]$p) -and [Win]::IsWindowVisible($h) -and [Win]::GetWindowTextLength($h) -gt 0) {
+		# A minimized window measures nothing: bring it back maximized first (SW_MAXIMIZE).
+		if ([Win]::IsIconic($h)) { [void][Win]::ShowWindow($h, 3) }
 		# HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
 		[void][Win]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0013)
 		$script:done++

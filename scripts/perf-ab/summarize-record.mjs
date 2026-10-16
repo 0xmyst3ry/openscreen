@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 const dir = process.argv[2];
-const q = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+// The same median as summarize-gui.mjs and doc-tables.mjs: the two middle values averaged.
+const q = (a) => {
+	const s = [...a].sort((x, y) => x - y);
+	const h = s.length >> 1;
+	return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+};
 const rows = {};
 for (const f of fs.readdirSync(dir).filter((f) => /^record-.*-r\d+\.json$/.test(f))) {
 	const r = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));

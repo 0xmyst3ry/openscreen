@@ -75,6 +75,8 @@ try {
 		}
 		if (!ready) await sleep(5);
 	}
+	// A timeout is not a startup: write no profile the analysis would take for one.
+	if (!ready) throw new Error("the HUD never became ready");
 	const nav = (
 		await browser.send(
 			"Runtime.evaluate",
@@ -94,11 +96,14 @@ try {
 	console.log(
 		JSON.stringify({ tag, ready, dcl: Math.round(JSON.parse(nav).domContentLoadedEventEnd) }),
 	);
+} catch (e) {
+	console.error(e);
+	process.exitCode = 1;
 } finally {
 	try {
 		execFileSync("taskkill", ["/T", "/F", "/PID", String(app.pid)], { stdio: "ignore" });
 	} catch {
 		// already gone
 	}
-	process.exit(0);
+	process.exit();
 }
