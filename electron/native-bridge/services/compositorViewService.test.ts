@@ -10,6 +10,7 @@ import {
 	CompositorViewService,
 	ffmpegSharedBinCandidates,
 	resolveSceneAssetPaths,
+	SHARED_SLOT_RELEASE_DELAY_MS,
 } from "./compositorViewService";
 
 describe("native GIF cancellation capability", () => {
@@ -185,13 +186,22 @@ describe("CompositorViewService frames handed over as shared GPU textures", () =
 		expect(addon.releaseSharedFrame).not.toHaveBeenCalled();
 	});
 
-	it("hands the slot back once Chromium has let go of the texture everywhere", async () => {
-		const { addon, id, releaseEverywhere, service } = setup();
-		await service.readFrame(id, 0, target);
+	it("hands the slot back a while after Chromium has let go of the texture everywhere", async () => {
+		vi.useFakeTimers();
+		try {
+			const { addon, id, releaseEverywhere, service } = setup();
+			await service.readFrame(id, 0, target);
 
-		releaseEverywhere();
+			releaseEverywhere();
+			// Not at once: the GPU copy into the canvas may still be queued behind the release.
+			vi.advanceTimersByTime(SHARED_SLOT_RELEASE_DELAY_MS - 1);
+			expect(addon.releaseSharedFrame).not.toHaveBeenCalled();
 
-		expect(addon.releaseSharedFrame).toHaveBeenCalledWith(id, 1, 3);
+			vi.advanceTimersByTime(1);
+			expect(addon.releaseSharedFrame).toHaveBeenCalledWith(id, 1, 3);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("goes back to read-back when a delivery fails", async () => {
