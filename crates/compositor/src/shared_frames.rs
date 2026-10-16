@@ -298,8 +298,9 @@ mod tests {
             book.publish(frame(u64::from(slot) + 1, slot));
             book.take(u64::from(slot), now);
         }
-        book.publish(frame(9, 3));
-        assert_eq!(book.claim(RING_SLOTS), Some(3));
+        let last = RING_SLOTS - 1;
+        book.publish(frame(u64::from(RING_SLOTS) + 1, last));
+        assert_eq!(book.claim(RING_SLOTS), Some(last));
         // Retirée : la livrer maintenant, pendant qu'on la réécrit, donnerait une image déchirée.
         assert_eq!(book.take(0, now), None);
     }
