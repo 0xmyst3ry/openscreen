@@ -578,50 +578,13 @@ impl Player {
             return Ok(false);
         }
 
-        let target_webcam_t = (self.sdec.cur_time_sec() - self.webcam_offset_sec).max(0.0);
         let wf = if !self.webcam_decoder_is_real {
             // Pas de caméra : le remplaçant n'est pas décodé (cf. `open_webcam_or_stand_in`).
             sf
         } else if use_current {
             self.wdec.cur_frame()
         } else {
-            let cur = self.wdec.cur_frame();
-            if cur.is_null() {
-                // Jamais décodée (nouvelle ouverture) : on saute directement au temps synchronisé.
-                self.wdec.seek_to(target_webcam_t)?
-            } else {
-                // Rattrape la webcam vers `target_webcam_t` par pts réel, jamais au-delà —
-                // même sémantique de hold que l'écran ci-dessus (et que `advance_decoder_to`) :
-                // adopter une frame webcam dont le pts dépasse `target_webcam_t` l'afficherait
-                // en avance sur son heure. Le garde-fou ne joue que contre un cas pathologique.
-                //
-                // BUG corrigé : à son EOF la webcam était reseekée à 0 alors que
-                // `target_webcam_t` continue de croître avec le temps écran. Au tick
-                // suivant, le rattrapage repartait donc de 0 et réavalait le fichier
-                // entier vers une cible toujours aussi lointaine — 1000 frames par tick
-                // (le plafond du garde-fou), en boucle, pour l'éternité. Un décodage
-                // permanent à fond, pour afficher une webcam qui n'a plus rien à montrer.
-                // Une fois l'EOF traité comme un hold, la décision webcam est EXACTEMENT
-                // celle de l'écran à l'export : `frame_step` couvre les quatre cas sans
-                // rien de spécifique, et ses tests couvrent donc aussi ce chemin.
-                let mut wf = cur;
-                let mut guard = 0u32;
-                loop {
-                    match frame_step(self.wdec.peek_next_time_sec()?, 0.0, target_webcam_t) {
-                        FrameStep::Commit => wf = self.wdec.commit_peek()?,
-                        FrameStep::CommitAndStop => {
-                            wf = self.wdec.commit_peek()?;
-                            break;
-                        }
-                        FrameStep::Hold => break,
-                    }
-                    guard += 1;
-                    if guard > 1000 {
-                        break;
-                    }
-                }
-                wf
-            }
+            self.advance_webcam_to(self.sdec.cur_time_sec())?
         };
         if wf.is_null() {
             self.has_current_frame = false;
@@ -633,6 +596,59 @@ impl Player {
         comp.compose_frame(sf, wf, self.idx as f32, cfg)?;
         self.idx = self.idx.wrapping_add(1);
         Ok(true)
+    }
+
+    /// Avance la vraie caméra jusqu'au temps écran `screen_source_time_sec` (décalage compris)
+    /// et rend sa frame courante.
+    unsafe fn advance_webcam_to(&mut self, screen_source_time_sec: f64) -> Result<*mut crate::ffi::AVFrame> {
+        let target_webcam_t = webcam_seek_time(screen_source_time_sec, self.webcam_offset_sec);
+        let cur = self.wdec.cur_frame();
+        if cur.is_null() {
+            // Jamais décodée (nouvelle ouverture) : on saute directement au temps synchronisé.
+            return self.wdec.seek_to(target_webcam_t);
+        }
+        // Rattrape la webcam vers `target_webcam_t` par pts réel, jamais au-delà —
+        // même sémantique de hold que l'écran dans `step` (et que `advance_decoder_to`) :
+        // adopter une frame webcam dont le pts dépasse `target_webcam_t` l'afficherait
+        // en avance sur son heure. Le garde-fou ne joue que contre un cas pathologique.
+        //
+        // BUG corrigé : à son EOF la webcam était reseekée à 0 alors que
+        // `target_webcam_t` continue de croître avec le temps écran. Au tick
+        // suivant, le rattrapage repartait donc de 0 et réavalait le fichier
+        // entier vers une cible toujours aussi lointaine — 1000 frames par tick
+        // (le plafond du garde-fou), en boucle, pour l'éternité. Un décodage
+        // permanent à fond, pour afficher une webcam qui n'a plus rien à montrer.
+        // Une fois l'EOF traité comme un hold, la décision webcam est EXACTEMENT
+        // celle de l'écran à l'export : `frame_step` couvre les quatre cas sans
+        // rien de spécifique, et ses tests couvrent donc aussi ce chemin.
+        let mut wf = cur;
+        let mut guard = 0u32;
+        loop {
+            match frame_step(self.wdec.peek_next_time_sec()?, 0.0, target_webcam_t) {
+                FrameStep::Commit => wf = self.wdec.commit_peek()?,
+                FrameStep::CommitAndStop => {
+                    wf = self.wdec.commit_peek()?;
+                    break;
+                }
+                FrameStep::Hold => break,
+            }
+            guard += 1;
+            if guard > 1000 {
+                break;
+            }
+        }
+        Ok(wf)
+    }
+
+    /// `recompose_at` for a held screen frame during playback: the camera is advanced to
+    /// `clock_sec` first. Otherwise it stood still through the hold and decoded the whole
+    /// stretch at once on the next screen frame, a 50–90 ms stall after every long hold.
+    pub unsafe fn hold_at(&mut self, comp: &Compositor, cfg: &Cfg, clock_sec: f64) -> Result<bool> {
+        // A frame placed by a seek or a clip switch is composed as is by the next `step`.
+        if self.has_current_frame && self.webcam_decoder_is_real && !self.use_current_on_next_step {
+            self.advance_webcam_to(clock_sec)?;
+        }
+        self.recompose_at(comp, cfg, clock_sec)
     }
 
     /// Positionne `comp` sur le temps source RÉEL (pts) de la frame écran courante, pour que le
@@ -1980,7 +1996,7 @@ unsafe fn render_thread(
                 let clock_sec = hold_clock_sec(player.screen_time_sec(), acc, clip_end_sec);
                 if should_recompose_hold(now, last_play_compose, clock_sec, player.composed_time_sec())
                 {
-                    if let Ok(true) = player.recompose_at(&comp, &cfg, clock_sec) {
+                    if let Ok(true) = player.hold_at(&comp, &cfg, clock_sec) {
                         stepped = true;
                     }
                 }
