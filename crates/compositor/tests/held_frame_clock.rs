@@ -11,7 +11,9 @@
 //! that reproduces the B-frame keyframe trap, made with an ffmpeg that has libx264:
 //!
 //! ```sh
-//! ffmpeg -f lavfi -i "testsrc2=size=1280x720:rate=60:duration=14" //!   -vf "select='lt(t\,7)+gte(t\,8.02)'" -fps_mode vfr -c:v libx264 //!   -force_key_frames "0,5.95,8.02" -pix_fmt yuv420p held-x264.mp4
+//! ffmpeg -f lavfi -i "testsrc2=size=1280x720:rate=60:duration=14" \
+//!   -vf "select='lt(t\,7)+gte(t\,8.02)'" -fps_mode vfr -c:v libx264 \
+//!   -force_key_frames "0,5.95,8.02" -pix_fmt yuv420p held-x264.mp4
 //! OPENSCREEN_LIVE_HELD_SOURCE=held-x264.mp4 OPENSCREEN_LIVE_HELD_AT=7.5 cargo test ...
 //! ```
 
