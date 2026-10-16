@@ -148,7 +148,12 @@ try {
 			{ encoding: "utf8" },
 		).trim(),
 	);
+	// Unpinned, another window may cover the editor and the capture would film that window.
+	if (a.capture && !result.topmostWindows)
+		throw new Error("no editor window could be pinned on top");
 	await sleep(3000);
+	// A window Windows minimized sits at -32000: wait for topmost.ps1's restore to land.
+	for (let i = 0; i < 20 && (await ed.evaluate("screenX <= -30000")); i++) await sleep(250);
 
 	result.videos = await ed.evaluate(
 		"[...document.querySelectorAll('video')].map(v => ({paused: v.paused, t: v.currentTime, d: v.duration, w: v.videoWidth}))",

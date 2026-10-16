@@ -21,6 +21,12 @@ const DUR = 60;
 const screen = path.join(mediaDir, "screen.mp4");
 const webcam = path.join(mediaDir, "webcam.mp4");
 const music = path.join(mediaDir, "music.mp3");
+// All three before writing anything: a heavy project whose camera track points at nothing would
+// benchmark something else than PiP.
+for (const file of [screen, webcam, music]) {
+	if (!fs.existsSync(file))
+		throw new Error(`missing ${file}: generate the media first (see above)`);
+}
 const now = "2026-10-15T15:00:00.000Z";
 
 // Cursor: horizontal triangle sweep 0.15 -> 0.85 -> 0.15, 4 s period, y fixed, sampled every 8 ms.

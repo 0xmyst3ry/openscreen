@@ -55,15 +55,19 @@ try {
 		await waitTarget(port, (ts) => ts.find((t) => t.url.includes("hud-overlay")), 60000, 5),
 	);
 	const hudTargetAt = Date.now() - t0;
-	for (let i = 0; i < 2000; i++) {
+	let ready = false;
+	for (let i = 0; i < 2000 && !ready; i++) {
 		try {
-			if (await hud.evaluate(`!!document.querySelector('[data-testid="launch-record-button"]')`))
-				break;
+			ready = await hud.evaluate(
+				`!!document.querySelector('[data-testid="launch-record-button"]')`,
+			);
 		} catch {
 			// document not there yet
 		}
-		await sleep(5);
+		if (!ready) await sleep(5);
 	}
+	// A timeout is not a startup time: write nothing the analysis would take for one.
+	if (!ready) throw new Error("the HUD never became ready");
 	const hudReadyAt = Date.now() - t0;
 	await sleep(300);
 	const { profile } = await main.send("Profiler.stop");
@@ -73,7 +77,10 @@ try {
 		JSON.stringify({ tag, ver: a.ver, hudTargetAt, hudReadyAt }),
 	);
 	console.log(JSON.stringify({ tag, hudTargetAt, hudReadyAt }));
+} catch (e) {
+	console.error(e);
+	process.exitCode = 1;
 } finally {
 	kill();
-	process.exit(0);
+	process.exit();
 }
