@@ -57,6 +57,12 @@ fn webcam_seek_time(screen_source_time_sec: f64, webcam_offset_sec: f64) -> f64 
     (screen_source_time_sec - webcam_offset_sec).max(0.0)
 }
 
+/// The playback accumulator that puts the clock at `t` on a frame just positioned there. The
+/// clock is the frame's pts plus `acc`, and a held frame's pts can be seconds before `t`.
+fn anchor_acc(t: f64, pts: f64) -> f64 {
+    (t - pts).max(0.0)
+}
+
 /// Décodeurs déjà ouverts ET positionnés au bon playhead pour un clip à venir — le résultat
 /// d'un préchargement en tâche de fond (voir `open_and_seek_clip`/`maybe_start_prefetch`
 /// dans `render_thread`). Appliquer ceci à un `Player` (`apply_prefetched`) ne fait plus
@@ -592,7 +598,13 @@ impl Player {
         }
 
         self.has_current_frame = true;
-        self.sync_time(comp);
+        if use_current {
+            // A frame just positioned by a seek or a clip switch can be a held one, seconds
+            // before the playhead: compose it at the clock, which the caller anchored there.
+            self.sync_time_at(comp, target_source_time.max(self.sdec.cur_time_sec()));
+        } else {
+            self.sync_time(comp);
+        }
         comp.compose_frame(sf, wf, self.idx as f32, cfg)?;
         self.idx = self.idx.wrapping_add(1);
         Ok(true)
@@ -715,7 +727,9 @@ impl Player {
         }
         self.has_current_frame = true;
         self.use_current_on_next_step = false;
-        self.sync_time(comp);
+        // At `target_sec`, not at the held frame's pts: the cursor and zooms show where the
+        // playhead is, and the published position matches the app's.
+        self.sync_time_at(comp, target_sec.max(self.sdec.cur_time_sec()));
         // "idx" ne sert plus qu'au fallback fixture (jamais lu si une scène est posée) — dérivé
         // du temps réel pour rester cohérent si jamais consulté.
         self.idx = (target_sec * self.sdec.fps()).round().max(0.0) as u32;
@@ -1418,6 +1432,9 @@ unsafe fn maybe_start_prefetch(
 /// bascule est instantanée (juste un échange de champs, `Player::apply_prefetched`) ; sinon
 /// on retombe sur l'ouverture synchrone habituelle (`Player::set_active_clip`) — correct dans
 /// tous les cas, juste plus lent quand le préchargement n'a pas eu le temps de finir.
+///
+/// Returns the source time the next clip starts at when the switch happened, for the caller to
+/// anchor its clock there (`anchor_acc`): the clip can start inside a still stretch.
 #[allow(clippy::too_many_arguments)]
 unsafe fn advance_to_next_scene_clip(
     player: &mut Player,
@@ -1431,9 +1448,9 @@ unsafe fn advance_to_next_scene_clip(
     raw_cursor: &mut Option<CursorTrack>,
     loaded_cursor_path: &mut String,
     last_smoothing: &mut f32,
-) {
+) -> Option<f64> {
     let Some(next_index) = next_clip_index(scene, *active_clip_index) else {
-        return;
+        return None;
     };
     let next_clip = &scene.clips[next_index];
 
@@ -1505,8 +1522,12 @@ unsafe fn advance_to_next_scene_clip(
                 None => comp.clear_cursor(),
             }
             *last_smoothing = -1.0;
+            Some(next_clip.source_start_sec)
         }
-        Err(e) => eprintln!("[live] auto-advance clip: {e:#}"),
+        Err(e) => {
+            eprintln!("[live] auto-advance clip: {e:#}");
+            None
+        }
     }
 }
 
@@ -1666,6 +1687,8 @@ unsafe fn render_thread(
             };
             match switch_result {
                 Ok(()) => {
+                    // The app's re-anchor names the playhead: the clock restarts there.
+                    acc = anchor_acc(request.source_time_sec, player.screen_time_sec());
                     // Condition sur `repositioned`, pas sur `same_media` : un repositionnement
                     // qui a échoué est retombé sur l'ouverture complète, donc des décodeurs
                     // ONT été fermés et le cache doit être vidé malgré des médias identiques.
@@ -1861,7 +1884,9 @@ unsafe fn render_thread(
                 // affiché jusqu'à ce qu'une autre action provoque un compose.
                 (settle_until, last_settle) = open_settle_window(now);
             }
-            acc = 0.0; // resynchronise l'accumulateur de lecture libre après un seek
+            // Resynchronise l'accumulateur de lecture libre après un seek : l'horloge repart du
+            // temps demandé, pas du pts de la frame tenue (`anchor_acc`).
+            acc = anchor_acc(target, player.screen_time_sec());
         } else if shared.playing.load(Ordering::Relaxed) {
             // BUG corrigé : la lecture libre décodait auparavant exactement 1 frame RÉELLE par
             // tranche de 1/60s de temps réel écoulé, quelle que soit la densité effective de
@@ -1928,7 +1953,7 @@ unsafe fn render_thread(
                             break;
                         }
                         if player.screen_time_sec() >= clip.source_end_sec {
-                            advance_to_next_scene_clip(
+                            if let Some(start) = advance_to_next_scene_clip(
                                 &mut player,
                                 &comp,
                                 scene,
@@ -1940,7 +1965,9 @@ unsafe fn render_thread(
                                 &mut raw_cursor,
                                 &mut loaded_cursor_path,
                                 &mut last_smoothing,
-                            );
+                            ) {
+                                acc = anchor_acc(start, player.screen_time_sec());
+                            }
                         }
                     }
                 }
@@ -1954,9 +1981,10 @@ unsafe fn render_thread(
                 // finit alors par boucler tout seul sur l'EOF réel (temps qui recule
                 // brutalement). On détecte ce recul et on corrige immédiatement en enchaînant
                 // sur le clip suivant, plutôt que de rester bloqué sur le 1er clip.
+                let mut crossed_anchor = None;
                 if let (Some(scene), Some(t_before)) = (&full_scene, screen_time_before_step) {
                     if player.screen_time_sec() < t_before {
-                        advance_to_next_scene_clip(
+                        crossed_anchor = advance_to_next_scene_clip(
                             &mut player,
                             &comp,
                             scene,
@@ -1968,8 +1996,12 @@ unsafe fn render_thread(
                             &mut raw_cursor,
                             &mut loaded_cursor_path,
                             &mut last_smoothing,
-                        );
+                        )
+                        .map(|start| anchor_acc(start, player.screen_time_sec()));
                     }
+                }
+                if let Some(anchored) = crossed_anchor {
+                    acc = anchored;
                 }
                 if !committed {
                     // Rien n'est dû pour l'instant (hold) : `acc` reste tel quel — il continue
@@ -1978,7 +2010,8 @@ unsafe fn render_thread(
                 }
                 stepped = true;
                 let after = player.screen_time_sec();
-                acc = consume_acc(acc, before, after);
+                // A switch just anchored the clock on the new clip: nothing of the old one to consume.
+                acc = crossed_anchor.unwrap_or_else(|| consume_acc(acc, before, after));
                 n += 1;
                 if n >= max_steps {
                     // Rattrapage plafonné : le contenu dû est plus dense que ce qu'on peut décoder
@@ -2407,6 +2440,13 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_clock_restarts_at_the_requested_time_on_a_held_frame() {
+        // Before: the clock restarted at the held frame's pts, 0.9 s behind the playhead.
+        assert_eq!(hold_clock_sec(0.1, anchor_acc(1.0, 0.1), Some(5.0)), 1.0);
+        assert_eq!(anchor_acc(1.0, 1.02), 0.0, "never behind the frame's own pts");
+    }
 
     fn multiclip_scene() -> Scene {
         Scene::from_json(r##"{

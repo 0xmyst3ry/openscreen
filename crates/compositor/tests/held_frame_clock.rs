@@ -55,6 +55,7 @@ fn a_held_frame_follows_the_playback_clock() {
         assert!(player.present_frame(&comp, &cfg, 1.0).expect("seek"), "paused seek");
         let held = player.screen_time_sec();
         let at_pts = player.programme_time().expect("programme clock");
+        assert_eq!(player.composed_time_sec(), 1.0f64.max(held), "a seek reports the playhead");
 
         comp.set_programme_time(None);
         assert!(player.recompose_at(&comp, &cfg, held + 0.25).expect("recompose_at"));
