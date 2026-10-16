@@ -636,6 +636,18 @@ export function ChatStripPanel() {
 				nativeBridgeClient.aiEdition.chatRun(projectId, sessionId, text, documentSnapshot),
 			);
 			setMessages((prev) => adoptStoredUserMessage(prev, optimisticUserId, result));
+			// A rewind confirmation opened during the turn names the message too. Stored without a
+			// checkpoint, the message has nothing to rewind to and the confirmation closes.
+			const storedId = result.userMessageId;
+			if (storedId) {
+				setRewindFor((open) =>
+					open?.messageId !== optimisticUserId
+						? open
+						: result.userMessageCheckpointId
+							? { ...open, messageId: storedId }
+							: null,
+				);
+			}
 			const assistant = result.assistantMessage;
 			if (result.success && assistant) {
 				if (result.document) {
