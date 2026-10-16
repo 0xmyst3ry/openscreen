@@ -67,10 +67,19 @@ fn a_held_frame_follows_the_playback_clock() {
             "programme time {advanced} instead of {at_pts} + 0.25 s"
         );
 
+        // Paused there, a param change or a settle pass recomposes: the frame keeps the time it
+        // was shown at. At the pts, the cursor and the published position went back.
         comp.set_programme_time(None);
         assert!(player.recompose(&comp, &cfg).expect("recompose"));
-        assert_eq!(comp.programme_time(), Some(at_pts), "recompose stays at the pts");
-        assert_eq!(player.composed_time_sec(), held);
+        assert_eq!(comp.programme_time(), Some(advanced), "recompose keeps the time it was composed at");
+        assert_eq!(player.composed_time_sec(), held + 0.25);
+
+        // A re-anchor positions the decoders without composing: the next recompose is at the
+        // anchored playhead, never at the time the frame before it was composed at.
+        assert!(player.seek_active(0.5).expect("seek_active"), "re-anchor");
+        player.anchor_at(0.5);
+        assert!(player.recompose(&comp, &cfg).expect("recompose"));
+        assert_eq!(player.composed_time_sec(), 0.5f64.max(player.screen_time_sec()));
     }
 }
 

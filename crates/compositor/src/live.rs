@@ -397,6 +397,8 @@ impl Player {
         self.idx = (source_time_sec * self.sdec.fps()).round().max(0.0) as u32;
         self.has_current_frame = true;
         self.use_current_on_next_step = true;
+        // Not composed yet: a `recompose` before the next frame must not reuse the old time.
+        self.composed_time_sec.set(self.sdec.cur_time_sec());
         Ok(true)
     }
 
@@ -430,6 +432,8 @@ impl Player {
         self.idx = incoming.idx;
         self.has_current_frame = true;
         self.use_current_on_next_step = true;
+        // Not composed yet: a `recompose` before the next frame must not reuse the old clip's time.
+        self.composed_time_sec.set(self.sdec.cur_time_sec());
         outgoing
     }
 
@@ -682,8 +686,20 @@ impl Player {
     }
 
     /// Recompose la frame courante (déjà décodée) — rafraîchit après un changement de param.
+    /// At the time it was last composed at, not at its pts: a held frame placed by a seek on
+    /// Linux, or held when playback paused, is shown at the playhead, and a settle pass or a
+    /// param change sent the cursor and the published position back to the pts.
     pub unsafe fn recompose(&self, comp: &Compositor, cfg: &Cfg) -> Result<bool> {
-        self.recompose_at(comp, cfg, self.sdec.cur_time_sec())
+        self.recompose_at(comp, cfg, self.composed_time_sec.get())
+    }
+
+    /// Anchors the playhead at `t` on a frame positioned but not composed yet (a re-anchor or
+    /// a clip change from the app): a `recompose` composes it there, and the returned
+    /// accumulator puts the playback clock there (`anchor_acc`).
+    pub unsafe fn anchor_at(&self, t: f64) -> f64 {
+        let pts = self.sdec.cur_time_sec();
+        self.composed_time_sec.set(t.max(pts));
+        anchor_acc(t, pts)
     }
 
     /// Recomposes the current frame with the cursor, zooms and programme time at `clock_sec`
@@ -1687,8 +1703,9 @@ unsafe fn render_thread(
             };
             match switch_result {
                 Ok(()) => {
-                    // The app's re-anchor names the playhead: the clock restarts there.
-                    acc = anchor_acc(request.source_time_sec, player.screen_time_sec());
+                    // The app's re-anchor names the playhead: the clock restarts there, and a
+                    // paused recompose (the `clip_changed` branch below) composes there.
+                    acc = player.anchor_at(request.source_time_sec);
                     // Condition sur `repositioned`, pas sur `same_media` : un repositionnement
                     // qui a échoué est retombé sur l'ouverture complète, donc des décodeurs
                     // ONT été fermés et le cache doit être vidé malgré des médias identiques.
