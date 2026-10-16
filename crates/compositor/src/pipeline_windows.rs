@@ -996,6 +996,21 @@ impl Decoder {
         }
     }
 
+    /// The keyframe seek alone: positions the decoder on the first frame decoded from the keyframe
+    /// at or before `seconds`, for the caller to walk forward with `peek_next_time_sec` /
+    /// `commit_peek`. `live::seek_held` lands on the frame on screen at `seconds` that way, in the
+    /// same single pass `seek_to` makes, where `seek_to` stops on the first frame at or after it.
+    pub(crate) unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut AVFrame> {
+        self.has_peek = false;
+        let tb_sec = self.tb_sec();
+        let target = if tb_sec > 0.0 { (seconds / tb_sec) as i64 } else { 0 };
+        averr(av_seek_frame(self.fmt, self.vidx, target, AVSEEK_FLAG_BACKWARD), "seek_keyframe_before")?;
+        avcodec_flush_buffers(self.dctx);
+        self.cur_pts = None;
+        self.sent_eof = false;
+        self.next()
+    }
+
     /// `seek_to`, mais une cible au-delà de la dernière image se pose sur cette dernière image au
     /// lieu de ne rien rendre. L'audio d'un enregistrement dure souvent un peu plus que sa vidéo
     /// (de 12 ms à près d'une demi-seconde mesurés) : son clip finit alors après la dernière

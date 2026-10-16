@@ -59,6 +59,7 @@ fn webcam_seek_time(screen_source_time_sec: f64, webcam_offset_sec: f64) -> f64 
 
 /// What `seek_held` needs from a decoder: a trait only so the search runs in tests without a GPU.
 trait HeldSeek {
+    unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame>;
     unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame>;
     unsafe fn cur_frame(&self) -> *mut crate::ffi::AVFrame;
     unsafe fn cur_time_sec(&self) -> f64;
@@ -68,6 +69,9 @@ trait HeldSeek {
 }
 
 impl HeldSeek for Decoder {
+    unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+        Decoder::seek_keyframe_before(self, seconds)
+    }
     unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
         Decoder::seek_to_or_last(self, seconds)
     }
@@ -88,43 +92,49 @@ impl HeldSeek for Decoder {
     }
 }
 
+/// How far ahead of the current frame `seek_held` walks frame by frame instead of seeking: the
+/// decoders' own forward window (`pipeline_windows::SEEK_FORWARD_MAX_SEC`).
+const HELD_WALK_MAX_SEC: f64 = 0.5;
+
 /// Positions the screen decoder on the frame on screen at `t`: the last one whose pts is at
 /// or before it. ScreenCaptureKit and PipeWire write a frame only when the screen changes, so a
 /// still stretch is one frame held for seconds. `seek_to` lands on the first frame at or after
 /// `t`, which inside such a stretch is the frame that ENDS it: the preview showed the change
-/// early, its clock ran ahead of the app's playhead, and the drift watch re-anchored it every
-/// 600 ms for the rest of the playback (1–2 updates/s). A constant-rate take lands within half
-/// a frame of `t` and keeps its single seek.
+/// early, its clock ran ahead of the app's playhead, and the drift watch re-anchored it.
+///
+/// It costs what `seek_to` costs: from the current frame when `t` is just ahead of it, otherwise
+/// one keyframe seek and a walk forward that stops one frame before `seek_to` would.
 unsafe fn seek_held<D: HeldSeek>(dec: &mut D, t: f64) -> Result<*mut crate::ffi::AVFrame> {
     let tol = 0.5 / dec.fps().max(1.0);
     let due = |time: f64| time <= t + tol;
-    // Already on it, the common case of a re-anchor or a scrub inside a still stretch: no seek.
+    // A scrub step, a re-anchor, or a seek inside the still stretch on screen, which decodes
+    // nothing at all.
     if !dec.cur_frame().is_null() && due(dec.cur_time_sec()) {
         match dec.peek_next_time_sec()? {
             NextFrameTime::At(next) if !due(next) => return Ok(dec.cur_frame()),
             NextFrameTime::Eof => return Ok(dec.cur_frame()),
             _ => {}
         }
-    }
-    let mut frame = dec.seek_to_or_last(t)?;
-    if frame.is_null() || due(dec.cur_time_sec()) {
-        return Ok(frame);
-    }
-    // Landed on the frame that ends a still stretch covering `t`: back off until a seek lands at
-    // or before `t`, then walk forward to the last due frame.
-    let mut back = 1.0;
-    loop {
-        let from = (t - back).max(0.0);
-        frame = dec.seek_to_or_last(from)?;
-        if frame.is_null() || due(dec.cur_time_sec()) || from == 0.0 {
-            break;
+        // Close enough to decode forward from here, as `seek_to` itself does: further ahead, a
+        // keyframe seek decodes less.
+        if t - dec.cur_time_sec() <= HELD_WALK_MAX_SEC {
+            loop {
+                match dec.peek_next_time_sec()? {
+                    NextFrameTime::At(next) if due(next) => {
+                        dec.commit_peek()?;
+                    }
+                    NextFrameTime::Unknown => break,
+                    _ => return Ok(dec.cur_frame()),
+                }
+            }
         }
-        back *= 2.0;
     }
+    let mut frame = dec.seek_keyframe_before(t)?;
     if frame.is_null() {
-        return Ok(frame);
+        // Nothing decodable from there: keep `seek_to_or_last`'s answer, last frame included.
+        return dec.seek_to_or_last(t);
     }
-    // ponytail: capped like `advance_webcam_to`; a still stretch holds few frames.
+    // ponytail: capped like `advance_webcam_to`; a GOP holds a few hundred frames at most.
     for _ in 0..10_000 {
         match dec.peek_next_time_sec()? {
             NextFrameTime::At(next) if due(next) => frame = dec.commit_peek()?,
@@ -2518,10 +2528,10 @@ mod tests {
 
     use super::*;
 
-    /// A decoder over a list of pts with `pipeline_windows::Decoder`'s seek: the first frame at
-    /// or after the target (half a tick early still counts), or the last one. Counts its seeks.
+    /// A decoder over a list of pts and keyframe positions. Counts its keyframe seeks.
     struct HeldTake {
         pts: Vec<f64>,
+        keyframes: Vec<usize>,
         cur: Option<usize>,
         peeked: bool,
         seeks: usize,
@@ -2529,7 +2539,10 @@ mod tests {
 
     impl HeldTake {
         fn new(pts: &[f64]) -> Self {
-            Self { pts: pts.to_vec(), cur: None, peeked: false, seeks: 0 }
+            Self::with_keyframes(pts, &[0])
+        }
+        fn with_keyframes(pts: &[f64], keyframes: &[usize]) -> Self {
+            Self { pts: pts.to_vec(), keyframes: keyframes.to_vec(), cur: None, peeked: false, seeks: 0 }
         }
         fn frame(&self) -> *mut crate::ffi::AVFrame {
             match self.cur {
@@ -2540,12 +2553,15 @@ mod tests {
     }
 
     impl HeldSeek for HeldTake {
-        unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+        unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
             self.seeks += 1;
             self.peeked = false;
-            let first = self.pts.iter().position(|&p| p >= seconds - 1e-4);
-            self.cur = first.or(Some(self.pts.len() - 1));
+            let key = self.keyframes.iter().rev().find(|&&k| self.pts[k] <= seconds).copied();
+            self.cur = Some(key.unwrap_or(self.keyframes[0]));
             Ok(self.frame())
+        }
+        unsafe fn seek_to_or_last(&mut self, _seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+            unreachable!("only when a keyframe seek decodes nothing");
         }
         unsafe fn cur_frame(&self) -> *mut crate::ffi::AVFrame {
             self.frame()
@@ -2574,12 +2590,18 @@ mod tests {
         }
     }
 
+    fn constant_rate() -> HeldTake {
+        let pts: Vec<f64> = (0..300).map(|i| i as f64 / 30.0).collect();
+        HeldTake::with_keyframes(&pts, &[0, 60, 120, 180, 240])
+    }
+
     #[test]
     fn a_seek_inside_a_still_stretch_lands_on_the_held_frame() {
         let mut take = HeldTake::new(&[0.0, 0.1, 2.0, 2.1]);
         unsafe {
             seek_held(&mut take, 1.0).unwrap();
             assert_eq!(take.cur_time_sec(), 0.1, "the frame on screen at 1.0 s, not the one at 2.0 s");
+            assert_eq!(take.seeks, 1, "one keyframe seek, as `seek_to` makes");
             seek_held(&mut take, 5.0).unwrap();
             assert_eq!(take.cur_time_sec(), 2.1, "past the end: the last frame");
         }
@@ -2595,12 +2617,13 @@ mod tests {
     }
 
     #[test]
-    fn a_seek_into_a_long_still_stretch_backs_off_until_it_finds_the_held_frame() {
+    fn a_seek_into_a_long_still_stretch_lands_on_its_held_frame() {
         let mut take = HeldTake::new(&[0.0, 10.0]);
         unsafe {
             seek_held(&mut take, 9.0).unwrap();
         }
         assert_eq!(unsafe { take.cur_time_sec() }, 0.0);
+        assert_eq!(take.seeks, 1);
     }
 
     #[test]
@@ -2614,13 +2637,37 @@ mod tests {
 
     #[test]
     fn a_constant_rate_take_keeps_its_single_seek() {
-        let pts: Vec<f64> = (0..300).map(|i| i as f64 / 30.0).collect();
-        let mut take = HeldTake::new(&pts);
+        let mut take = constant_rate();
         unsafe {
             seek_held(&mut take, 4.0).unwrap();
             assert!((take.cur_time_sec() - 4.0).abs() < 1e-9);
         }
         assert_eq!(take.seeks, 1);
+    }
+
+    #[test]
+    fn a_short_step_ahead_walks_instead_of_seeking() {
+        // A scrub step or a nearby seek: `seek_to`'s own forward path decodes from here too.
+        let mut take = constant_rate();
+        unsafe {
+            seek_held(&mut take, 4.0).unwrap();
+            seek_held(&mut take, 4.3).unwrap();
+            assert!((take.cur_time_sec() - 4.3).abs() < 1e-9);
+        }
+        assert_eq!(take.seeks, 1, "no keyframe seek within half a second ahead");
+    }
+
+    #[test]
+    fn a_far_seek_ahead_or_back_takes_one_keyframe_seek() {
+        let mut take = constant_rate();
+        unsafe {
+            seek_held(&mut take, 4.0).unwrap();
+            seek_held(&mut take, 8.0).unwrap();
+            assert!((take.cur_time_sec() - 8.0).abs() < 1e-9);
+            seek_held(&mut take, 2.5).unwrap();
+            assert!((take.cur_time_sec() - 2.5).abs() < 1e-9);
+        }
+        assert_eq!(take.seeks, 3);
     }
 
     #[test]

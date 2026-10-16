@@ -130,6 +130,13 @@ impl Decoder {
         self.decode_present(idx)
     }
 
+    /// Contract of `pipeline_windows::Decoder::seek_keyframe_before`: a frame at or before
+    /// `seconds`. `seek_to` already lands on the last one (`pump_to_target`), the frame
+    /// `live::seek_held` walks to elsewhere.
+    pub unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut AVFrame> {
+        self.seek_to(seconds)
+    }
+
     /// Contrat de `pipeline_windows::Decoder::seek_to_or_last`, que `seek_to` remplit déjà ici :
     /// au-delà de la fin, `pump_to_target` tient la dernière image décodée.
     pub unsafe fn seek_to_or_last(&mut self, seconds: f64) -> Result<*mut AVFrame> {

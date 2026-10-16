@@ -440,6 +440,21 @@ impl Decoder {
         }
     }
 
+    /// The keyframe seek alone. Same as `pipeline_windows::Decoder::seek_keyframe_before`.
+    pub unsafe fn seek_keyframe_before(&mut self, seconds: f64) -> Result<*mut crate::ffi::AVFrame> {
+        self.has_peek = false;
+        let tb_sec = self.tb_sec();
+        let target = if tb_sec > 0.0 { (seconds / tb_sec) as i64 } else { 0 };
+        crate::ffi::averr(
+            crate::ffi::av_seek_frame(self.fmt, self.vidx, target, crate::ffi::AVSEEK_FLAG_BACKWARD),
+            "seek_keyframe_before",
+        )?;
+        crate::ffi::avcodec_flush_buffers(self.dctx);
+        self.cur_pts = None;
+        self.sent_eof = false;
+        self.next()
+    }
+
     /// `seek_to`, mais une cible au-delà de la dernière image se pose sur cette dernière image au
     /// lieu de ne rien rendre. L'audio d'un enregistrement dure souvent un peu plus que sa vidéo
     /// (de 12 ms à près d'une demi-seconde mesurés) : son clip finit alors après la dernière
