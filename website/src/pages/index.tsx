@@ -28,24 +28,27 @@ function CopyButton({ text }: { text: string }) {
 			type="button"
 			className={styles.copyButton}
 			onClick={() =>
-				navigator.clipboard.writeText(text).then(
+				navigator.clipboard?.writeText(text).then(
 					() => {
 						setCopied(true);
 						setTimeout(() => setCopied(false), 1500);
 					},
 					() => {
-						// Clipboard denied (an embedded browser, a policy): the prompt selects
-						// itself in one click (.agentPrompt pre), so the reader copies by hand.
+						// No clipboard (an insecure context) or a denied one (an embedded
+						// browser, a policy): the prompt selects itself in one click
+						// (.agentPrompt pre), so the reader copies by hand.
 					},
 				)
 			}
 		>
 			{copied ? <Check size={13} /> : <Copy size={13} />}
-			{copied ? (
-				<Translate id="home.agents.copied">Copied</Translate>
-			) : (
-				<Translate id="home.agents.copy">Copy</Translate>
-			)}
+			<span aria-live="polite">
+				{copied ? (
+					<Translate id="home.agents.copied">Copied</Translate>
+				) : (
+					<Translate id="home.agents.copy">Copy</Translate>
+				)}
+			</span>
 		</button>
 	);
 }
