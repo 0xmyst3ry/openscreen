@@ -89,11 +89,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 The skill installs OpenScreen if it is missing, once you agree, and adds its MCP server. It then asks you to open a new session and say *continue the OpenScreen demo*: an agent only gets new tools in a new session. To set it up by hand instead:
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-The executable on each system is listed in [Running the CLI](./cli.md#running-the-cli).
+`<executable>` is the app's executable, listed for each system in [Running the CLI](./cli.md#running-the-cli). Other clients, Cursor for one, take a stdio server with the executable as `command` and `["mcp"]` as `args`.
 
 - **No port, no token, no setting.** The agent starts the process itself, with your rights, as it would run `openscreen record`. So it can record your screen and edit without the **MCP edits** switch.
 - **Each take becomes a new project** in your project list, zoomed on its clicks as a recording made in the app is: clicks close in time and on screen share one zoom, and the first seconds and the end stay on the whole screen. Every edit the agent makes is saved to the project's file. Its undo is the checkpoint the agent takes, which lasts until the agent's session ends. Only the 20 most recent checkpoints are kept, so an older one can be gone sooner.

@@ -91,11 +91,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 如果缺少 OpenScreen，該技能會在你同意後安裝它，並加入它的 MCP 伺服器。接著它會請你開啟一個新的工作階段，並說出 *continue the OpenScreen demo*：代理只有在新的工作階段中才能取得新工具。若要改為手動設定：
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-各系統上的執行檔列在[執行 CLI](./cli.md#running-the-cli)中。
+`<executable>` 是應用程式的執行檔，各系統上的路徑列在[執行 CLI](./cli.md#running-the-cli)中。其他用戶端（例如 Cursor）以 stdio 伺服器的方式加入：執行檔作為 `command`，`["mcp"]` 作為 `args`。
 
 - **不需要連接埠、權杖或設定。** 代理會以你的權限自行啟動程序，就像它執行 `openscreen record` 一樣。因此，它不需要**MCP 編輯**開關，就能錄製你的螢幕並進行剪輯。
 - **每段錄影都會成為一個新專案**，出現在你的專案清單中，並和在應用程式中錄製的影片一樣，在錄下的點擊處加上縮放：時間與位置都相近的點擊共用一個縮放，開頭幾秒與結尾保持全螢幕。代理的每項編輯都會儲存到專案檔案中。要復原，就靠代理建立的檢查點，檢查點在代理的工作階段結束前都有效。只會保留最近的 20 個檢查點，因此較早的檢查點可能會提早失效。

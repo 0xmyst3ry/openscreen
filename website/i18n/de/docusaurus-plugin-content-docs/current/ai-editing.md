@@ -91,11 +91,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 Der Skill installiert OpenScreen, falls es fehlt, sobald du zustimmst, und fügt seinen MCP-Server hinzu. Danach bittet er dich, eine neue Sitzung zu öffnen und *continue the OpenScreen demo* zu sagen: Ein Agent bekommt neue Werkzeuge nur in einer neuen Sitzung. So richtest du es stattdessen von Hand ein:
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-Die ausführbare Datei für jedes System steht unter [Die CLI ausführen](./cli.md#running-the-cli).
+`<executable>` ist die ausführbare Datei der App; die jedes Systems steht unter [Die CLI ausführen](./cli.md#running-the-cli). Andere Clients, etwa Cursor, nehmen einen stdio-Server mit der ausführbaren Datei als `command` und `["mcp"]` als `args`.
 
 - **Kein Port, kein Token, keine Einstellung.** Der Agent startet den Prozess selbst, mit deinen Rechten, so wie er `openscreen record` ausführen würde. Deshalb kann er deinen Bildschirm aufnehmen und bearbeiten, ohne den Schalter **MCP-Änderungen**.
 - **Jeder Take wird zu einem neuen Projekt** in deiner Projektliste, mit Zooms auf seine Klicks, wie eine in der App gemachte Aufnahme: Zeitlich und räumlich nah beieinanderliegende Klicks teilen sich einen Zoom, und die ersten Sekunden und das Ende bleiben auf dem ganzen Bildschirm. Jede Änderung des Agenten wird in der Projektdatei gespeichert. Rückgängig macht sie der Wiederherstellungspunkt, den der Agent anlegt und der bis zum Ende seiner Sitzung besteht. Nur die 20 neuesten Wiederherstellungspunkte werden behalten, ein älterer kann also früher verschwinden.
