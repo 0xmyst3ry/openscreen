@@ -91,11 +91,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 如果缺少 OpenScreen，该技能会在你同意后安装它，并添加它的 MCP 服务器。随后它会请你打开一个新会话，并说出 *continue the OpenScreen demo*：AI 代理只有在新会话中才能获得新工具。若要改为手动设置：
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-各系统上的可执行文件列在[运行 CLI](./cli.md#running-the-cli)中。
+`<executable>` 是应用的可执行文件，各系统上的路径列在[运行 CLI](./cli.md#running-the-cli)中。其他客户端（例如 Cursor）以 stdio 服务器的方式添加：可执行文件作为 `command`，`["mcp"]` 作为 `args`。
 
 - **无需端口、令牌或设置**。AI 代理以你的权限自行启动进程，就像它运行 `openscreen record` 一样。因此，它无需**MCP 编辑**开关，就能录制你的屏幕并进行编辑。
 - **每次录制都会成为一个新项目**，出现在你的项目列表中，并且与在应用中录制的内容一样，在录制下来的点击处添加缩放：时间和位置都相近的点击共用一个缩放，开头几秒和结尾保持全屏。AI 代理的每项编辑都会保存到项目文件中。撤销它们要靠 AI 代理创建的检查点，检查点在代理的会话结束前一直有效。只保留最近的 20 个检查点，因此较早的检查点可能会更早失效。

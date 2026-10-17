@@ -91,11 +91,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 A skill instala o OpenScreen se ele estiver faltando, depois que você concordar, e adiciona o servidor MCP dele. Em seguida, ela pede que você abra uma nova sessão e diga *continue the OpenScreen demo*: um agente só recebe ferramentas novas em uma nova sessão. Para configurar à mão, em vez disso:
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-O executável de cada sistema está listado em [Como executar a CLI](./cli.md#running-the-cli).
+`<executable>` é o executável do app; o de cada sistema está listado em [Como executar a CLI](./cli.md#running-the-cli). Outros clientes, como o Cursor, usam um servidor stdio com o executável como `command` e `["mcp"]` como `args`.
 
 - **Sem porta, sem token, sem configuração.** O agente inicia o processo por conta própria, com as suas permissões, como faria ao rodar `openscreen record`. Por isso ele pode gravar a sua tela e editar sem o interruptor **Edições via MCP**.
 - **Cada tomada vira um novo projeto** na sua lista de projetos, com zooms nos seus cliques, como uma gravação feita no app: cliques próximos no tempo e na tela dividem um zoom, e os primeiros segundos e o final ficam na tela inteira. Cada edição do agente é salva no arquivo do projeto. Ela se desfaz com o ponto de restauração que o agente cria, que dura até o fim da sessão dele. Só os 20 pontos de restauração mais recentes são mantidos, então um mais antigo pode sumir antes.

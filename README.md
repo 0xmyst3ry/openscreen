@@ -74,10 +74,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 The skill sets everything up: it installs OpenScreen if it is missing (once you
 agree), connects its MCP server, then asks you to open a new session and say
 *"continue the OpenScreen demo"*, the one step an agent cannot do for itself.
-By hand, it is these two commands, with the executable of your system:
+By hand, it is these two commands, where `<executable>` is the app's executable
+on your system ([where to find it](https://getopenscreen.com/docs/cli/#running-the-cli)):
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
 npx skills add getopenscreen/openscreen --skill openscreen-demo
 ```
 
@@ -85,8 +86,8 @@ From then on, ask: *"Add a video of this change to the PR."* The agent plans the
 storyboard, records the app, edits the take with OpenScreen's own editing tools,
 exports the MP4, checks it frame by frame, and attaches it to the pull request,
 where reviewers watch it in place. Ask for a launch demo instead and it drafts a
-post for X, which it publishes only once you say yes. The executable on Windows
-and Linux, and the other clients, are in [AI editing](https://getopenscreen.com/docs/ai-editing/#letting-an-agent-make-the-whole-video).
+post for X, which it publishes only once you say yes. Codex and the other clients
+are in [AI editing](https://getopenscreen.com/docs/ai-editing/#letting-an-agent-make-the-whole-video).
 
 ## Installation
 

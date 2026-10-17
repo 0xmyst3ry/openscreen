@@ -91,11 +91,11 @@ Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen 
 このスキルは、OpenScreen がなければ、同意を得たうえでインストールし、その MCP サーバーを追加します。続いて、新しいセッションを開いて *continue the OpenScreen demo* と伝えるよう求めます。エージェントが新しいツールを得られるのは、新しいセッションの中だけです。代わりに手動で設定するには、次のようにします。
 
 ```bash
-claude mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
-codex mcp add openscreen -- "/Applications/Openscreen.app/Contents/MacOS/Openscreen" mcp
+claude mcp add openscreen -- "<executable>" mcp
+codex mcp add openscreen -- "<executable>" mcp
 ```
 
-各システムでの実行ファイルは、[CLI の実行](./cli.md#running-the-cli)に記載しています。
+`<executable>` はアプリの実行ファイルです。各システムでのパスは [CLI の実行](./cli.md#running-the-cli)に記載しています。Cursor などほかのクライアントでは、実行ファイルを `command`、`["mcp"]` を `args` とした stdio サーバーとして追加します。
 
 - **ポートも、トークンも、設定も不要。** エージェントは、`openscreen record` を実行するときと同じように、あなたの権限でプロセスを自分で起動します。そのため、**MCP による編集**スイッチなしで、画面を録画し、編集できます。
 - **テイクはそれぞれ新しいプロジェクトになり**、プロジェクト一覧に表示されます。アプリで作った録画と同じく、記録されたクリックにズームが付きます。時間的にも画面上でも近いクリックは1つのズームにまとめられ、最初の数秒と最後は画面全体のままです。エージェントによる編集はすべてプロジェクトのファイルに保存されます。元に戻すには、エージェントが作成するチェックポイントを使います。チェックポイントはエージェントのセッションが終わるまで有効です。保持されるのは直近 20 個のチェックポイントだけなので、古いものはそれより前に消えることがあります。
