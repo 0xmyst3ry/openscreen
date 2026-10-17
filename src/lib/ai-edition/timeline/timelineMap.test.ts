@@ -344,6 +344,40 @@ describe("projectRegionsToSource", () => {
 		const out = projectRegionsToSource([partial], [c], [c], () => "x");
 		expect(out).toEqual([{ ...partial, startMs: 3000, endMs: 5000, clipIndex: 0 }]);
 	});
+
+	// A piece at a cut is gated in f32 by the compositor (`continues_before` → `t < start`,
+	// `continues_after` → `t > end`), and a clip's first and last frames land on the clip's own
+	// bounds. A bound rounded to the ms past them left that frame out of the Full Camera piece:
+	// camera back in its PiP corner, motion blur trailing it there (issue #1300, cuts of the
+	// v2.1.0-rc.5 passes). The cuts that rounded the other way were clean: the controls.
+	const pieceAcross = (trimStartSec: number, trimEndSec: number) => {
+		const c = clip({
+			id: "c1",
+			assetId: "a",
+			sourceStartSec: 0,
+			sourceEndSec: 60,
+			timelineEndSec: 60,
+		});
+		const anchored = { ...region("r", 0, 60), clipId: "c1", sourceStartSec: 0, sourceEndSec: 60 };
+		const segments = resolvePlaybackSegments([c], [trim("a", trimStartSec, trimEndSec)]);
+		return projectRegionsToSource([anchored], segments, [c], () => "r2");
+	};
+
+	it.each([
+		10.292957, 18.361809, 46.34986635, 6.284394,
+	])("keeps the first frame after a cut at %s in the Full Camera piece", (cut) => {
+		const [, after] = pieceAcross(cut - 2, cut);
+		expect(after.continuesBefore).toBe(true);
+		expect(Math.fround(cut)).toBeGreaterThanOrEqual(Math.fround(after.startMs / 1000));
+	});
+
+	it.each([
+		6.284394, 14.340314, 10.292957,
+	])("keeps the last frame before a cut at %s in the Full Camera piece", (cut) => {
+		const [before] = pieceAcross(cut, cut + 2);
+		expect(before.continuesAfter).toBe(true);
+		expect(Math.fround(cut)).toBeLessThanOrEqual(Math.fround(before.endMs / 1000));
+	});
 });
 
 describe("resolveNativePosition", () => {

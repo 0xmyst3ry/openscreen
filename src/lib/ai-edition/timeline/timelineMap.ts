@@ -689,8 +689,11 @@ export function projectRegionsToSource<
 			out.push({
 				...region,
 				id: emitted === 0 ? region.id : makeId(),
-				startMs: Math.round(srcStartSec * 1000),
-				endMs: Math.round(srcEndSec * 1000),
+				// A bound at a cut is not rounded to the ms: it must sit exactly on the segment's
+				// bound, where native puts the clip's first or last frame. Rounded past it, that
+				// frame fell out of the piece and Full Camera trailed to its PiP corner (#1300).
+				startMs: flags.continuesBefore ? srcStartSec * 1000 : Math.round(srcStartSec * 1000),
+				endMs: flags.continuesAfter ? srcEndSec * 1000 : Math.round(srcEndSec * 1000),
 				clipIndex,
 				// Omitted rather than sent as `false`: every payload without a trim under a
 				// modifier stays byte-for-byte what it was.
