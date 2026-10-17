@@ -1085,5 +1085,27 @@
   "announcement.productHunt.rank": {
     "message": "今日產品第 5 名",
     "description": "The launch's rank on Product Hunt (October 11, 2026). Keep the #5."
+  },
+  "home.agents.copied": {
+    "message": "已複製"
+  },
+  "home.agents.copy": {
+    "message": "複製"
+  },
+  "home.agents.kicker": {
+    "message": "給程式設計代理"
+  },
+  "home.agents.title": {
+    "message": "你的程式設計代理交付功能時，連影片一起交付。"
+  },
+  "home.agents.summary": {
+    "message": "OpenScreen 的 MCP 伺服器把整件工作交給代理：錄製應用程式、用編輯器本身的工具剪輯錄影、匯出 MP4，並逐格檢查。把這段話貼到 Claude Code，你這次變更的影片就會出現在拉取請求中。"
+  },
+  "home.agents.foot": {
+    "message": "如果尚未安裝 OpenScreen，它會在你同意後安裝。Codex、Cursor 和其他任何 MCP 用戶端也都能使用：{docs}。",
+    "description": "{docs} links to the AI editing docs."
+  },
+  "home.agents.foot.docs": {
+    "message": "手動設定"
   }
 }

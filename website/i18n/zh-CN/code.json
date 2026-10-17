@@ -1085,5 +1085,27 @@
   "announcement.productHunt.rank": {
     "message": "今日产品第 5 名",
     "description": "The launch's rank on Product Hunt (October 11, 2026). Keep the #5."
+  },
+  "home.agents.copied": {
+    "message": "已复制"
+  },
+  "home.agents.copy": {
+    "message": "复制"
+  },
+  "home.agents.kicker": {
+    "message": "面向编程 AI 代理"
+  },
+  "home.agents.title": {
+    "message": "你的编程 AI 代理交付功能时，连视频一起交付。"
+  },
+  "home.agents.summary": {
+    "message": "OpenScreen 的 MCP 服务器把整件事交给 AI 代理：录制应用、用编辑器自己的工具剪辑录制内容、导出 MP4，并逐帧检查。把这段话粘贴到 Claude Code 中，你这次改动的视频就会出现在拉取请求里。"
+  },
+  "home.agents.foot": {
+    "message": "如果尚未安装 OpenScreen，它会在你同意后安装。Codex、Cursor 和其他任何 MCP 客户端也可以使用：{docs}。",
+    "description": "{docs} links to the AI editing docs."
+  },
+  "home.agents.foot.docs": {
+    "message": "手动设置"
   }
 }

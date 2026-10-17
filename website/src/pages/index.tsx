@@ -4,7 +4,8 @@ import Translate, { translate } from "@docusaurus/Translate";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import Heading from "@theme/Heading";
 import Layout from "@theme/Layout";
-import { Apple, AppWindow, CircleCheck, TerminalSquare } from "lucide-react";
+import { Apple, AppWindow, Bot, Check, CircleCheck, Copy, TerminalSquare } from "lucide-react";
+import { useState } from "react";
 
 import AppLanguages from "../components/AppLanguages";
 import Editor from "../components/Editor";
@@ -16,6 +17,38 @@ import Showcase from "../components/Showcase";
 import type { AppLanguage } from "../lib/release";
 import { jsonLd, softwareApplicationLd } from "../lib/structured-data";
 import styles from "./index.module.css";
+
+const AGENT_PROMPT =
+	"Install the OpenScreen demo skill with `npx skills add getopenscreen/openscreen --skill openscreen-demo -a claude-code`, then follow it to add a video of this change to the PR.";
+
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	return (
+		<button
+			type="button"
+			className={styles.copyButton}
+			onClick={() =>
+				navigator.clipboard.writeText(text).then(
+					() => {
+						setCopied(true);
+						setTimeout(() => setCopied(false), 1500);
+					},
+					() => {
+						// Clipboard denied (an embedded browser, a policy): the prompt selects
+						// itself in one click (.agentPrompt pre), so the reader copies by hand.
+					},
+				)
+			}
+		>
+			{copied ? <Check size={13} /> : <Copy size={13} />}
+			{copied ? (
+				<Translate id="home.agents.copied">Copied</Translate>
+			) : (
+				<Translate id="home.agents.copy">Copy</Translate>
+			)}
+		</button>
+	);
+}
 
 export default function Home() {
 	const { siteConfig } = useDocusaurusContext();
@@ -79,6 +112,54 @@ export default function Home() {
 
 			{/* The claims the editor cannot make on its own. */}
 			<Showcase />
+
+			<section className={styles.agents} id="coding-agents">
+				<div className={styles.agentsInner}>
+					<div className={styles.sectionKicker}>
+						<Translate id="home.agents.kicker">For coding agents</Translate>
+					</div>
+					<Heading as="h2" className={styles.sectionTitle}>
+						<Translate id="home.agents.title">
+							Your coding agent ships the feature with its video.
+						</Translate>
+					</Heading>
+					<p className={styles.productSummary}>
+						<Translate id="home.agents.summary">
+							OpenScreen's MCP server gives an agent the whole job: it records the app, edits the
+							take with the editor's own tools, exports the MP4 and checks it frame by frame. Paste
+							this into Claude Code and the video of your change lands in the pull request.
+						</Translate>
+					</p>
+
+					<div className={`${styles.terminal} ${styles.agentPrompt}`}>
+						<div className={styles.terminalHeader}>
+							<Bot size={14} />
+							<span>Claude Code</span>
+							<CopyButton text={AGENT_PROMPT} />
+						</div>
+						{/* The prompt stays in English in every locale: it is what the reader pastes, and
+						    the README carries the same line. */}
+						<pre className={styles.terminalBody}>{AGENT_PROMPT}</pre>
+						<p className={styles.paneFoot}>
+							<Translate
+								id="home.agents.foot"
+								description="{docs} links to the AI editing docs."
+								values={{
+									docs: (
+										<Link to="/docs/ai-editing#letting-an-agent-make-the-whole-video">
+											<Translate id="home.agents.foot.docs">Set it up by hand</Translate>
+										</Link>
+									),
+								}}
+							>
+								{
+									"It installs OpenScreen if it is missing, once you agree. Codex, Cursor and any other MCP client work too: {docs}."
+								}
+							</Translate>
+						</p>
+					</div>
+				</div>
+			</section>
 
 			<section className={styles.features}>
 				<div className={styles.featuresInner}>
