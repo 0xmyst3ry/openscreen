@@ -368,7 +368,7 @@ describe("projectRegionsToSource", () => {
 	])("keeps the first frame after a cut at %s in the Full Camera piece", (cut) => {
 		const [, after] = pieceAcross(cut - 2, cut);
 		expect(after.continuesBefore).toBe(true);
-		expect(Math.fround(cut)).toBeGreaterThanOrEqual(Math.fround(after.startMs / 1000));
+		expect(Math.fround(after.startMs / 1000)).toBe(Math.fround(cut));
 	});
 
 	it.each([
@@ -376,7 +376,7 @@ describe("projectRegionsToSource", () => {
 	])("keeps the last frame before a cut at %s in the Full Camera piece", (cut) => {
 		const [before] = pieceAcross(cut, cut + 2);
 		expect(before.continuesAfter).toBe(true);
-		expect(Math.fround(cut)).toBeLessThanOrEqual(Math.fround(before.endMs / 1000));
+		expect(Math.fround(before.endMs / 1000)).toBe(Math.fround(cut));
 	});
 });
 
