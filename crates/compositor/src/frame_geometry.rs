@@ -3315,17 +3315,33 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // ce correctif ; la coupe DESSINÉE ne porte plus que le crop. `remap_box` reporte la
         // seconde à travers le mapping de la première, ce qui conserve le cadrage exact.
         // Le focus courant reste volontairement utilisé pour la frame précédente, comme avant.
+        //
+        // Sous un plan incliné (angle fixe ou caméra réelle), le remplissage penche la CARTE : la
+        // boîte est le slot, la coupe la fenêtre zoomée qu'il montre, et rien ne la rogne. Le slot
+        // n'y est pas un conteneur qu'on voit, comme dans un bloc : rogner à son rect droit le plan
+        // de l'enregistrement entier y coupait des coins à plat. Sous la caméra réelle, c'est sa
+        // visée qui cadre le zoom (`regions::resolve_focus` laisse la boîte zoomer sur son centre).
+        let fill_tilt =
+            follow && (zoom_camera > 0.0 || !crate::regions::is_identity_rotation(zoom_rotation));
+        let focus = if fill_tilt && zoom_camera > 0.0 { zoom_aim } else { p.focus };
         let cut_ref =
-            cover(screen_source_rect(u_max, v_max, active_crop, p.zoom, p.focus), follow_at(source_t));
+            cover(screen_source_rect(u_max, v_max, active_crop, p.zoom, focus), follow_at(source_t));
         let cut_ref_prev = cover(
-            screen_source_rect(u_max, v_max, active_crop, pp.zoom, p.focus),
+            screen_source_rect(u_max, v_max, active_crop, pp.zoom, focus),
             follow_at(source_t_prev),
         );
         // Sous le remplissage, la coupe dessinée est le crop ENTIER : la fenêtre bouge, et une
         // coupe dessinée qui ne la contiendrait plus laisserait un trou dans le slot. Le masque du
         // slot (`screen_mask`) rogne le reste.
         let crop_cut = screen_source_rect(u_max, v_max, active_crop, 1.0, p.focus);
-        let cut = if follow { crop_cut } else { cover(crop_cut, None) };
+        // Le remplissage incliné dessine la fenêtre zoomée elle-même : sa boîte est le slot.
+        let cut = if fill_tilt {
+            cut_ref
+        } else if follow {
+            crop_cut
+        } else {
+            cover(crop_cut, None)
+        };
         // Ce que l'écran montre au repos : la fenêtre couverte, suivie ou non. Le curseur, les coins
         // et l'ombre se mesurent sur elle, pas sur la coupe entière que le remplissage dessine.
         let window = cover(crop_cut, follow_at(source_t));
@@ -3356,24 +3372,38 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // même report dans la coupe (un cover la rogne). La mise au point suit le pointeur lissé
         // (l'orbite), pas le point visé : celui-ci reste au centre au zoom 1 et bute sur sa portée
         // au zoom, là où le spectateur regarde le pointeur.
-        let camera = (zoom_camera > 0.0).then(|| crate::camera::CameraPose {
-            weight: zoom_camera,
-            aim: focus_in_cut(u_max, v_max, active_crop, zoom_aim, cut),
-            orbit: focus_in_cut(u_max, v_max, active_crop, zoom_orbit, cut),
-            zoom: p.zoom,
-            press,
-        });
+        // Sous le remplissage incliné, la coupe est déjà la fenêtre zoomée : la caméra filme la
+        // carte au zoom 1, entière et contenue dans son slot depuis toute l'orbite
+        // (`camera::View::new`), et l'œil se place sur le pointeur dans l'enregistrement entier,
+        // où vit le poids de l'orbite (rapportée à la fenêtre, elle sauterait à l'entrée du zoom).
+        let pose = |weight: f32, aim: [f32; 2], orbit: [f32; 2], zoom: f32| {
+            if fill_tilt {
+                crate::camera::CameraPose {
+                    weight,
+                    aim: [0.5; 2],
+                    orbit: focus_in_cut(u_max, v_max, active_crop, orbit, crop_cut),
+                    zoom: 1.0,
+                    press,
+                }
+            } else {
+                crate::camera::CameraPose {
+                    weight,
+                    aim: focus_in_cut(u_max, v_max, active_crop, aim, cut),
+                    orbit: focus_in_cut(u_max, v_max, active_crop, orbit, cut),
+                    zoom,
+                    press,
+                }
+            }
+        };
+        let camera = (zoom_camera > 0.0).then(|| pose(zoom_camera, zoom_aim, zoom_orbit, p.zoom));
         // La caméra réelle de la frame d'avant, dès qu'elle y était active — y compris quand elle
         // ne l'est plus à celle-ci (fin de sa moitié d'une transition vers un angle fixe) ; `None`
         // quand elle ne l'était pas, et le mode 8 reprend alors la rotation d'avant.
-        let camera_prev = (zoom_camera_prev > 0.0).then(|| crate::camera::CameraPose {
-            weight: zoom_camera_prev,
-            aim: focus_in_cut(u_max, v_max, active_crop, zoom_aim_prev, cut),
-            orbit: focus_in_cut(u_max, v_max, active_crop, zoom_orbit_prev, cut),
-            zoom: pp.zoom,
-            press,
-        });
+        let camera_prev = (zoom_camera_prev > 0.0)
+            .then(|| pose(zoom_camera_prev, zoom_aim_prev, zoom_orbit_prev, pp.zoom));
         let focus_plane = match camera {
+            // Le pointeur sur la carte, là où l'orbite du remplissage n'est pas dans la coupe.
+            Some(_) if fill_tilt => focus_in_cut(u_max, v_max, active_crop, zoom_orbit, cut),
             Some(pose) => pose.orbit,
             None => focus_in_cut(u_max, v_max, active_crop, p.focus, cut),
         };
@@ -3490,7 +3520,8 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // l'app le lève pour ces deux layouts, sur un clip qui a une caméra, et pour le
         // remplissage du format, qui exclut les cadres (`formatFillAvailability`). Un cadre sous
         // un slot est donc toujours dans un bloc : il y devient le conteneur, au repos autour.
-        let screen_mask = scene.is_some_and(|s| s.layout.screen_cover).then(|| {
+        // Le remplissage incliné n'a pas de masque : sa boîte est le slot, et la carte penche entière.
+        let screen_mask = (scene.is_some_and(|s| s.layout.screen_cover) && !fill_tilt).then(|| {
             let slot_px = [s_base[2] * rw, s_base[3] * rh];
             ScreenMask {
                 rect: s_base,
@@ -6348,6 +6379,11 @@ mod tests {
     /// Un clip 16:9 dans une sortie 9:16 remplie (`screenCover` + `screenFollow`) : la boîte écran
     /// est la zone paddée entière, `follow` décide si la fenêtre suit le pointeur.
     fn fill_plan(follow: bool, pointer: Option<(f32, f32)>) -> FrameGeometry {
+        fill_plan_with(follow, pointer, "[]")
+    }
+
+    /// `fill_plan`, avec ces `zoomRegions`.
+    fn fill_plan_with(follow: bool, pointer: Option<(f32, f32)>, zoom_regions: &str) -> FrameGeometry {
         let scene = Scene::from_json(&format!(
             r##"{{
             "clips":[{{"screenPath":"/s.mp4","webcamPath":"","sourceStartSec":0,"sourceEndSec":10,"webcamOffsetSec":0,"hasAudio":false}}],
@@ -6356,8 +6392,8 @@ mod tests {
                       "screenCover":true,"screenFollow":{follow}}},
             "effects":{{"padding":0.5,"blur":false,"shadow":0.5,"roundnessFrac":0.02,"motionBlur":0}},
             "background":{{"kind":"color","color":"#1e1e2e"}},
-            "zoomRegions":[],
-            "cursor":{{"show":false,"size":1,"smoothing":0,"motionBlur":0,"clickBounce":1,"clipToBounds":false,"theme":"default"}},
+            "zoomRegions":{zoom_regions},
+            "cursor":{{"show":true,"size":1,"smoothing":0,"motionBlur":0,"clickBounce":1,"clipToBounds":false,"theme":"default"}},
             "cropByClip":[null],
             "output":{{"width":1080,"height":1920,"fps":60}}
         }}"##
@@ -6405,6 +6441,69 @@ mod tests {
         for g in [fill_plan(false, Some((0.7, 0.5))), fill_plan(true, None)] {
             let w = seen(&g);
             assert!((0.5 * (w[0] + w[2]) - 0.5).abs() < 1e-3, "fenêtre centrée attendue, {w:?}");
+        }
+    }
+
+    /// Le remplissage sous un plan incliné, angle fixe ou caméra en orbite : c'est la CARTE qui
+    /// penche, entière, ses quatre coins arrondis. Son slot n'est pas un conteneur qu'on voit,
+    /// comme celui d'un bloc : y rogner le plan de l'enregistrement entier coupait des coins à plat
+    /// (v2.0.0 à v2.1.0).
+    ///
+    /// * aucun masque ne rogne le plan, et sa boîte est le slot ;
+    /// * la carte montre ce qu'un zoom à plat y montre : la même fenêtre zoomée ;
+    /// * le plan tient dans la sortie, centré sur le slot ;
+    /// * à plat, rien ne change : le slot masque toujours la boîte zoomée.
+    #[test]
+    fn a_tilted_zoom_tilts_the_whole_filled_card() {
+        let render = [1080.0f32, 1920.0];
+        let zoom = |rotation: &str| {
+            format!(r#"[{{"clipIndex":0,"startSec":0.0,"endSec":5.0,"scale":2.0,"focusX":0.3,"focusY":0.6,"rotation":{rotation}}}]"#)
+        };
+        let pointer = Some((0.85, 0.8));
+        // La fenêtre que la carte montre, en UV : le slot reporté par s_dst → cut.
+        let seen = |g: &FrameGeometry| -> [f32; 4] {
+            let (s, d, c) = (g.s_ann, g.s_dst, g.cut);
+            let x = |f: f32| c[0] + (f - d[0]) / d[2] * (c[2] - c[0]);
+            let y = |f: f32| c[1] + (f - d[1]) / d[3] * (c[3] - c[1]);
+            [x(s[0]), y(s[1]), x(s[0] + s[2]), y(s[1] + s[3])]
+        };
+        for (rotation, flat_rotation) in [
+            (r#""iso""#, "null"),
+            (r#""right""#, "null"),
+            (ORBIT, r#"null,"focusMode":"auto""#),
+        ] {
+            let flat = fill_plan_with(true, pointer, &zoom(flat_rotation));
+            assert!(!flat.tilted(), "{rotation} : garde, le zoom à plat est droit");
+            assert!(flat.screen_mask.is_some(), "{rotation} : à plat, le slot masque la boîte zoomée");
+            assert!(!contains(flat.s_ann, flat.s_dst, 1e-3), "{rotation} : garde, la boîte à plat déborde");
+
+            let g = fill_plan_with(true, pointer, &zoom(rotation));
+            assert!(g.tilted(), "{rotation} : garde, l'écran doit pencher");
+            assert_eq!(g.screen_mask, None, "{rotation} : un rect droit rogne la carte inclinée");
+            for k in 0..4 {
+                assert!((g.s_dst[k] - g.s_ann[k]).abs() < 1e-5, "{rotation} : boîte {:?}, slot {:?}", g.s_dst, g.s_ann);
+            }
+            let (w, wf) = (seen(&g), seen(&flat));
+            for k in 0..4 {
+                assert!((w[k] - wf[k]).abs() < 1e-4, "{rotation} : fenêtre {w:?}, à plat {wf:?}");
+            }
+
+            let s_px = [g.s_dst[2] * render[0], g.s_dst[3] * render[1]];
+            let quad = g.screen_tilt(s_px).expect("incliné");
+            let c = g.screen_center_px(render);
+            let slot_c = [(g.s_ann[0] + g.s_ann[2] * 0.5) * render[0], (g.s_ann[1] + g.s_ann[3] * 0.5) * render[1]];
+            let mut mean = [0.0f32; 2];
+            for &(x, y) in &quad.corners {
+                let (x, y) = (c[0] + x, c[1] + y);
+                assert!((0.0..=render[0]).contains(&x) && (0.0..=render[1]).contains(&y), "{rotation} : coin ({x}, {y}) hors de la sortie");
+                mean = [mean[0] + x * 0.25, mean[1] + y * 0.25];
+            }
+            let off = (mean[0] - slot_c[0]).hypot(mean[1] - slot_c[1]);
+            assert!(off < 0.1 * s_px[0].min(s_px[1]), "{rotation} : carte à {off} px du slot");
+
+            let cb = tilted_screen_cb(&quad, s_px, c, g.cut, g.focus_plane, g.s_radius, 0.0, false, render, g.screen_mask, None);
+            assert_eq!(cb.color[3], 0.0, "{rotation} : aucun slot ne rogne le plan");
+            assert!(cb.radius_px > 1.0, "{rotation} : coins arrondis attendus, rayon {}", cb.radius_px);
         }
     }
 
