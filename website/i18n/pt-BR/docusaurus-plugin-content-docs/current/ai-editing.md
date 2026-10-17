@@ -13,10 +13,10 @@ keywords:
 
 # Edição com IA
 
-O OpenScreen traz um agente opcional que edita o seu projeto a partir de um painel de chat. Ele fica **desativado até você mesmo conectar um provedor**, e nada é enviado a nenhum modelo antes disso. Depois de conectado, o agente conversa apenas com esse provedor, e o mesmo vale para a [tradução de legendas](./captions.md#translation). Os outros usos de rede do app (o download do modelo Whisper, as fontes das anotações, a verificação de atualizações) estão listados na [introdução](./intro.md).
+O OpenScreen traz um agente opcional que edita o seu projeto a partir de um painel de chat. Ele fica **desativado até você mesmo conectar um provedor**, e nada é enviado a nenhum modelo antes disso. Depois de conectado, o agente conversa apenas com esse provedor, e o mesmo vale para a [tradução de legendas](./captions.md#translation). Os outros usos de rede do app (o download dos modelos de transcrição, a verificação de atualizações) estão listados nas [perguntas frequentes](./faq.md#does-openscreen-work-offline).
 
 :::tip
-Nada disso é obrigatório. Gravação, edição, transcrição, legendas e exportação funcionam sem conta e sem provedor, quer você abra o painel de chat, quer não. Dessas, só a transcrição precisa de um download, uma única vez: o [modelo Whisper](./captions.md#transcribing), na primeira execução.
+Nada disso é obrigatório. Gravação, edição, transcrição, legendas e exportação funcionam sem conta e sem provedor, quer você abra o painel de chat, quer não. Dessas, só a transcrição precisa de um download, uma única vez: os [modelos](./captions.md#transcribing) dela, na primeira execução.
 :::
 
 ## Como conectar um provedor {#connecting-a-provider}
