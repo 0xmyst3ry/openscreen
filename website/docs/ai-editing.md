@@ -13,10 +13,10 @@ keywords:
 
 # AI editing
 
-OpenScreen ships an optional agent that edits your project from a chat panel. It is **off until you connect a provider yourself**, and nothing is sent to any model before that. Once connected, the agent talks only to that provider, and so does [caption translation](./captions.md#translation). The app's other network use (the Whisper model download, annotation fonts, update checks) is listed in the [introduction](./intro.md).
+OpenScreen ships an optional agent that edits your project from a chat panel. It is **off until you connect a provider yourself**, and nothing is sent to any model before that. Once connected, the agent talks only to that provider, and so does [caption translation](./captions.md#translation). The app's other network use (the transcription model downloads, update checks) is listed in the [FAQ](./faq.md#does-openscreen-work-offline).
 
 :::tip
-None of this is required. Recording, editing, transcription, captions, and export all work with no account and no provider, whether or not you ever open the chat panel. Of those, only transcription needs a download, once: the [Whisper model](./captions.md#transcribing), on your first run.
+None of this is required. Recording, editing, transcription, captions, and export all work with no account and no provider, whether or not you ever open the chat panel. Of those, only transcription needs a download, once: its [models](./captions.md#transcribing), on your first run.
 :::
 
 ## Connecting a provider

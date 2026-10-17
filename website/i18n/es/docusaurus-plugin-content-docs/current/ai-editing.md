@@ -13,10 +13,10 @@ keywords:
 
 # Edición con IA
 
-OpenScreen incluye un agente opcional que edita tu proyecto desde un panel de chat. Está **desactivado hasta que tú mismo conectes un proveedor**, y antes de eso no se envía nada a ningún modelo. Una vez conectado, el agente solo se comunica con ese proveedor, y lo mismo ocurre con la [traducción de subtítulos](./captions.md#translation). Los demás usos de la red que hace la app (la descarga del modelo Whisper, las fuentes de las anotaciones, la búsqueda de actualizaciones) se enumeran en la [introducción](./intro.md).
+OpenScreen incluye un agente opcional que edita tu proyecto desde un panel de chat. Está **desactivado hasta que tú mismo conectes un proveedor**, y antes de eso no se envía nada a ningún modelo. Una vez conectado, el agente solo se comunica con ese proveedor, y lo mismo ocurre con la [traducción de subtítulos](./captions.md#translation). Los demás usos de la red que hace la app (la descarga de los modelos de transcripción, la búsqueda de actualizaciones) se enumeran en las [preguntas frecuentes](./faq.md#does-openscreen-work-offline).
 
 :::tip
-Nada de esto es obligatorio. La grabación, la edición, la transcripción, los subtítulos y la exportación funcionan sin cuenta y sin proveedor, abras o no alguna vez el panel de chat. De todo eso, solo la transcripción necesita una descarga, una única vez: el [modelo Whisper](./captions.md#transcribing), en tu primer uso.
+Nada de esto es obligatorio. La grabación, la edición, la transcripción, los subtítulos y la exportación funcionan sin cuenta y sin proveedor, abras o no alguna vez el panel de chat. De todo eso, solo la transcripción necesita una descarga, una única vez: sus [modelos](./captions.md#transcribing), en tu primer uso.
 :::
 
 ## Conectar un proveedor {#connecting-a-provider}

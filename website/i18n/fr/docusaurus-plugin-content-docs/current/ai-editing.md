@@ -13,10 +13,10 @@ keywords:
 
 # Montage par IA
 
-OpenScreen intègre un agent facultatif qui monte votre projet depuis un panneau de discussion. Il reste **désactivé tant que vous n'avez pas connecté vous-même un fournisseur**, et rien n'est envoyé à aucun modèle avant cela. Une fois le fournisseur connecté, l'agent ne communique qu'avec lui, tout comme la [traduction des sous-titres](./captions.md#translation). Les autres usages du réseau par l'application (téléchargement du modèle Whisper, polices d'annotation, vérification des mises à jour) sont listés dans l'[introduction](./intro.md).
+OpenScreen intègre un agent facultatif qui monte votre projet depuis un panneau de discussion. Il reste **désactivé tant que vous n'avez pas connecté vous-même un fournisseur**, et rien n'est envoyé à aucun modèle avant cela. Une fois le fournisseur connecté, l'agent ne communique qu'avec lui, tout comme la [traduction des sous-titres](./captions.md#translation). Les autres usages du réseau par l'application (téléchargement des modèles de transcription, vérification des mises à jour) sont listés dans la [FAQ](./faq.md#does-openscreen-work-offline).
 
 :::tip
-Rien de tout cela n'est obligatoire. L'enregistrement, le montage, la transcription, les sous-titres et l'export fonctionnent tous sans compte et sans fournisseur, que vous ouvriez ou non le panneau de discussion. Parmi eux, seule la transcription exige un téléchargement, une seule fois : le [modèle Whisper](./captions.md#transcribing), lors de votre première transcription.
+Rien de tout cela n'est obligatoire. L'enregistrement, le montage, la transcription, les sous-titres et l'export fonctionnent tous sans compte et sans fournisseur, que vous ouvriez ou non le panneau de discussion. Parmi eux, seule la transcription exige un téléchargement, une seule fois : ses [modèles](./captions.md#transcribing), lors de votre première transcription.
 :::
 
 ## Connecter un fournisseur {#connecting-a-provider}
