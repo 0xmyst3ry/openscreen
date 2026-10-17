@@ -1085,5 +1085,27 @@
   "announcement.productHunt.rank": {
     "message": "#5 Produkt des Tages",
     "description": "The launch's rank on Product Hunt (October 11, 2026). Keep the #5."
+  },
+  "home.agents.copied": {
+    "message": "Kopiert"
+  },
+  "home.agents.copy": {
+    "message": "Kopieren"
+  },
+  "home.agents.kicker": {
+    "message": "Für Coding-Agenten"
+  },
+  "home.agents.title": {
+    "message": "Dein Coding-Agent liefert das Feature mit seinem Video."
+  },
+  "home.agents.summary": {
+    "message": "Der MCP-Server von OpenScreen gibt einem Agenten die ganze Arbeit: Er nimmt die App auf, schneidet den Take mit den Werkzeugen des Editors, exportiert das MP4 und prüft es Bild für Bild. Füge das in Claude Code ein, und das Video deiner Änderung landet im Pull Request."
+  },
+  "home.agents.foot": {
+    "message": "Er installiert OpenScreen, falls es fehlt, sobald du zustimmst. Codex, Cursor und jeder andere MCP-Client funktionieren auch: {docs}.",
+    "description": "{docs} links to the AI editing docs."
+  },
+  "home.agents.foot.docs": {
+    "message": "manuelle Einrichtung"
   }
 }

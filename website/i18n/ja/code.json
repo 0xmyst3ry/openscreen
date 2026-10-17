@@ -1085,5 +1085,27 @@
   "announcement.productHunt.rank": {
     "message": "本日のプロダクト 第5位",
     "description": "The launch's rank on Product Hunt (October 11, 2026). Keep the #5."
+  },
+  "home.agents.copied": {
+    "message": "コピーしました"
+  },
+  "home.agents.copy": {
+    "message": "コピー"
+  },
+  "home.agents.kicker": {
+    "message": "コーディングエージェント向け"
+  },
+  "home.agents.title": {
+    "message": "コーディングエージェントが、機能と一緒にその動画も届けます。"
+  },
+  "home.agents.summary": {
+    "message": "OpenScreen の MCP サーバーを使えば、エージェントがすべてを担います。アプリを録画し、エディターと同じツールでテイクを編集し、MP4 をエクスポートして、1 フレームずつ確認します。これを Claude Code に貼り付ければ、変更の動画がプルリクエストに届きます。"
+  },
+  "home.agents.foot": {
+    "message": "OpenScreen がなければ、あなたの同意を得てからインストールします。Codex、Cursor など、ほかの MCP クライアントでも使えます：{docs}。",
+    "description": "{docs} links to the AI editing docs."
+  },
+  "home.agents.foot.docs": {
+    "message": "手動で設定する"
   }
 }
