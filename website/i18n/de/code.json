@@ -357,6 +357,9 @@
   "footer.product.captions": {
     "message": "Lokale Untertitel"
   },
+  "footer.product.claude": {
+    "message": "Mit Claude schneiden"
+  },
   "footer.platforms.title": {
     "message": "Plattformen",
     "description": "Footer column title."

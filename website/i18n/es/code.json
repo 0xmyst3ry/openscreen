@@ -344,6 +344,9 @@
   "footer.product.captions": {
     "message": "Subtítulos locales"
   },
+  "footer.product.claude": {
+    "message": "Editar con Claude"
+  },
   "footer.platforms.title": {
     "message": "Plataformas",
     "description": "Footer column title."

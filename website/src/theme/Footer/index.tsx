@@ -60,6 +60,9 @@ export default function Footer(): ReactNode {
 							<LocaleLink to="/features/captions/">
 								<Translate id="footer.product.captions">Local captions</Translate>
 							</LocaleLink>
+							<LocaleLink to="/features/edit-video-with-claude/">
+								<Translate id="footer.product.claude">Edit with Claude</Translate>
+							</LocaleLink>
 						</div>
 					</div>
 

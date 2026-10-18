@@ -344,6 +344,9 @@
   "footer.product.captions": {
     "message": "Legendas locais"
   },
+  "footer.product.claude": {
+    "message": "Editar com Claude"
+  },
   "footer.platforms.title": {
     "message": "Plataformas",
     "description": "Footer column title."

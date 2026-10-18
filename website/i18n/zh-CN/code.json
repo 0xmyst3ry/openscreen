@@ -357,6 +357,9 @@
   "footer.product.captions": {
     "message": "本地字幕"
   },
+  "footer.product.claude": {
+    "message": "用 Claude 剪辑"
+  },
   "footer.platforms.title": {
     "message": "平台",
     "description": "Footer column title."

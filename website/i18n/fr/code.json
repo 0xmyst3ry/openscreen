@@ -344,6 +344,9 @@
   "footer.product.captions": {
     "message": "Sous-titres locaux"
   },
+  "footer.product.claude": {
+    "message": "Monter avec Claude"
+  },
   "footer.platforms.title": {
     "message": "Plateformes",
     "description": "Footer column title."
