@@ -239,6 +239,22 @@ export function collapseTracksToPills(tracks: AxcutAudioTrack[]): AxcutAudioTrac
 	});
 }
 
+/**
+ * Every take once, keyed by the id of the fragment that plays it: its first. The export and the
+ * preview both play a take from there, at 1x, across the whole pill. Played fragment by fragment,
+ * each one its own slice, a bed was back on the ruler under a speed region: silent at the end of a
+ * slowed clip, then behind; on top of itself through a sped-up one.
+ */
+export function takesByHeadFragment(tracks: AxcutAudioTrack[]): Map<string, AxcutAudioTrack> {
+	const heads = new Map<string, string>();
+	for (const track of [...tracks].sort((a, b) => a.startMs - b.startMs)) {
+		if (!heads.has(trackGroupId(track))) heads.set(trackGroupId(track), track.id);
+	}
+	return new Map(
+		collapseTracksToPills(tracks).map((pill) => [heads.get(trackGroupId(pill)) ?? pill.id, pill]),
+	);
+}
+
 /** Drop every fragment of a track, and its asset when nothing else needs it.
  *
  *  An imported audio asset is only ever reachable through its track — audio is
