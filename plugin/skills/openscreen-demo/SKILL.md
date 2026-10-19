@@ -18,11 +18,11 @@ You need the tools `startRecording`, `stopRecording`, `exportVideo` and `getFram
 
 | OS | Executable |
 |---|---|
-| Windows | `%LOCALAPPDATA%\Programs\Openscreen\Openscreen.exe`, or `C:\Program Files\Openscreen\Openscreen.exe`. The Microsoft Store version is `openscreen` on the PATH from the release after 2.1.0 (`where openscreen`). An older Store version has no fixed path to register: if it is the only one installed, offer the installer below |
+| Windows | `%LOCALAPPDATA%\Programs\Openscreen\Openscreen.exe`, or `C:\Program Files\Openscreen\Openscreen.exe`. The Microsoft Store version: `openscreen` on the PATH once its release ships the execution alias (`where openscreen`); before that, `app\Openscreen.exe` under `(Get-AppxPackage EtienneLescot.OpenScreen).InstallLocation` (in PowerShell). That path carries the version: register it again after a Store update. Never wrap it in a `powershell -Command` launcher: PowerShell swallows the server's input after the first message |
 | macOS | `/Applications/Openscreen.app/Contents/MacOS/Openscreen` |
 | Linux | `openscreen` on the PATH, or the AppImage |
 
-Run `"<executable>" help`: it must list `mcp`. If the app is missing, or too old to list it, offer to install the latest release, and do it only once the user agrees:
+Check every location in the table before you call OpenScreen missing: the Store version is the one most often overlooked. Run `"<executable>" help`: it must list `mcp`. If the app is missing, or too old to list it, offer to install the latest release, and do it only once the user agrees:
 
 1. Find the installer for this machine in the latest release of `getopenscreen/openscreen`: `gh release view --repo getopenscreen/openscreen --json assets`, or https://github.com/getopenscreen/openscreen/releases/latest.
    - **macOS:** `Openscreen-macOS-Apple-Silicon-<version>.dmg`, or `-Intel-` (check `uname -m`). Mount it, copy `Openscreen.app` to `/Applications`, unmount it.
@@ -41,6 +41,8 @@ Run `"<executable>" help`: it must list `mcp`. If the app is missing, or too old
 - **Linux:** the desktop's picker opens on every recording, and the user chooses the window.
 
 **Hand over to the next session.** Write the user's request, and anything already decided, to `openscreen-demo-plan.md` in the working directory. Then ask the user to start a new session and say *continue the OpenScreen demo*. In that session, read the file and carry on from step 2.
+
+The tools are missing right after the plugin or the server is added: an agent loads its MCP servers when a session starts. Say so in plain words and hand over as above, with the storyboard in the file if you have made one. Never stand in for the missing tools by driving OpenScreen's window with computer use or a mouse tool: it takes over the user's mouse and screen while they may be working.
 
 ## 2. Plan before recording
 
