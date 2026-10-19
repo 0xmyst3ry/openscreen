@@ -170,7 +170,8 @@ jobs:
           BRANCH="release/v${STABLE_VERSION}"
           git fetch origin main "$BRANCH"
           main_version() {
-            git show origin/main:package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version'
+            # An argument, not stdin: readFileSync(0) can throw EAGAIN on a CI pipe.
+            node -p 'JSON.parse(process.argv[1]).version' "$(git show origin/main:package.json)"
           }
           # At or past the release, not just equal: promoting an older version after a
           # newer one must not set main back.

@@ -8,8 +8,10 @@
 // names it instead of leaving it behind. A cherry-pick resolved differently from its
 // original also shows up here: `git cherry` matches on the patch, not the subject.
 
-import { readFileSync } from "node:fs";
-import { argv } from "node:process";
+import { argv, stdin } from "node:process";
+// Not readFileSync(0): on a non-blocking stdin it throws EAGAIN instead of waiting,
+// which failed promote.yml's main sync at v2.1.2. The stream waits for the data.
+import { text } from "node:stream/consumers";
 
 const VERSION_BUMP = /^chore\(release\): bump to /;
 
@@ -27,5 +29,5 @@ export function unsyncedFixes(cherry) {
 
 // Only run when invoked directly, so the test can import the function.
 if (import.meta.filename === argv[1]) {
-	for (const commit of unsyncedFixes(readFileSync(0, "utf8"))) console.log(commit);
+	for (const commit of unsyncedFixes(await text(stdin))) console.log(commit);
 }
