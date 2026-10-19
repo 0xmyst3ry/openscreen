@@ -2941,6 +2941,52 @@ describe("buildSceneDescription.audioTracks", () => {
 		expect(entry.startSec).toBeCloseTo(3, 6);
 	});
 
+	it("plays a bed spanning a slowed clip as one take, on the clock, not on the ruler", () => {
+		// The document stores a track as one fragment per clip it covers, each fragment's offset
+		// advanced by the ruler time before it. Mixed fragment by fragment, the bed under a 0.5x
+		// clip played its 4 ruler seconds of file over 8 output seconds, went silent for the other
+		// 4, then came back 4 seconds behind the music it should have been playing.
+		const screen = makeAsset({ id: "scr", originalPath: "/screen.mp4", durationSec: 20 });
+		const fragment = { ...track, trackId: "trk1", startMs: 0, offsetMs: 0, endMs: 4000 };
+		const doc = makeDoc({
+			assets: [screen, audioAsset],
+			clips: [
+				makeClip({
+					id: "c1",
+					assetId: "scr",
+					sourceStartSec: 0,
+					sourceEndSec: 4,
+					timelineStartSec: 0,
+					timelineEndSec: 4,
+				}),
+				makeClip({
+					id: "c2",
+					assetId: "scr",
+					sourceStartSec: 4,
+					sourceEndSec: 8,
+					timelineStartSec: 4,
+					timelineEndSec: 8,
+				}),
+			],
+			legacyEditor: { speedRegions: [{ id: "s1", startMs: 0, endMs: 4000, speed: 0.5 }] },
+			audioTracks: [
+				{ ...fragment, clipId: "c1", sourceStartSec: 0, sourceEndSec: 4 },
+				{
+					...fragment,
+					id: "trk1-b",
+					clipId: "c2",
+					sourceStartSec: 4,
+					sourceEndSec: 8,
+					startMs: 4000,
+					endMs: 8000,
+					offsetMs: 4000,
+				},
+			],
+		});
+		const entries = buildSceneDescription(doc).audioTracks;
+		expect(entries.map((e) => [e.startSec, e.trimStartSec, e.trimEndSec])).toEqual([[0, 0, 8]]);
+	});
+
 	it("drops a track whose asset has no resolvable path", () => {
 		const doc = makeDoc({ assets: [], audioTracks: [track] });
 		expect(buildSceneDescription(doc).audioTracks).toEqual([]);

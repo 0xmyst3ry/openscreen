@@ -31,7 +31,7 @@ import {
 	getCaptionTranslations,
 } from "@/lib/ai-edition/captions";
 import { clickSoundForDocument } from "@/lib/ai-edition/clickSound";
-import { collapseTracksToPills, trackGroupId } from "@/lib/ai-edition/document/audioTracks";
+import { takesByHeadFragment } from "@/lib/ai-edition/document/audioTracks";
 import { createId } from "@/lib/ai-edition/document/ids";
 import { isFormatFillActive, pickOutputDims } from "@/lib/ai-edition/document/outputFormat";
 import {
@@ -884,15 +884,12 @@ export function buildSceneDescription(
 	// question, and it does not depend on the track.
 	// Placed once: the projection below counts them, so a track after a pause lands where
 	const removed = removedRawSpans(projectedClips, document.timeline.trimRanges);
-	// The take's pills, keyed by group. A voiceover is walked ONCE per pill and never per
-	// stored fragment: the document keeps one fragment per clip a take covers, so walking
-	// them separately would emit overlapping entries and `overlay_track_pcm` sums with `+=`
-	// at an absolute offset — the export would contain the take playing on top of itself.
-	const voiceoverPills = new Map(
-		collapseTracksToPills(document.audioTracks)
-			.filter((pill) => pill.kind === "voiceover" && !pill.loop)
-			.map((pill) => [trackGroupId(pill), pill]),
-	);
+	// Every take is mixed ONCE, from its head fragment, as its whole pill — never per stored
+	// fragment. The document keeps one fragment per clip a take covers: a voiceover walked per
+	// fragment would play on top of itself (`overlay_track_pcm` sums with `+=`), and a bed laid
+	// per fragment, each at its projected head with its ruler-advanced offset, went silent at the
+	// end of a slowed clip and came back late (see `takesByHeadFragment`).
+	const takes = takesByHeadFragment(document.audioTracks);
 	// Click hits for the "mouse clicks" toggle, placed on the programme this export assembles.
 	// Synchronous: the cues were read from the take's sidecar when the sound was switched on.
 	// Its row lives under "Show cursor", like the click impact: a hidden cursor makes no sound.
@@ -900,8 +897,9 @@ export function buildSceneDescription(
 		clickSound: settings.cursorShow && settings.cursor.clickSound,
 		clickSoundGainDb: settings.cursor.clickSoundGainDb,
 	});
-	const audioTracks = document.audioTracks.flatMap((track) => {
-		if (track.muted) return [];
+	const audioTracks = document.audioTracks.flatMap((fragment) => {
+		const track = takes.get(fragment.id);
+		if (!track || track.muted) return [];
 		const asset = assetById.get(track.assetId);
 		if (!asset?.originalPath) return [];
 		const sourceDurationSec = asset.durationSec ?? track.durationSec;
@@ -957,17 +955,12 @@ export function buildSceneDescription(
 		// #560 refuses that combination outright, and inventing semantics for something
 		// about to be banned would be the worse answer.
 		if (track.kind === "voiceover" && !track.loop) {
-			const groupId = trackGroupId(track);
-			const pill = voiceoverPills.get(groupId);
-			// Emitted from the group's HEAD fragment only — every other fragment of the same
-			// take is already covered by the pill's own walk.
-			if (!pill || pill.id !== track.id) return [];
-			const rawSpanSec = Math.max(0, pill.endMs / 1000 - pill.startMs / 1000);
+			const rawSpanSec = Math.max(0, track.endMs / 1000 - track.startMs / 1000);
 			// Unprobed assets have no real duration to cap with; the RAW span is how much
 			// file the take covers, which is the honest fallback once the cuts are taken out.
 			const voWindowSec =
 				sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : rawSpanSec;
-			const kept = takeProgramme(pill, removed)
+			const kept = takeProgramme(track, removed)
 				.filter((piece) => piece.kind === "play")
 				.map((piece) => ({
 					...base,

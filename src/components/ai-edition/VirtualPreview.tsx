@@ -11,8 +11,8 @@ import {
 	takeCrossedClickHits,
 } from "@/lib/ai-edition/clickSound";
 import {
-	collapseTracksToPills,
 	resolveFadeSecs,
+	takesByHeadFragment,
 	trackGroupId,
 } from "@/lib/ai-edition/document/audioTracks";
 import {
@@ -875,23 +875,22 @@ export function VirtualPreview({
 	// One walk per take, recomputed only when the cuts or the insertions move. The rAF asks
 	// it every frame per track, and walking on each would be wasteful.
 	const takePiecesRef = useRef<Map<string, TakePiece[]>>(new Map());
-	const takeHeadsRef = useRef<Map<string, string>>(new Map());
+	// Each take keyed by the fragment whose element plays it, as the export mixes it.
+	const takesRef = useRef<Map<string, AxcutAudioTrack>>(new Map());
 	const removedRef = useRef(removedRawSpans(clips, trimRanges));
 	removedRef.current = useMemo(() => removedRawSpans(clips, trimRanges), [clips, trimRanges]);
 	const takeWalks = useMemo(() => {
 		const pieces = new Map<string, TakePiece[]>();
-		const heads = new Map<string, string>();
 		const removed = removedRawSpans(clips, trimRanges);
-		for (const pill of collapseTracksToPills(audioTracks)) {
+		const takes = takesByHeadFragment(audioTracks);
+		for (const pill of takes.values()) {
 			if (pill.kind !== "voiceover" || pill.loop) continue;
-			const groupId = trackGroupId(pill);
-			heads.set(groupId, pill.id);
-			pieces.set(groupId, takeProgramme(pill, removed));
+			pieces.set(trackGroupId(pill), takeProgramme(pill, removed));
 		}
-		return { pieces, heads };
+		return { pieces, takes };
 	}, [audioTracks, clips, trimRanges]);
 	takePiecesRef.current = takeWalks.pieces;
-	takeHeadsRef.current = takeWalks.heads;
+	takesRef.current = takeWalks.takes;
 	// Trim-narrowed (`resolvePlaybackSegments`) — used ONLY to detect "has the <video>'s own
 	// currentTime drifted into a trim" and where to jump it back out to. Everything ELSE in
 	// this component (`clips`/`clipsRef` above, virtualTimeSec, zoom/speed region lookups,
@@ -1033,9 +1032,18 @@ export function VirtualPreview({
 				}
 			}
 			duck.db = nextMusicDuckDb(duck.db, (now - duck.voiceAt) / 1000, frameSec);
-			for (const track of audioTracksRef.current) {
-				const el = audioTrackElsRef.current.get(track.id);
+			for (const fragment of audioTracksRef.current) {
+				const el = audioTrackElsRef.current.get(fragment.id);
 				if (!el) continue;
+				// A take plays once, from its head fragment's element, as its whole pill: the
+				// document keeps one fragment per clip the take covers, and letting each play its
+				// own slice put a bed back on the ruler under a speed region (see
+				// `takesByHeadFragment`), and a voiceover on top of itself.
+				const track = takesRef.current.get(fragment.id);
+				if (!track) {
+					if (!el.paused) el.pause();
+					continue;
+				}
 				const outputStartSec = projectRawTimelineSecToPlayback(
 					clipsRef.current,
 					trimRangesRef.current,
@@ -1062,22 +1070,15 @@ export function VirtualPreview({
 						),
 				);
 				// A voiceover follows the cuts AND its own insertions, through one walk over
-				// its PILL. Every fragment but the head is silenced: the document keeps one
-				// per clip the take covers, and letting each play its own slice would put the
-				// take on top of itself, exactly as it would in the export.
+				// its pill.
 				//
 				// A bed plays through a cut and ends early, on purpose. A looping voiceover
 				// keeps the bed's treatment — step 6 of #560 refuses that combination, and
 				// inventing semantics for it would be the worse answer.
-				const takeGroupId = trackGroupId(track);
 				const takePieces =
 					track.kind === "voiceover" && !track.loop
-						? takePiecesRef.current.get(takeGroupId)
+						? takePiecesRef.current.get(trackGroupId(track))
 						: undefined;
-				if (takePieces && takeHeadsRef.current.get(takeGroupId) !== track.id) {
-					if (!el.paused) el.pause();
-					continue;
-				}
 				const trackTarget = takePieces
 					? (takePlaybackAt(takePieces, virtualTimeSecRef.current) ?? {
 							targetTimeSec: track.offsetMs / 1000,
@@ -1109,7 +1110,7 @@ export function VirtualPreview({
 				} else {
 					trackGainDb += duck.db;
 				}
-				const trackGainNode = audioTrackGainNodesRef.current.get(track.id);
+				const trackGainNode = audioTrackGainNodesRef.current.get(fragment.id);
 				if (trackGainNode) {
 					trackGainNode.gain.value = audioGainScalar(trackGainDb) * fade;
 					if (el.volume !== 1) el.volume = 1;
