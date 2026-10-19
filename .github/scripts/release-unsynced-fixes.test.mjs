@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { unsyncedFixes } from "./release-unsynced-fixes.mjs";
 
@@ -33,5 +35,17 @@ describe("unsyncedFixes", () => {
 
 	it("finds nothing in empty input", () => {
 		expect(unsyncedFixes("")).toEqual([]);
+	});
+
+	it("waits for stdin that arrives late, as `git cherry` writes it", async () => {
+		const script = fileURLToPath(new URL("./release-unsynced-fixes.mjs", import.meta.url));
+		const child = spawn(process.execPath, [script]);
+		let out = "";
+		child.stdout.on("data", (chunk) => {
+			out += chunk;
+		});
+		setTimeout(() => child.stdin.end("+ 0a1b2c3d4 fix(export): release branch only\n"), 200);
+		const code = await new Promise((resolve) => child.on("close", resolve));
+		expect({ code, out }).toEqual({ code: 0, out: "0a1b2c3d4 fix(export): release branch only\n" });
 	});
 });
