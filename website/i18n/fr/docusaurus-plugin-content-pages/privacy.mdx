@@ -39,7 +39,7 @@ L'application ne contient aucun rapport de plantage. **Enregistrer les diagnosti
 
 ## Le serveur MCP et le plugin pour agents {#the-mcp-server-and-the-agent-plugin}
 
-Le serveur MCP d'OpenScreen s'exécute sur votre ordinateur : `openscreen mcp` communique avec l'agent qui l'a lancé, et le serveur intégré à l'application n'écoute que sur 127.0.0.1, derrière un jeton. Aucun des deux n'envoie quoi que ce soit hors de votre machine. L'agent que vous connectez, comme Claude Code ou Codex, en reçoit des données de projet et des images fixes, et peut les transmettre à son propre fournisseur de modèle selon les conditions de cet agent.
+Le serveur MCP d'OpenScreen s'exécute sur votre ordinateur : `openscreen mcp` communique avec l'agent qui l'a lancé, et le serveur intégré à l'application n'écoute que sur 127.0.0.1, derrière un jeton. Ce qu'ils échangent avec l'agent reste sur votre machine. La seule chose que l'un ou l'autre en fait sortir est le comptage quotidien anonyme décrit plus haut, que `openscreen mcp` envoie comme l'application. L'agent que vous connectez, comme Claude Code ou Codex, en reçoit des données de projet et des images fixes, et peut les transmettre à son propre fournisseur de modèle selon les conditions de cet agent.
 
 Le skill `openscreen-demo` et le plugin OpenScreen pour agents de code n'envoient des données que lorsque vous le demandez :
 

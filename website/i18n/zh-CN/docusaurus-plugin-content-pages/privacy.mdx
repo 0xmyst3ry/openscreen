@@ -39,7 +39,7 @@ OpenScreen 由 Etienne Lescot 维护，他是本页所述数据的数据控制�
 
 ## MCP 服务器和智能体插件 {#the-mcp-server-and-the-agent-plugin}
 
-OpenScreen 的 MCP 服务器在你的电脑上运行：`openscreen mcp` 与启动它的智能体通信，而应用内置的服务器只监听 127.0.0.1，并受令牌保护。两者都不会从你的电脑发送任何内容。你连接的智能体（例如 Claude Code 或 Codex）会从它们那里接收项目数据和静态画面，并可能按照该智能体的条款将其传给它自己的模型提供方。
+OpenScreen 的 MCP 服务器在你的电脑上运行：`openscreen mcp` 与启动它的智能体通信，而应用内置的服务器只监听 127.0.0.1，并受令牌保护。它们与智能体交换的内容都留在你的电脑上。两者唯一会发出你电脑的，是上文所述的匿名每日计数，`openscreen mcp` 会像应用一样发送它。你连接的智能体（例如 Claude Code 或 Codex）会从它们那里接收项目数据和静态画面，并可能按照该智能体的条款将其传给它自己的模型提供方。
 
 `openscreen-demo` 技能和面向编程智能体的 OpenScreen 插件仅在你要求时发送数据：
 

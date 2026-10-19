@@ -39,7 +39,7 @@ The app contains no crash reporting. **Save Diagnostics** writes a file to your 
 
 ## The MCP server and the agent plugin
 
-OpenScreen's MCP server runs on your computer: `openscreen mcp` talks to the agent that started it, and the server built into the app listens only on 127.0.0.1, behind a token. Neither sends anything off your machine. The agent you connect, such as Claude Code or Codex, receives project data and still frames from them, and may pass them to its own model provider under that agent's terms.
+OpenScreen's MCP server runs on your computer: `openscreen mcp` talks to the agent that started it, and the server built into the app listens only on 127.0.0.1, behind a token. What they exchange with the agent stays on your machine. The only thing either sends off it is the anonymous daily count described above, which `openscreen mcp` sends just as the app does. The agent you connect, such as Claude Code or Codex, receives project data and still frames from them, and may pass them to its own model provider under that agent's terms.
 
 The `openscreen-demo` skill and the OpenScreen plugin for coding agents send data only when you ask for it:
 
