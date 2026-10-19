@@ -39,7 +39,7 @@ Die App enthält keine Absturzberichte. **Diagnosedaten speichern** schreibt ein
 
 ## Der MCP-Server und das Agent-Plugin {#the-mcp-server-and-the-agent-plugin}
 
-Der MCP-Server von OpenScreen läuft auf deinem Computer: `openscreen mcp` kommuniziert mit dem Agenten, der ihn gestartet hat, und der in die App eingebaute Server lauscht nur auf 127.0.0.1, hinter einem Token. Keiner von beiden sendet etwas von deinem Rechner. Der Agent, den du verbindest, etwa Claude Code oder Codex, erhält von ihnen Projektdaten und Standbilder und kann sie nach den Bedingungen dieses Agenten an seinen eigenen Modellanbieter weitergeben.
+Der MCP-Server von OpenScreen läuft auf deinem Computer: `openscreen mcp` kommuniziert mit dem Agenten, der ihn gestartet hat, und der in die App eingebaute Server lauscht nur auf 127.0.0.1, hinter einem Token. Was sie mit dem Agenten austauschen, bleibt auf deinem Rechner. Das Einzige, was einer von beiden davon sendet, ist die oben beschriebene anonyme tägliche Zählung, die `openscreen mcp` genau wie die App sendet. Der Agent, den du verbindest, etwa Claude Code oder Codex, erhält von ihnen Projektdaten und Standbilder und kann sie nach den Bedingungen dieses Agenten an seinen eigenen Modellanbieter weitergeben.
 
 Der Skill `openscreen-demo` und das OpenScreen-Plugin für Coding-Agenten senden Daten nur, wenn du darum bittest:
 
