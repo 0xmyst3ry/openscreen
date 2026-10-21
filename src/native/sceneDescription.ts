@@ -982,11 +982,22 @@ export function buildSceneDescription(
 				}))
 				.filter((entry) => entry.trimEndSec > entry.trimStartSec);
 			// The fades belong to the TAKE's edges, not to every piece a cut left behind.
-			return kept.map((entry, i) => ({
-				...entry,
-				fadeInSec: i === 0 ? base.fadeInSec : 0,
-				fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
-			}));
+			return kept.map((entry, i) => {
+				// A piece plays at 1x, but its head and the next one's are projected through the
+				// speed regions: a sped-up stretch between them leaves the piece longer than the
+				// output gap, so it would still be playing when the next one starts (#1283). It
+				// stops where the next piece begins.
+				const next = kept[i + 1];
+				const trimEndSec = next
+					? Math.min(entry.trimEndSec, entry.trimStartSec + next.startSec - entry.startSec)
+					: entry.trimEndSec;
+				return {
+					...entry,
+					trimEndSec,
+					fadeInSec: i === 0 ? base.fadeInSec : 0,
+					fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
+				};
+			});
 		}
 		if (!track.loop) {
 			return [
