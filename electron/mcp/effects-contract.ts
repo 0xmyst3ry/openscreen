@@ -144,5 +144,25 @@ Parameters: depth (number, 0–1, default 0.6), tint (color, default "#000000").
         return vec4<f32>(mix(c.rgb, params.tint.rgb, k), c.a);
     }
 
+## Recipe: lift real UI blocks out of the recording
+
+To detach a card or a panel, bring it to the camera, zoom into it or explode the interface into 3D
+cards. The compositor sees pixels, not the page, so the blocks come from you:
+
+1. **Read them while you record.** In the page you drive, take each block's
+   \`getBoundingClientRect()\` divided by the viewport size: fractions of the recorded frame. Scroll
+   before the take starts, so nothing moves while a block is lifted.
+2. **Write them into the code** as constants: \`const CARD: vec4<f32> = vec4<f32>(x, y, w, h);\`.
+   A block that moves during the take (a panel that opens, a card that slides) gets a few keyframes
+   mixed on \`ctx.time\`, never a long table: a large constant table slows every frame on some GPUs.
+   These fractions are points of the recording's surface (when the project crops the recording,
+   take them relative to the crop rectangle), so place them with \`fx_from_footage\` and they follow
+   the zoom, the layout and the 3D camera.
+3. **Hide the cursor and draw the pointer yourself.** \`frame()\` already holds the pointer: a lifted
+   block would carry a frozen copy of it while the page keeps another. Turn it off with
+   \`setEditorSettings\` \`{ cursor: { show: false } }\`; \`ctx.cursor\` and \`ctx.clicks\` keep the
+   recording's pointer. Draw it last: over a lifted block, move it with that block's transform, so it
+   stays on the part of the interface the user points at; anywhere else, at \`ctx.cursor.xy\`.
+
 Check the result with getFrames at the moments that matter.
 `;
