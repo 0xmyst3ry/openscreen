@@ -150,8 +150,10 @@ To detach a card or a panel, bring it to the camera, zoom into it or explode the
 cards. The compositor sees pixels, not the page, so the blocks come from you:
 
 1. **Read them while you record.** In the page you drive, take each block's
-   \`getBoundingClientRect()\` divided by the viewport size: fractions of the recorded frame. Scroll
-   before the take starts, so nothing moves while a block is lifted.
+   \`getBoundingClientRect()\`. Divided by the viewport size, it is a fraction of the recorded frame
+   only when the recording is the viewport itself. For a screen or window recording, convert it to
+   frame pixels first (times \`devicePixelRatio\`, plus the viewport's origin in the frame), then
+   divide by the frame size. Scroll before the take starts, so nothing moves while a block is lifted.
 2. **Write them into the code** as constants: \`const CARD: vec4<f32> = vec4<f32>(x, y, w, h);\`.
    A block that moves during the take (a panel that opens, a card that slides) gets a few keyframes
    mixed on \`ctx.time\`, never a long table: a large constant table slows every frame on some GPUs.
@@ -160,7 +162,9 @@ cards. The compositor sees pixels, not the page, so the blocks come from you:
    the zoom, the layout and the 3D camera.
 3. **Hide the cursor and draw the pointer yourself.** \`frame()\` already holds the pointer: a lifted
    block would carry a frozen copy of it while the page keeps another. Turn it off with
-   \`setEditorSettings\` \`{ cursor: { show: false } }\`; \`ctx.cursor\` and \`ctx.clicks\` keep the
+   \`setEditorSettings\` \`{ cursor: { show: false } }\`. This needs an \`editable-overlay\` recording
+   (the default): with \`cursor: "system"\` the pointer is drawn into the video and cannot be hidden,
+   so record again. \`ctx.cursor\` and \`ctx.clicks\` keep the
    recording's pointer. Draw it last: over a lifted block, move it with that block's transform, so it
    stays on the part of the interface the user points at; anywhere else, at \`ctx.cursor.xy\`.
 
