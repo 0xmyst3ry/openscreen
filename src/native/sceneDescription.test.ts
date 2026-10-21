@@ -2723,6 +2723,18 @@ describe("buildSceneDescription.audioTracks", () => {
 		expect(entries[1]).toMatchObject({ startSec: 4, trimStartSec: 6, trimEndSec: 10 });
 	});
 
+	it("stops a piece where the next one starts when a speed region sits before the cut", () => {
+		// Issue #1283. A 2x region over raw 0..2 saves 1s, so the piece after the cut lands at
+		// output 3. Played whole at 1x, raw 0..4 ran to output 4: two pieces at once for 1s.
+		const doc = { ...cutDoc([voice]) };
+		doc.legacyEditor = { speedRegions: [{ id: "s", startMs: 0, endMs: 2000, speed: 2 }] };
+		const entries = buildSceneDescription(doc).audioTracks;
+		expect(entries.map((e) => [e.startSec, e.trimStartSec, e.trimEndSec])).toEqual([
+			[0, 0, 3],
+			[3, 6, 10],
+		]);
+	});
+
 	it("keeps the fades on the take's outer edges across a split", () => {
 		const entries = buildSceneDescription(
 			cutDoc([{ ...voice, fadeInMs: 500, fadeOutMs: 500 }]),
