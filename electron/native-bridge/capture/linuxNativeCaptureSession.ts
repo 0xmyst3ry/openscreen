@@ -114,6 +114,7 @@ export class LinuxNativeCaptureSession {
 	private stoppedReject: ((error: Error) => void) | null = null;
 
 	private sourceKind: LinuxCaptureSourceKind | undefined;
+	private negotiatedCursorMode: LinuxCaptureConfig["cursorMode"] | undefined;
 	private videoEncoder: string | undefined;
 	private lastError: string | null = null;
 	private paused = false;
@@ -356,6 +357,15 @@ export class LinuxNativeCaptureSession {
 	}
 
 	/**
+	 * The cursor mode the helper really negotiates, known once `start()` resolves.
+	 * A portal without EMBEDDED gets METADATA instead (#1357), so the cursor has
+	 * to be drawn by the editor even though the system cursor was asked for.
+	 */
+	get cursorMode(): LinuxCaptureConfig["cursorMode"] {
+		return this.negotiatedCursorMode ?? this.config.cursorMode;
+	}
+
+	/**
 	 * What the helper said in this session, for Save Diagnostics' `helperOutput.linux`:
 	 * its stderr as written and every stdout line except `cursor-sample`, which comes
 	 * at the capture rate and would push everything else out. Still readable after the
@@ -471,6 +481,9 @@ export class LinuxNativeCaptureSession {
 	private handleEvent(payload: PipeWireHelperEvent) {
 		switch (payload.event) {
 			case "ready":
+				if (payload.cursorMode === "metadata" || payload.cursorMode === "embedded") {
+					this.negotiatedCursorMode = payload.cursorMode;
+				}
 				this.resolveReady();
 				return;
 

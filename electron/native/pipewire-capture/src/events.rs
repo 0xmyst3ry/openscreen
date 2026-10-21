@@ -48,6 +48,9 @@ pub enum Event {
         pipewire_version: Option<String>,
         /// Whether the portal advertises METADATA cursor mode at all.
         cursor_metadata_supported: bool,
+        /// The cursor mode actually negotiated, which can differ from the one
+        /// asked for (see `CursorMode::resolve`).
+        cursor_mode: &'static str,
     },
     /// The user has answered the compositor's picker and a source was granted.
     ///
@@ -253,6 +256,7 @@ mod tests {
                 timestamp_ms: 42,
                 pipewire_version: Some("1.0.5".to_owned()),
                 cursor_metadata_supported: true,
+                cursor_mode: "metadata",
             },
             false,
         );
@@ -275,11 +279,13 @@ mod tests {
             timestamp_ms: 7,
             pipewire_version: None,
             cursor_metadata_supported: false,
+            cursor_mode: "embedded",
         });
         assert_eq!(value["event"], "ready");
         assert_eq!(value["timestampMs"], 7);
         assert!(value["pipewireVersion"].is_null());
         assert_eq!(value["cursorMetadataSupported"], false);
+        assert_eq!(value["cursorMode"], "embedded");
     }
 
     #[test]

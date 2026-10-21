@@ -55,6 +55,31 @@ impl CursorMode {
     pub fn reports_cursor(self) -> bool {
         matches!(self, Self::Metadata)
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Metadata => "metadata",
+            Self::Embedded => "embedded",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    /// The mode to actually negotiate, given what the portal offers.
+    ///
+    /// Some portals offer no EMBEDDED at all (niri's, #1357). Refusing to record
+    /// there leaves the user nothing, so EMBEDDED falls back to METADATA: the
+    /// pointer stays out of the pixels and the editor draws it from the samples
+    /// instead. Any other miss is returned unchanged, for the negotiation to
+    /// refuse with its own error.
+    pub fn resolve(self, offered: &[CursorMode]) -> CursorMode {
+        if self == Self::Embedded
+            && !offered.contains(&Self::Embedded)
+            && offered.contains(&Self::Metadata)
+        {
+            return Self::Metadata;
+        }
+        self
+    }
 }
 
 /// Which kind of source the compositor actually handed over.
@@ -167,17 +192,20 @@ fn portal_unavailable(error: impl std::fmt::Display) -> PortalError {
     ))
 }
 
-/// Cheap, non-interactive probe: does this portal offer METADATA cursor mode?
+/// Cheap, non-interactive probe: which cursor modes does this portal offer?
 ///
 /// Split out from [`negotiate`] so the helper can answer that question — and
 /// emit `ready` — before anything raises a dialog.
-pub async fn cursor_metadata_supported() -> Result<bool, PortalError> {
+pub async fn offered_cursor_modes() -> Result<Vec<CursorMode>, PortalError> {
     let proxy = Screencast::new().await.map_err(portal_unavailable)?;
     let cursor_modes = proxy
         .available_cursor_modes()
         .await
         .map_err(|error| failed("AvailableCursorModes", error))?;
-    Ok(cursor_modes.contains(PortalCursorMode::Metadata))
+    Ok([CursorMode::Metadata, CursorMode::Embedded, CursorMode::Hidden]
+        .into_iter()
+        .filter(|mode| cursor_modes.contains(mode.to_portal()))
+        .collect())
 }
 
 /// Runs the negotiation to completion. Blocks on the user for as long as the
@@ -275,4 +303,26 @@ pub async fn negotiate(cursor_mode: CursorMode) -> Result<PortalStream, PortalEr
         size: stream.size(),
         source_kind: stream.source_type().map(SourceKind::from_portal),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CursorMode::{Embedded, Hidden, Metadata};
+
+    #[test]
+    fn embedded_falls_back_to_metadata_when_the_portal_lacks_it() {
+        assert_eq!(Embedded.resolve(&[Metadata, Hidden]), Metadata);
+    }
+
+    #[test]
+    fn an_offered_mode_is_kept() {
+        assert_eq!(Embedded.resolve(&[Metadata, Embedded]), Embedded);
+        assert_eq!(Metadata.resolve(&[Metadata]), Metadata);
+    }
+
+    #[test]
+    fn a_miss_without_a_fallback_is_left_for_negotiation_to_refuse() {
+        assert_eq!(Embedded.resolve(&[Hidden]), Embedded);
+        assert_eq!(Metadata.resolve(&[Embedded]), Metadata);
+    }
 }
