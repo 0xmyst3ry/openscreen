@@ -959,7 +959,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						screenVideoPath: result.path,
 						recordingId: activeNativeRecording.recordingId,
 						webcam: webcamResult.asset,
-						cursorCaptureMode,
+						// The mode main stored for the take, not the one asked for: a portal
+						// without EMBEDDED turns "system" into "editable-overlay" (#1357).
+						// This callback is also reached through the first render's
+						// stopRecording closure, so its own cursorCaptureMode is stale.
+						cursorCaptureMode: result.session?.cursorCaptureMode ?? cursorCaptureMode,
 						durationMs: webcamDurationMs,
 						...(typeof activeNativeRecording.webcamOffsetMs === "number"
 							? { webcamOffsetMs: activeNativeRecording.webcamOffsetMs }
