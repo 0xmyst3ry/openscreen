@@ -189,6 +189,30 @@ describe("LinuxNativeCaptureSession", () => {
 		expect(JSON.stringify(request)).not.toContain("restoreToken");
 	});
 
+	it("reports the cursor mode the helper fell back to (#1357)", async () => {
+		const session = new LinuxNativeCaptureSession({
+			outputPath: "/tmp/recording.mp4",
+			cursorMode: "embedded",
+			fps: 30,
+			audio: { system: { enabled: false }, microphone: { enabled: false, gain: 1 } },
+			maxCursorSamples: 100,
+		});
+		const started = session.start();
+		await Promise.resolve();
+		expect(session.cursorMode).toBe("embedded");
+		helper.emitEvent({ event: "ready", timestampMs: 1_000, cursorMode: "metadata" });
+		await started;
+
+		expect(session.cursorMode).toBe("metadata");
+	});
+
+	it("keeps the requested cursor mode when the helper does not report one", async () => {
+		const session = newSession();
+		await startReady(session);
+
+		expect(session.cursorMode).toBe("metadata");
+	});
+
 	it("reports the source kind the portal granted", async () => {
 		const { session, result } = await record("window");
 

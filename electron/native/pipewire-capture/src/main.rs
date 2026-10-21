@@ -283,10 +283,14 @@ fn main() {
     // compositor fails immediately instead of after a pointless picker. Only
     // fatal when METADATA is the mode actually requested — a recording that
     // wants the system cursor painted in has no use for it.
-    let cursor_metadata_supported = match pollster::block_on(portal::cursor_metadata_supported()) {
-        Ok(supported) => supported,
+    let offered_cursor_modes = match pollster::block_on(portal::offered_cursor_modes()) {
+        Ok(modes) => modes,
         Err(error) => fail(&mut emitter, error.code(), &error.message()),
     };
+    let cursor_metadata_supported = offered_cursor_modes.contains(&portal::CursorMode::Metadata);
+    // Resolved before anything reads it, so the portal, the click readers and
+    // `ready` all see the mode that is really negotiated.
+    let cursor_mode = cursor_mode.resolve(&offered_cursor_modes);
     if !cursor_metadata_supported && cursor_mode.reports_cursor() {
         let error = portal::PortalError::CursorMetadataUnsupported;
         fail(&mut emitter, error.code(), &error.message());
@@ -296,6 +300,7 @@ fn main() {
         timestamp_ms: timestamp_ms(),
         pipewire_version: shim::library_version(),
         cursor_metadata_supported,
+        cursor_mode: cursor_mode.as_str(),
     });
 
     if request.probe_only {
