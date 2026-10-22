@@ -1502,15 +1502,20 @@ export function NewEditorShell() {
 			e.preventDefault();
 			const startY = e.clientY;
 			const startBase = timelineBaseHeightPx;
+			const startRendered = timelineHeightPx;
 			let latestBase = startBase;
 			const move = (ev: PointerEvent) => {
 				// Dragging the handle up (negative clientY delta) enlarges the
 				// timeline, since it sits below the handle.
 				const renderedTarget = Math.min(
 					MAX_TIMELINE_HEIGHT_PX,
-					Math.max(MIN_TIMELINE_HEIGHT_PX, startBase + extraLaneHeightPx - (ev.clientY - startY)),
+					Math.max(MIN_TIMELINE_HEIGHT_PX, startRendered - (ev.clientY - startY)),
 				);
-				latestBase = Math.max(MIN_TIMELINE_HEIGHT_PX, renderedTarget - extraLaneHeightPx);
+				// Apply only the rendered-height delta, preserving the base when expansion hits the cap.
+				latestBase = Math.min(
+					MAX_TIMELINE_HEIGHT_PX,
+					Math.max(MIN_TIMELINE_HEIGHT_PX, startBase + (renderedTarget - startRendered)),
+				);
 				setTimelineBaseHeightPx(latestBase);
 			};
 			const up = () => {
@@ -1521,7 +1526,7 @@ export function NewEditorShell() {
 			window.addEventListener("pointermove", move);
 			window.addEventListener("pointerup", up);
 		},
-		[timelineBaseHeightPx, extraLaneHeightPx],
+		[timelineBaseHeightPx, timelineHeightPx],
 	);
 
 	const transcriptProps = {

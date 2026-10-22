@@ -285,4 +285,52 @@ describe("NewEditorShell timeline height", () => {
 		});
 		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${DEFAULT_TIMELINE_HEIGHT_PX}px`);
 	});
+
+	it.each([
+		{ rowCount: 10, deltaY: 0, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 10, deltaY: -1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 10, deltaY: 1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX - 1 },
+		{ rowCount: 16, deltaY: 0, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 16, deltaY: -1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 16, deltaY: 1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX - 1 },
+	])("preserves the base after a $deltaY px resize with $rowCount capped annotation rows", async ({
+		rowCount,
+		deltaY,
+		expectedBase,
+	}) => {
+		useProjectStore.getState().clear();
+		const doc = createEmptyDocument({ projectId: "p", title: "t" });
+		doc.annotations = Array.from({ length: rowCount }, (_, i) =>
+			annotationRegionSchema.parse({
+				id: `ann-${i}`,
+				startMs: 0,
+				endMs: 5000,
+				type: "text",
+				content: "Hello",
+				zIndex: i,
+				position: { x: 20, y: 20 },
+				size: { width: 30, height: 20 },
+				style: { color: "#ffffff", fontSize: 32, fontFamily: "Inter" },
+			}),
+		);
+		useProjectStore.setState({ document: doc });
+		const { container } = renderShell();
+		const root = container.firstElementChild as HTMLElement;
+		const handle = container.querySelector(
+			'[role="separator"][aria-orientation="horizontal"]',
+		) as HTMLElement;
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${MAX_TIMELINE_HEIGHT_PX}px`);
+
+		await act(async () => {
+			fireEvent.pointerDown(handle, { clientY: 400 });
+			fireEvent.pointerMove(window, { clientY: 400 + deltaY });
+			fireEvent.pointerUp(window);
+		});
+		expect(localStorage.getItem("os-editor-timeline-height")).toBe(String(expectedBase));
+
+		await act(async () => {
+			useProjectStore.setState({ document: { ...doc, annotations: [] } });
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${expectedBase}px`);
+	});
 });
