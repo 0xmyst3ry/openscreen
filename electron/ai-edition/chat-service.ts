@@ -310,9 +310,11 @@ export interface ChatEventSink {
 	toolEnd?: (name: string, ok: boolean, summary?: string) => void;
 	/** The agent loop hit a fatal error (provider 4xx, network, parse). */
 	error?: (message: string) => void;
+	document?: (document: AxcutDocument) => void;
 }
 
 export interface ChatRunEnv {
+	signal?: AbortSignal;
 	/** Reads recorded cursor telemetry for an asset. Built in `electron/ipc/
 	 *  handlers.ts`, where the path allow-list lives. */
 	cursor?: CursorTelemetryReader;
@@ -334,6 +336,7 @@ const NOOP_SINK: Required<ChatEventSink> = {
 	toolStart: noop,
 	toolEnd: noop,
 	error: noop,
+	document: noop,
 };
 
 export async function runChat(
@@ -433,24 +436,37 @@ export async function runChat(
 
 	const appliedToolCalls: AiEditionToolCallSummary[] = [];
 
+	let acceptingEvents = true;
+	const canEmit = () => acceptingEvents && !env.signal?.aborted;
 	const agentSink = {
-		text: (delta: string) => emit.text(delta),
-		thinking: (delta: string) => emit.thinking(delta),
+		document: (document: AxcutDocument) => {
+			if (editsAllowed && canEmit()) emit.document(document);
+		},
+		text: (delta: string) => {
+			if (canEmit()) emit.text(delta);
+		},
+		thinking: (delta: string) => {
+			if (canEmit()) emit.thinking(delta);
+		},
 		toolStart: (name: string, args: unknown) => {
-			emit.toolStart(name, args);
+			if (canEmit()) emit.toolStart(name, args);
 		},
 		toolEnd: (name: string, ok: boolean, summary?: string) => {
+			if (!canEmit()) return;
 			emit.toolEnd(name, ok, summary);
 			if (ok && summary) {
 				appliedToolCalls.push({ name, summary });
 			}
 		},
-		error: (message: string) => emit.error(message),
+		error: (message: string) => {
+			if (canEmit()) emit.error(message);
+		},
 	};
 
 	const { invokeOpenScreenAgent } = await import("./deep-agent/service");
 
 	const result = await invokeOpenScreenAgent({
+		signal: env.signal,
 		document: workingDocument ?? emptyDocumentForTextOnly(projectId),
 		model: {
 			provider: config.provider,
@@ -469,13 +485,15 @@ export async function runChat(
 		checkShaderEffect: env.checkShaderEffect,
 	});
 
+	acceptingEvents = false;
+
 	// The project was deleted while the agent ran: its sessions are gone, so a
 	// reply recorded now would be reported as sent and then never be seen again.
 	if (sessionsByProject.get(projectId) !== sessions) {
 		return { success: false, error: "The project was deleted while the agent was replying." };
 	}
 
-	if (!result.text) {
+	if (!result.text && !result.cancelled) {
 		// ponytail: surface the deep-agent's diagnostic so the user can see
 		// *why* the model produced no text (e.g. MiniMax streaming only
 		// thinking blocks, or a non-text content shape that our extractor
@@ -494,6 +512,7 @@ export async function runChat(
 		id: randomUUID(),
 		role: "assistant",
 		content: result.text,
+		stopped: result.cancelled || undefined,
 		createdAt: new Date().toISOString(),
 		toolCalls: appliedToolCalls.length ? appliedToolCalls : undefined,
 	};
@@ -503,11 +522,10 @@ export async function runChat(
 	return {
 		success: true,
 		assistantMessage,
-		// ponytail: belt and braces on `editsAllowed`. This returned document is
-		// the ONLY path to disk (ChatStripPanel → applyAgentDocument → saveDocument),
-		// so it is where a write that somehow escaped the executor's guard would
-		// still land. Cheap, and it makes the setting's guarantee structural
-		// rather than dependent on one predicate holding everywhere.
+		cancelled: result.cancelled,
+		// Non-streaming callers still receive the completed document. Both this
+		// fallback and the document event above enforce the edit setting; the
+		// panel never reapplies this aggregate after individual streamed edits.
 		document: result.mutated && editsAllowed ? result.document : undefined,
 		toolCalls: appliedToolCalls.length ? appliedToolCalls : undefined,
 		userMessageCheckpointId: userMessage.checkpointId ?? undefined,

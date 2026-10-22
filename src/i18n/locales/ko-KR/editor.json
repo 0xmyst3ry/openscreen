@@ -313,7 +313,11 @@
 			"subtitle": "세션 전환 또는 새로 만들기",
 			"empty": "아직 대화가 없습니다.",
 			"msgsCount": "메시지 {{count}}개 · {{date}}"
-		}
+		},
+		"stop": "중지",
+		"stopping": "중지하는 중…",
+		"stopped": "이 턴을 중지했습니다. 이미 적용된 편집은 유지됩니다.",
+		"stopFailed": "에이전트 턴을 중지할 수 없습니다."
 	},
 	"newProjectDialog": {
 		"title": "새 프로젝트",

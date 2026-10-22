@@ -313,7 +313,11 @@
 			"subtitle": "Přepínání nebo vytváření relací",
 			"empty": "Zatím žádné konverzace.",
 			"msgsCount": "{{count}} zpráv · {{date}}"
-		}
+		},
+		"stop": "Zastavit",
+		"stopping": "Zastavování…",
+		"stopped": "Zastavili jste tento tah. Již provedené úpravy byly zachovány.",
+		"stopFailed": "Tah agenta se nepodařilo zastavit."
 	},
 	"newProjectDialog": {
 		"title": "Nový projekt",

@@ -313,7 +313,11 @@
 			"subtitle": "Chuyển đổi hoặc tạo phiên",
 			"empty": "Chưa có cuộc trò chuyện nào.",
 			"msgsCount": "{{count}} tin nhắn · {{date}}"
-		}
+		},
+		"stop": "Dừng",
+		"stopping": "Đang dừng…",
+		"stopped": "Bạn đã dừng lượt này. Các chỉnh sửa đã áp dụng được giữ lại.",
+		"stopFailed": "Không thể dừng lượt của tác nhân."
 	},
 	"newProjectDialog": {
 		"title": "Dự án mới",

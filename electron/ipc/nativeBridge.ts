@@ -24,6 +24,7 @@ import { CursorService } from "../native-bridge/services/cursorService";
 import { ProjectService } from "../native-bridge/services/projectService";
 import { SystemService } from "../native-bridge/services/systemService";
 import { createNativeBridgeState } from "../native-bridge/store";
+import { ChatRuns } from "./chatRuns";
 import { ExportJobs, isExportId } from "./exportJobs";
 
 export interface NativeBridgeContext {
@@ -71,6 +72,7 @@ export interface NativeBridgeContext {
 		message: string,
 		document?: unknown,
 		sink?: ChatEventSink,
+		signal?: AbortSignal,
 	) => Promise<import("../../src/native/contracts").AiEditionChatResult>;
 	undoAiEditionToolBatch: (
 		projectId: string,
@@ -178,25 +180,31 @@ function isBridgeRequest(value: unknown): value is NativeBridgeRequest {
 	return typeof candidate.domain === "string" && typeof candidate.action === "string";
 }
 
-// build a ChatEventSink that broadcasts each event to the renderer
-// that requested the chat run. The webContents may be gone by the time a late
-// delta fires (tab closed, window destroyed) — webContents.send throws, so we
-// swallow the error to keep the loop running. The renderer treats a missing
-// "end of stream" as "the run was abandoned" and shows an inline error.
-function buildChatEventSink(sender: Electron.WebContents, sessionId: string): ChatEventSink {
+// Route progress only to the requesting renderer and only while its turn is
+// active. Window teardown aborts the run; a send racing teardown is harmless.
+function buildChatEventSink(
+	sender: Electron.WebContents,
+	projectId: string,
+	sessionId: string,
+	runId: string,
+	signal: AbortSignal,
+): ChatEventSink {
+	const identity = { projectId, runId };
 	const send = (payload: AiEditionChatEvent) => {
 		try {
-			sender.send("ai-edition.chat-event", payload);
+			if (!signal.aborted) sender.send("ai-edition.chat-event", payload);
 		} catch {
 			// webContents gone — keep the loop running silently.
 		}
 	};
 	return {
-		text: (delta) => send({ kind: "text", sessionId, delta }),
-		thinking: (delta) => send({ kind: "thinking", sessionId, delta }),
-		toolStart: (name, args) => send({ kind: "toolStart", sessionId, name, args }),
-		toolEnd: (name, ok, summary) => send({ kind: "toolEnd", sessionId, name, ok, summary }),
-		error: (message) => send({ kind: "error", sessionId, message }),
+		document: (document) => send({ ...identity, kind: "document", sessionId, document }),
+		text: (delta) => send({ ...identity, kind: "text", sessionId, delta }),
+		thinking: (delta) => send({ ...identity, kind: "thinking", sessionId, delta }),
+		toolStart: (name, args) => send({ ...identity, kind: "toolStart", sessionId, name, args }),
+		toolEnd: (name, ok, summary) =>
+			send({ ...identity, kind: "toolEnd", sessionId, name, ok, summary }),
+		error: (message) => send({ ...identity, kind: "error", sessionId, message }),
 	};
 }
 
@@ -252,6 +260,7 @@ export function registerNativeBridgeHandlers(context: NativeBridgeContext) {
 	});
 
 	const exportJobs = new ExportJobs();
+	const chatRuns = new ChatRuns<Electron.WebContents>();
 	ipcMain.handle(NATIVE_BRIDGE_CHANNEL, async (event, request: unknown) => {
 		if (!isBridgeRequest(request)) {
 			return createErrorResponse(undefined, "INVALID_REQUEST", "Invalid native bridge request.");
@@ -650,19 +659,67 @@ export function registerNativeBridgeHandlers(context: NativeBridgeContext) {
 							);
 						case "mcp.regenerateToken":
 							return createSuccessResponse(requestId, await aiEditionService.mcpRegenerateToken());
+						case "chat.cancel":
 						case "chat.run": {
-							const sessionId = request.payload.sessionId;
-							const sink = buildChatEventSink(event.sender, sessionId);
-							return createSuccessResponse(
-								requestId,
-								await aiEditionService.chatRun(
-									request.payload.projectId,
-									sessionId,
-									request.payload.message,
-									request.payload.document,
-									sink,
-								),
-							);
+							const payload = request.payload;
+							const validId = (id: unknown): id is string =>
+								typeof id === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(id);
+							if (
+								!payload ||
+								!validId(payload.projectId) ||
+								!validId(payload.sessionId) ||
+								!validId(payload.runId)
+							) {
+								return createErrorResponse(
+									requestId,
+									"INVALID_REQUEST",
+									"Invalid chat turn identity.",
+								);
+							}
+							const { projectId, sessionId, runId } = payload;
+							if (request.action === "chat.cancel") {
+								return createSuccessResponse(requestId, {
+									accepted: chatRuns.cancel(event.sender, projectId, sessionId, runId),
+								});
+							}
+							if (typeof request.payload.message !== "string" || !request.payload.message.trim()) {
+								return createErrorResponse(requestId, "INVALID_REQUEST", "Invalid chat message.");
+							}
+							const documentProjectId = (
+								request.payload.document as { project?: { id?: unknown } } | null
+							)?.project?.id;
+							if (documentProjectId !== undefined && documentProjectId !== projectId) {
+								return createErrorResponse(
+									requestId,
+									"INVALID_REQUEST",
+									"The document belongs to another project.",
+								);
+							}
+							const turn = chatRuns.start(event.sender, projectId, sessionId, runId);
+							if (!turn)
+								return createErrorResponse(
+									requestId,
+									"UNAVAILABLE",
+									"An agent turn is already running for this project.",
+								);
+							const abandon = () => chatRuns.cancel(event.sender, projectId, sessionId, runId);
+							event.sender.once("destroyed", abandon);
+							try {
+								return createSuccessResponse(
+									requestId,
+									await aiEditionService.chatRun(
+										projectId,
+										sessionId,
+										request.payload.message,
+										request.payload.document,
+										buildChatEventSink(event.sender, projectId, sessionId, runId, turn.signal),
+										turn.signal,
+									),
+								);
+							} finally {
+								event.sender.removeListener("destroyed", abandon);
+								turn.finish();
+							}
 						}
 						case "chat.undoLastBatch":
 							return createSuccessResponse(

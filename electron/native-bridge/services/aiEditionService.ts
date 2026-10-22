@@ -53,6 +53,7 @@ export interface AiEditionServiceOptions {
 		message: string,
 		document?: unknown,
 		sink?: ChatEventSink,
+		signal?: AbortSignal,
 	) => Promise<AiEditionChatResult>;
 	rewindToMessage: (
 		projectId: string,
@@ -314,8 +315,9 @@ export class AiEditionService {
 		message: string,
 		document?: unknown,
 		sink?: ChatEventSink,
+		signal?: AbortSignal,
 	): Promise<AiEditionChatResult> {
-		return this.options.runChat(projectId, sessionId, message, document, sink);
+		return this.options.runChat(projectId, sessionId, message, document, sink, signal);
 	}
 
 	chatUndoLastBatch(_projectId: string, _sessionId: string): AiEditionChatResult {

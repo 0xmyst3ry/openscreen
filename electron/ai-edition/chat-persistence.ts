@@ -14,6 +14,7 @@ const messageSchema = z.object({
 	id: z.string().min(1),
 	role: z.enum(["user", "assistant"]),
 	content: z.string(),
+	stopped: z.boolean().optional(),
 	createdAt: z.string().min(1),
 	toolCalls: z.array(toolCallSchema).optional(),
 });

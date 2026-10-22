@@ -101,6 +101,7 @@ import {
 	setVocabularyArgs,
 } from "../caption-tools";
 import { setEditorSettingsArgs } from "../editor-settings-tool";
+import { abortable } from "./cancellation";
 import {
 	createOpenScreenChatModel,
 	messageContentToText,
@@ -118,6 +119,8 @@ export interface OpenScreenAgentSink {
 	toolStart: (name: string, args: unknown) => void;
 	toolEnd: (name: string, ok: boolean, summary?: string) => void;
 	error: (message: string) => void;
+	/** A completed tool edit, committed before cancellation can interleave. */
+	document?: (document: AxcutDocument) => void;
 }
 
 // The tool arg schemas live in agent-tools.ts (imported above) — one source of truth for
@@ -322,6 +325,7 @@ export interface CursorTelemetryReader {
 }
 
 export interface ToolRuntime {
+	signal?: AbortSignal;
 	cursor?: CursorTelemetryReader;
 	availableByAssetId?: Record<string, boolean>;
 	/** Asks the compositor whether this machine can cut out the camera background. */
@@ -376,9 +380,14 @@ function documentTool<S extends z.ZodType>(
 	return tool(
 		(args: z.infer<S>) =>
 			inTurn(async () => {
+				runtime.signal?.throwIfAborted();
 				sink.toolStart(name, args);
 				const execution = await runDocumentTool(holder.current, name, args, editsAllowed, runtime);
-				if (execution.document) holder.current = execution.document;
+				runtime.signal?.throwIfAborted();
+				if (execution.document) {
+					holder.current = execution.document;
+					sink.document?.(execution.document);
+				}
 				sink.toolEnd(name, execution.ok, execution.summary);
 				return execution.resultJson;
 			}),
@@ -425,6 +434,7 @@ export async function runDocumentTool(
 	editsAllowed: boolean,
 	runtime: ToolRuntime,
 ): Promise<AgentToolExecution> {
+	runtime.signal?.throwIfAborted();
 	const load = TOOLS_READING_CURSOR.has(name)
 		? await loadCursorTelemetry(document, args, runtime)
 		: undefined;
@@ -441,6 +451,9 @@ export async function runDocumentTool(
 					await runtime.checkShaderEffect(effectSource.code, effectSource.params),
 				)
 			: undefined;
+	// Async work above is read-only. An abort discards its result before the
+	// synchronous executor or document holder can commit anything.
+	runtime.signal?.throwIfAborted();
 	return executeAgentTool(document, name, JSON.stringify(args ?? {}), {
 		editsAllowed,
 		cursorTelemetry: { availableByAssetId: runtime.availableByAssetId, load },
@@ -600,6 +613,7 @@ export function anthropicCachingMiddleware(chatModel: { getName?: () => string }
 }
 
 export interface InvokeArgs {
+	signal?: AbortSignal;
 	document: AxcutDocument;
 	model: OpenScreenChatModelConfig;
 	history: Array<{ role: "user" | "assistant" | "system"; content: string }>;
@@ -664,6 +678,7 @@ export async function probeCursorTelemetry(
 const SILENT_TOOL_EVENTS: ReadonlySet<string> = new Set(["on_tool_start", "on_tool_end"]);
 
 export interface InvokeResult {
+	cancelled?: boolean;
 	text: string;
 	document: AxcutDocument;
 	mutated: boolean;
@@ -677,6 +692,10 @@ export interface InvokeResult {
 export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeResult> {
 	const { document, model, history, userMessage, sink } = args;
 	const editsAllowed = args.editsAllowed !== false;
+	const lifetime = new AbortController();
+	const signal = args.signal ? AbortSignal.any([args.signal, lifetime.signal]) : lifetime.signal;
+	let finalText = "";
+	let chatModelChunks: unknown[] = [];
 
 	const holder: DocumentHolder = { current: document };
 	const initialDocumentJSON = JSON.stringify(document);
@@ -685,39 +704,34 @@ export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeRes
 	// runtime side-effects (langgraph thread) are tied to the agent instance —
 	// checkpoint-based stateful threads can land later by passing a
 	// `checkpointer`; for v1 each turn is single-shot.
-	const chatModel = await createOpenScreenChatModel(model);
-	const availableByAssetId = await probeCursorTelemetry(document, args.cursor);
-	const tools = buildTools(holder, sink, editsAllowed, {
-		cursor: args.cursor,
-		availableByAssetId,
-		cameraSegmentation: args.cameraSegmentation,
-		checkShaderEffect: args.checkShaderEffect,
-	});
-	const agent = createAgent({
-		model: chatModel,
-		tools,
-		systemPrompt: buildSystemPrompt({ editsAllowed }),
-		middleware: anthropicCachingMiddleware(chatModel),
-	}).withConfig({
-		// ponytail: NOT optional. LangGraph's default is 25 steps, and an
-		// auto-enhance turn spends one step per silence — it would die mid-turn
-		// with a GraphRecursionError, which this file's catch block relabels
-		// "Empty response from model" (the same words a mute provider gets).
-		// `createDeepAgent` used 1e4; that is reckless while there is still no
-		// AbortSignal and no timeout anywhere on the product path — a looping
-		// model would be indistinguishable from a hang. 1000 is far above any
-		// real turn and still bounded.
-		recursionLimit: 1000,
-	});
-
-	const messages = [...history, { role: "user" as const, content: userMessage }];
-
-	// ponytail: declared outside the try block so the catch handler can
-	// include any chunks we already saw in the diagnostic when the stream
-	// throws partway through.
-	let chatModelChunks: unknown[] = [];
-
 	try {
+		signal.throwIfAborted();
+		const chatModel = await abortable(createOpenScreenChatModel(model), signal);
+		const availableByAssetId = await abortable(probeCursorTelemetry(document, args.cursor), signal);
+		const tools = buildTools(holder, sink, editsAllowed, {
+			signal,
+			cursor: args.cursor,
+			availableByAssetId,
+			cameraSegmentation: args.cameraSegmentation,
+			checkShaderEffect: args.checkShaderEffect,
+		});
+		const agent = createAgent({
+			signal,
+			model: chatModel,
+			tools,
+			systemPrompt: buildSystemPrompt({ editsAllowed }),
+			middleware: anthropicCachingMiddleware(chatModel),
+		}).withConfig({
+			// ponytail: NOT optional. LangGraph's default is 25 steps, and an
+			// auto-enhance turn spends one step per silence — it would die mid-turn
+			// with a GraphRecursionError, which this file's catch block relabels
+			// "Empty response from model" (the same words a mute provider gets).
+			// Keep the existing bound as well as user-initiated cancellation.
+			recursionLimit: 1000,
+		});
+
+		const messages = [...history, { role: "user" as const, content: userMessage }];
+
 		// ponytail: streamEvents (legacy mode, no `version: "v3"`) returns the
 		// same on_chat_model_stream / on_tool_start / on_tool_end / on_chain_end
 		// event stream axcut consumes. We use it both for live text deltas and
@@ -726,12 +740,15 @@ export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeRes
 			agent as unknown as {
 				streamEvents: (state: unknown, config?: unknown) => AsyncIterable<Record<string, unknown>>;
 			}
-		).streamEvents({ messages }, undefined);
-
-		let finalText = "";
+		).streamEvents({ messages }, { signal });
 		const nonChatEvents: Array<{ event: string; name: string }> = [];
 
-		for await (const event of stream) {
+		const iterator = stream[Symbol.asyncIterator]();
+		while (true) {
+			const next = await abortable(iterator.next(), signal);
+			signal.throwIfAborted();
+			if (next.done) break;
+			const event = next.value;
 			const eventType = typeof event.event === "string" ? event.event : "";
 			const data = event.data as Record<string, unknown> | undefined;
 			const name = typeof event.name === "string" ? (event.name as string) : "";
@@ -788,6 +805,14 @@ export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeRes
 		}
 		return { text: finalText.trim(), document: holder.current, mutated };
 	} catch (err) {
+		if (args.signal?.aborted) {
+			return {
+				text: finalText.trim(),
+				document: holder.current,
+				mutated: JSON.stringify(holder.current) !== initialDocumentJSON,
+				cancelled: true,
+			};
+		}
 		// ponytail: surface the LangChain/HTTP error (with name + truncated
 		// stack) so we can tell whether the stream threw (e.g. MiniMax
 		// returning a non-Anthropic JSON envelope that the SDK rejects) or
@@ -811,6 +836,9 @@ export async function invokeOpenScreenAgent(args: InvokeArgs): Promise<InvokeRes
 			mutated: JSON.stringify(holder.current) !== initialDocumentJSON,
 			reason,
 		};
+	} finally {
+		// Seal queued/in-flight tools on every exit, including normal completion.
+		lifetime.abort();
 	}
 }
 

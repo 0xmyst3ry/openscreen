@@ -313,7 +313,11 @@
 			"subtitle": "セッションを切り替えるか新規作成",
 			"empty": "まだ会話はありません。",
 			"msgsCount": "{{count}} 件のメッセージ · {{date}}"
-		}
+		},
+		"stop": "停止",
+		"stopping": "停止中…",
+		"stopped": "このターンを停止しました。適用済みの編集は保持されています。",
+		"stopFailed": "エージェントのターンを停止できませんでした。"
 	},
 	"newProjectDialog": {
 		"title": "新規プロジェクト",

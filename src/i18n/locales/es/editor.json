@@ -313,7 +313,11 @@
 			"subtitle": "Cambia o crea sesiones",
 			"empty": "Aún no hay conversaciones.",
 			"msgsCount": "{{count}} mensajes · {{date}}"
-		}
+		},
+		"stop": "Detener",
+		"stopping": "Deteniendo…",
+		"stopped": "Has detenido este turno. Se han conservado los cambios ya aplicados.",
+		"stopFailed": "No se pudo detener el turno del agente."
 	},
 	"newProjectDialog": {
 		"title": "Nuevo proyecto",

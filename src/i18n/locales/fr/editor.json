@@ -313,7 +313,11 @@
 			"subtitle": "Changer ou créer des sessions",
 			"empty": "Aucune conversation pour l'instant.",
 			"msgsCount": "{{count}} messages · {{date}}"
-		}
+		},
+		"stop": "Arrêter",
+		"stopping": "Arrêt en cours…",
+		"stopped": "Vous avez arrêté ce tour. Les modifications déjà appliquées sont conservées.",
+		"stopFailed": "Impossible d’arrêter le tour de l’agent."
 	},
 	"newProjectDialog": {
 		"title": "Nouveau projet",

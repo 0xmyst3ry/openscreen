@@ -433,3 +433,78 @@ describe("allowAgentEdits reaches the agent", () => {
 		expect(result.document).toBeDefined();
 	});
 });
+
+describe("stopped chat history", () => {
+	it("passes the signal through, persists partial replies and tools, and keeps the session usable", async () => {
+		const { mkdtemp, rm } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { configureChatPersistence, flushChatPersistence, selectSession } = await import(
+			"./chat-service"
+		);
+		const root = await mkdtemp(join(tmpdir(), "openscreen-stop-history-"));
+		try {
+			configureChatPersistence(root);
+			const controller = new AbortController();
+			const sink = { text: vi.fn(), error: vi.fn(), document: vi.fn() };
+			invokeMock.mockImplementationOnce(async (args) => {
+				expect(args.signal).toBe(controller.signal);
+				args.sink.text("Partial reply");
+				args.sink.toolEnd("addTrim", true, "Kept trim");
+				controller.abort();
+				args.sink.error("AbortError");
+				args.sink.text("Late");
+				return { text: "Partial reply", document: args.document, mutated: true, cancelled: true };
+			});
+			const session = createSession("stop_history");
+			const result = await runChat(
+				"stop_history",
+				session.id,
+				"cut",
+				stubConfig(),
+				fixtureDocument(),
+				sink,
+				{ signal: controller.signal },
+			);
+			expect(result).toMatchObject({
+				success: true,
+				cancelled: true,
+				assistantMessage: {
+					content: "Partial reply",
+					stopped: true,
+					toolCalls: [{ name: "addTrim", summary: "Kept trim" }],
+				},
+			});
+			expect(result.userMessageCheckpointId).toBeDefined();
+			expect(sink.error).not.toHaveBeenCalled();
+			expect(sink.text).toHaveBeenCalledOnce();
+			await flushChatPersistence();
+			configureChatPersistence(root);
+			const stored = selectSession("stop_history", session.id)!;
+			expect(stored.messages[1]).toMatchObject({ stopped: true, content: "Partial reply" });
+			expect(stored.messages[0].checkpointId).toBeNull();
+			await runChat("stop_history", session.id, "continue", stubConfig(), fixtureDocument());
+			expect(selectSession("stop_history", session.id)?.messages).toHaveLength(4);
+			await flushChatPersistence();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stores an explicit stopped assistant even when stopped before any text", async () => {
+		invokeMock.mockImplementationOnce(async (args) => ({
+			text: "",
+			document: args.document,
+			mutated: false,
+			cancelled: true,
+		}));
+		const session = createSession("stop_before_text");
+		const result = await runChat("stop_before_text", session.id, "hello", stubConfig());
+		expect(result).toMatchObject({
+			success: true,
+			cancelled: true,
+			assistantMessage: { content: "", stopped: true },
+		});
+		expect(result.error).toBeUndefined();
+	});
+});

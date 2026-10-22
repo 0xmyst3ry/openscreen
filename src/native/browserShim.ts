@@ -663,6 +663,8 @@ function createShimBridgeClient() {
 				persistChat();
 				return Promise.resolve({ success: true, assistantMessage });
 			},
+			chatCancel: (_projectId: string, _sessionId: string, _runId: string) =>
+				Promise.resolve({ accepted: false }),
 			chatUndoLastBatch: () =>
 				Promise.resolve({
 					success: false,

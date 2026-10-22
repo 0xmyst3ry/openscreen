@@ -313,7 +313,11 @@
 			"subtitle": "Oturum değiştir veya oluştur",
 			"empty": "Henüz konuşma yok.",
 			"msgsCount": "{{count}} mesaj · {{date}}"
-		}
+		},
+		"stop": "Durdur",
+		"stopping": "Durduruluyor…",
+		"stopped": "Bu turu durdurdunuz. Uygulanmış düzenlemeler korundu.",
+		"stopFailed": "Ajan turu durdurulamadı."
 	},
 	"newProjectDialog": {
 		"title": "Yeni proje",

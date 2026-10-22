@@ -76,7 +76,38 @@ Clips and trims use source time. Zoom, speed, annotation, camera-fullscreen, and
 
 ## Checkpoints and undo
 
-Before a user message starts an agent turn, `chat-service.ts` clones the current document and associates it with that user message. All write calls produced by the turn operate from that checkpoint lineage, so restoring the message reverts the complete tool batch as one undo unit rather than undoing each model call separately. Rewind also truncates later conversation messages and invalidates later checkpoints.
+Before a user message starts an agent turn, `chat-service.ts` clones the current
+document and associates it with that user message. Explicit message rewind restores
+that snapshot and truncates the later conversation. It is separate from Ctrl+Z:
+completed tool edits stream to `AgentDocumentStream`, which serializes them through
+`applyAgentDocumentIfCurrent` and the existing project store save/history boundary.
+Each applied tool edit keeps its own undo step. The final aggregate document is not
+applied again after streamed edits.
+
+## Stopping a turn
+
+`electron/ipc/chatRuns.ts` owns a main-process AbortController per active project.
+The `chat.cancel` bridge action must match the sending WebContents, project, session,
+and renderer-generated run ID; a stale stop cannot cancel the next turn. Concurrent
+turns for the same project are refused. Other projects are independent.
+
+The signal passes through the bridge service and chat runtime into both
+`createAgent` and `streamEvents`. The runtime also stops awaiting an uncooperative
+stream or read-only setup operation on abort. Tool calls remain serialized and
+check the signal before execution and after asynchronous telemetry reads or shader
+checks, before updating the document holder. Those read-only operations may finish
+in the background; their results cannot commit edits or emit tool success after stop.
+The turn lifetime seals queued tools on every exit, including normal completion.
+
+Every streamed event carries the project, session and run ID. The panel ignores
+foreign or stale events, cancels on project/session change or unmount, and closes
+its edit queue when abandoned. Window destruction aborts its run in main as well.
+Stop stays in a stopping state until the turn replies and already-received completed
+edit saves settle. It preserves those edits and their undo entries, partial answer,
+and completed tool summaries. A stopped assistant message has `stopped: true` in the
+existing chat sidecar, so reopening the conversation still distinguishes a user stop
+from a provider failure. A later normal completion can win the race with a stop;
+repeated stops are harmless.
 
 ## Context management
 

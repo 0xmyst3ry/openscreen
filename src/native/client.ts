@@ -290,11 +290,18 @@ export const nativeBridgeClient = {
 			sessionId: string,
 			message: string,
 			document?: unknown,
+			runId = crypto.randomUUID(),
 		): Promise<AiEditionChatResult> =>
 			requireNativeBridgeData<AiEditionChatResult>({
 				domain: "aiEdition",
 				action: "chat.run",
-				payload: { projectId, sessionId, message, document },
+				payload: { projectId, sessionId, message, document, runId },
+			}),
+		chatCancel: (projectId: string, sessionId: string, runId: string) =>
+			requireNativeBridgeData<{ accepted: boolean }>({
+				domain: "aiEdition",
+				action: "chat.cancel",
+				payload: { projectId, sessionId, runId },
 			}),
 		chatUndoLastBatch: (projectId: string, sessionId: string) =>
 			requireNativeBridgeData<AiEditionChatResult>({

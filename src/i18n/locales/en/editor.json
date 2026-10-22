@@ -313,7 +313,11 @@
 			"subtitle": "Switch or create sessions",
 			"empty": "No conversations yet.",
 			"msgsCount": "{{count}} msgs · {{date}}"
-		}
+		},
+		"stop": "Stop",
+		"stopping": "Stopping…",
+		"stopped": "Stopped by you. Edits already applied have been kept.",
+		"stopFailed": "Could not stop the agent turn."
 	},
 	"newProjectDialog": {
 		"title": "New project",

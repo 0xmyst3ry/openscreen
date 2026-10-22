@@ -385,6 +385,7 @@ export interface AiEditionToolCallSummary {
 }
 
 export interface AiEditionChatMessage {
+	stopped?: boolean;
 	id: string;
 	role: "user" | "assistant";
 	content: string;
@@ -399,6 +400,7 @@ export interface AiEditionChatMessage {
 }
 
 export interface AiEditionChatResult {
+	cancelled?: boolean;
 	success: boolean;
 	assistantMessage?: AiEditionChatMessage;
 	/** Updated document when the agent ran write tools during this turn. */
@@ -729,6 +731,7 @@ export type NativeBridgeRequest =
 			domain: "aiEdition";
 			action: "chat.run";
 			payload: {
+				runId: string;
 				projectId: string;
 				sessionId: string;
 				message: string;
@@ -736,6 +739,12 @@ export type NativeBridgeRequest =
 				 * When omitted the chat runs text-only (no tools). */
 				document?: unknown;
 			};
+			requestId?: string;
+	  }
+	| {
+			domain: "aiEdition";
+			action: "chat.cancel";
+			payload: { projectId: string; sessionId: string; runId: string };
 			requestId?: string;
 	  }
 	| {
@@ -1019,12 +1028,14 @@ export type NativeBridgeEventName =
 // return. Empty `assistant` slot + `kind: "error"` means the upstream
 // provider failed and the toast was a side-channel; the renderer shows it
 // inline so the chat doesn't appear to "echo back my question".
-export type AiEditionChatEvent =
+export type AiEditionChatEvent = { projectId: string; runId: string } & (
 	| { kind: "text"; sessionId: string; delta: string }
 	| { kind: "thinking"; sessionId: string; delta: string }
 	| { kind: "toolStart"; sessionId: string; name: string; args: unknown }
 	| { kind: "toolEnd"; sessionId: string; name: string; ok: boolean; summary?: string }
-	| { kind: "error"; sessionId: string; message: string };
+	| { kind: "error"; sessionId: string; message: string }
+	| { kind: "document"; sessionId: string; document: unknown }
+);
 
 export interface NativeBridgeEvent<TPayload = unknown> {
 	name: NativeBridgeEventName;

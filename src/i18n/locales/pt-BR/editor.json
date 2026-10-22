@@ -313,7 +313,11 @@
 			"subtitle": "Alternar ou criar sessões",
 			"empty": "Ainda não há conversas.",
 			"msgsCount": "{{count}} mensagens · {{date}}"
-		}
+		},
+		"stop": "Parar",
+		"stopping": "Parando…",
+		"stopped": "Você parou este turno. As edições já aplicadas foram mantidas.",
+		"stopFailed": "Não foi possível parar o turno do agente."
 	},
 	"newProjectDialog": {
 		"title": "Novo projeto",

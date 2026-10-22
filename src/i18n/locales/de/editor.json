@@ -313,7 +313,11 @@
 			"subtitle": "Sitzungen wechseln oder anlegen",
 			"empty": "Noch keine Unterhaltungen.",
 			"msgsCount": "{{count}} Nachr. · {{date}}"
-		}
+		},
+		"stop": "Stoppen",
+		"stopping": "Wird gestoppt…",
+		"stopped": "Von dir gestoppt. Bereits angewendete Änderungen bleiben erhalten.",
+		"stopFailed": "Der Agent-Durchlauf konnte nicht gestoppt werden."
 	},
 	"newProjectDialog": {
 		"title": "Neues Projekt",

@@ -5224,8 +5224,9 @@ export function registerIpcHandlers(
 		getAiEditionDocuments: () => aiEditionDocuments,
 		getStylePresets: () => stylePresets,
 		getAiEditionLlmConfig,
-		runAiEditionChat: (projectId, sessionId, message, document, sink) =>
+		runAiEditionChat: (projectId, sessionId, message, document, sink, signal) =>
 			runChat(projectId, sessionId, message, getAiEditionLlmConfig(), document, sink, {
+				signal,
 				cursor: agentCursorTelemetryReader,
 				cameraSegmentation: () => loudnessService.probeSegmentation(),
 				checkShaderEffect: (code, params) => loudnessService.checkShaderEffect(code, params),

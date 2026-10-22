@@ -313,7 +313,11 @@
 			"subtitle": "切換或新增工作階段",
 			"empty": "尚無對話。",
 			"msgsCount": "{{count}} 則訊息 · {{date}}"
-		}
+		},
+		"stop": "停止",
+		"stopping": "正在停止…",
+		"stopped": "你已停止本輪執行。已套用的編輯已保留。",
+		"stopFailed": "無法停止 Agent 本輪執行。"
 	},
 	"newProjectDialog": {
 		"title": "新增專案",

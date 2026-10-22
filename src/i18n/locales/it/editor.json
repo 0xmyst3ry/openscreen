@@ -313,7 +313,11 @@
 			"subtitle": "Cambia o crea sessioni",
 			"empty": "Nessuna conversazione ancora.",
 			"msgsCount": "{{count}} messaggi · {{date}}"
-		}
+		},
+		"stop": "Interrompi",
+		"stopping": "Interruzione…",
+		"stopped": "Hai interrotto questo turno. Le modifiche già applicate sono state mantenute.",
+		"stopFailed": "Impossibile interrompere il turno dell’agente."
 	},
 	"newProjectDialog": {
 		"title": "Nuovo progetto",
