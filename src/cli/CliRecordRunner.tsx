@@ -253,9 +253,28 @@ export function CliRecordRunner() {
 		recorder.cursorCaptureMode,
 	]);
 
+	// A camera that cannot be opened (held by another app, OpenScreen's own HUD among them on
+	// Linux, or unplugged) turns itself back off in the recorder, which then records without it.
+	// A take asked to have the camera fails instead of reporting success without it (#1303).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fail is stable
+	useEffect(() => {
+		if (!requestReady?.camera || recorder.webcamEnabled) return;
+		if (phaseRef.current === "done" || recordingStartedAtRef.current !== null) return;
+		void fail(
+			new Error(
+				"The camera could not be opened: another app is using it (OpenScreen itself, when it is running), or it was disconnected",
+			),
+		);
+	}, [requestReady, recorder.webcamEnabled]);
+
 	// Recording state transitions: report start and arm the duration timer.
 	useEffect(() => {
 		const request = requestRef.current;
+		// The take failed while its capture was starting: stop it, nobody is waiting for it.
+		if (recording && phaseRef.current === "done" && recordingStartedAtRef.current === null) {
+			toggleRecordingRef.current();
+			return;
+		}
 		if (recording && recordingStartedAtRef.current === null) {
 			recordingStartedAtRef.current = Date.now();
 			setStatus("Recording…");

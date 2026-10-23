@@ -82,6 +82,36 @@ describe("CliRecordRunner", () => {
 		expect(recorder.startRecordingImmediately).not.toHaveBeenCalled();
 	});
 
+	it("fails, and stops the starting capture, when the camera turns on but cannot be opened", async () => {
+		vi.mocked(window.electronAPI.cliGetRequest).mockResolvedValueOnce({ ...request, camera: true });
+		recorder.setWebcamEnabled.mockImplementationOnce(async () => {
+			recorder.webcamEnabled = true;
+			return true;
+		});
+		try {
+			const { rerender } = render(<CliRecordRunner />);
+			await waitFor(() => expect(recorder.startRecordingImmediately).toHaveBeenCalledTimes(1));
+			// The acquire failed (another app holds the camera): the recorder turns it back off.
+			recorder.webcamEnabled = false;
+			rerender(<CliRecordRunner />);
+			await waitFor(() =>
+				expect(window.electronAPI.cliDone).toHaveBeenCalledWith(
+					expect.objectContaining({
+						success: false,
+						error: expect.stringContaining("camera could not be opened"),
+					}),
+				),
+			);
+			recorder.recording = true;
+			rerender(<CliRecordRunner />);
+			await waitFor(() => expect(recorder.toggleRecording).toHaveBeenCalledTimes(1));
+			expect(window.electronAPI.cliLog).not.toHaveBeenCalledWith("info", "Recording started");
+		} finally {
+			recorder.webcamEnabled = false;
+			recorder.recording = false;
+		}
+	});
+
 	it("leaves the camera off unless asked", async () => {
 		recorder.setWebcamEnabled.mockClear();
 		render(<CliRecordRunner />);
