@@ -523,9 +523,8 @@ export async function runChat(
 		success: true,
 		assistantMessage,
 		cancelled: result.cancelled,
-		// Non-streaming callers still receive the completed document. Both this
-		// fallback and the document event above enforce the edit setting; the
-		// panel never reapplies this aggregate after individual streamed edits.
+		// Return the accumulated edits even on Stop. The panel applies this once
+		// at the end of the turn, preserving one save and one undo step per turn.
 		document: result.mutated && editsAllowed ? result.document : undefined,
 		toolCalls: appliedToolCalls.length ? appliedToolCalls : undefined,
 		userMessageCheckpointId: userMessage.checkpointId ?? undefined,

@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { EditorDialogsProvider } from "@/contexts/EditorDialogsContext";
 import { createEmptyDocument } from "@/lib/ai-edition/schema";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
-import { clearHistory, undo } from "@/lib/ai-edition/store/undo";
+import { clearHistory, redo, undo } from "@/lib/ai-edition/store/undo";
 import { past } from "@/lib/ai-edition/store/undoStack";
 import type { AiEditionChatEvent, AiEditionChatResult } from "@/native/contracts";
 import { ChatStripPanel } from "./LeftPanel";
@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
 	select: vi.fn(),
 	create: vi.fn(),
 	error: vi.fn(),
+	warning: vi.fn(),
 }));
 vi.mock("@/native/client", () => ({
 	nativeBridgeClient: {
@@ -41,7 +42,7 @@ vi.mock("@/contexts/I18nContext", () => ({
 	useI18n: () => ({ locale: "en" }),
 	useScopedT: () => (key: string) => key,
 }));
-vi.mock("sonner", () => ({ toast: { error: api.error, warning: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { error: api.error, warning: api.warning } }));
 let onEvent: (event: AiEditionChatEvent) => void;
 let replies: ((value: AiEditionChatResult) => void)[];
 const doc = (title: string, projectId = "p") => createEmptyDocument({ projectId, title });
@@ -125,27 +126,39 @@ function emit(
 }
 
 describe("composer Stop", () => {
-	it("keeps edits and undo steps, retains partial reply, ignores old events and starts the next turn", async () => {
+	it("commits stopped edits once, retains the live reply, ignores old events and starts the next turn", async () => {
 		panel();
 		const id = await start();
 		expect(screen.getByRole("button", { name: "chat.stop" })).toBeEnabled();
 		emit(id, { kind: "document", document: doc("First") });
 		emit(id, { kind: "document", document: doc("Second") });
 		emit(id, { kind: "text", delta: "Partial" });
-		await waitFor(() => expect(past).toHaveLength(2));
+		await act(async () => {
+			// Flush event work before checking that no intermediate edits were saved.
+		});
+		expect(screen.getByText("Partial")).toBeVisible();
+		expect(api.save).not.toHaveBeenCalled();
+		expect(past).toHaveLength(0);
+		expect(useProjectStore.getState().document?.project.title).toBe("Before");
 		fireEvent.click(screen.getByRole("button", { name: "chat.stop" }));
 		fireEvent.click(screen.getByRole("button", { name: "chat.stop" }));
 		expect(api.cancel).toHaveBeenCalledOnce();
 		expect(api.cancel).toHaveBeenCalledWith("p", "s", id);
-		await act(async () => replies[0](result("Partial", true)));
+		await act(async () => replies[0]({ ...result("Partial", true), document: doc("Second") }));
 		expect(screen.getByText("chat.stopped")).toBeVisible();
 		expect(screen.getByText("Partial")).toBeVisible();
 		expect(screen.getByRole("button", { name: "chat.send" })).toBeInTheDocument();
-		expect(api.save).toHaveBeenCalledTimes(2);
+		expect(api.save).toHaveBeenCalledOnce();
+		expect(past).toHaveLength(1);
+		expect(useProjectStore.getState().document?.project.title).toBe("Second");
 		act(() => {
 			undo();
 		});
-		expect(useProjectStore.getState().document?.project.title).toBe("First");
+		expect(useProjectStore.getState().document?.project.title).toBe("Before");
+		act(() => {
+			redo();
+		});
+		expect(useProjectStore.getState().document?.project.title).toBe("Second");
 		const nextId = await start();
 		expect(nextId).not.toBe(id);
 		emit(id, { kind: "text", delta: "STALE" });
@@ -155,6 +168,70 @@ describe("composer Stop", () => {
 		await act(async () => replies[1](result("Next reply")));
 		expect(screen.getByText("Next reply")).toBeVisible();
 		expect(api.error).not.toHaveBeenCalled();
+	});
+
+	it.each([false, true])("keeps a long turn in one undo step (stopped: %s)", async (stopped) => {
+		useProjectStore.getState().setDocument(doc("Pre-turn"), { history: true });
+		panel();
+		const id = await start();
+		for (let i = 0; i < 60; i++) {
+			emit(id, { kind: "document", document: doc(`Tool ${i}`) });
+		}
+		await act(async () => {
+			// Let any queued per-tool writes run so the regression cannot hide in microtasks.
+		});
+		expect(api.save).not.toHaveBeenCalled();
+		expect(past).toHaveLength(1);
+		if (stopped) fireEvent.click(screen.getByRole("button", { name: "chat.stop" }));
+		await act(async () =>
+			replies[0]({ ...result("Done", stopped), document: doc("Final aggregate") }),
+		);
+		expect(api.save).toHaveBeenCalledOnce();
+		expect(past).toHaveLength(2);
+		expect(useProjectStore.getState().document?.project.title).toBe("Final aggregate");
+		act(() => {
+			undo();
+		});
+		expect(useProjectStore.getState().document?.project.title).toBe("Pre-turn");
+		act(() => {
+			undo();
+		});
+		expect(useProjectStore.getState().document?.project.title).toBe("Before");
+	});
+
+	it("applies a stopped aggregate when no document event arrived", async () => {
+		panel();
+		await start();
+		fireEvent.click(screen.getByRole("button", { name: "chat.stop" }));
+		await act(async () =>
+			replies[0]({ ...result("Partial", true), document: doc("Completed edit") }),
+		);
+		expect(api.save).toHaveBeenCalledOnce();
+		expect(past).toHaveLength(1);
+		expect(useProjectStore.getState().document?.project.title).toBe("Completed edit");
+		act(() => {
+			undo();
+		});
+		expect(useProjectStore.getState().document?.project.title).toBe("Before");
+	});
+
+	it("keeps manual edits during a turn until Apply anyway commits the aggregate once", async () => {
+		panel();
+		const id = await start();
+		emit(id, { kind: "document", document: doc("First") });
+		act(() => useProjectStore.getState().setDocument(doc("Manual"), { history: true }));
+		emit(id, { kind: "document", document: doc("Second") });
+		await act(async () => replies[0]({ ...result("Done"), document: doc("Second") }));
+		expect(api.save).not.toHaveBeenCalled();
+		expect(useProjectStore.getState().document?.project.title).toBe("Manual");
+		expect(api.warning).toHaveBeenCalledWith("chat.agentEditConflict", expect.any(Object));
+		await act(async () => api.warning.mock.calls[0][1].action.onClick());
+		await waitFor(() => expect(api.save).toHaveBeenCalledOnce());
+		expect(useProjectStore.getState().document?.project.title).toBe("Second");
+		act(() => {
+			undo();
+		});
+		expect(useProjectStore.getState().document?.project.title).toBe("Manual");
 	});
 
 	it("stops while creating the first session without sending a model request", async () => {
@@ -184,11 +261,12 @@ describe("composer Stop", () => {
 		act(() => useProjectStore.setState({ projectId: "other", document: doc("Other", "other") }));
 		await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("p", "s", id));
 		await start();
-		await act(async () => replies[0](result("Old reply", true)));
+		await act(async () => replies[0]({ ...result("Old reply", true), document: doc("Old") }));
 		emit(id, { kind: "document", document: doc("Old") });
 		expect(screen.queryByText("Old reply")).toBeNull();
 		expect(screen.getByRole("button", { name: "chat.stop" })).toBeEnabled();
 		expect(useProjectStore.getState().document?.project.title).toBe("Other");
+		expect(api.save).not.toHaveBeenCalled();
 		await act(async () => replies[1](result("New reply")));
 	});
 
@@ -197,14 +275,16 @@ describe("composer Stop", () => {
 		const id = await start();
 		fireEvent.click(screen.getByRole("button", { name: "chat.newConversation" }));
 		await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("p", "s", id));
-		await act(async () => replies[0](result("Old", true)));
+		await act(async () => replies[0]({ ...result("Old", true), document: doc("Old") }));
 		expect(screen.queryByText("Old")).toBeNull();
+		expect(api.save).not.toHaveBeenCalled();
 		fireEvent.change(screen.getByRole("textbox"), { target: { value: "Next" } });
 		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
 		await waitFor(() => expect(api.run).toHaveBeenCalledTimes(2));
 		const nextId = api.run.mock.calls[1][4];
 		view.unmount();
 		expect(api.cancel).toHaveBeenLastCalledWith("p", "new", nextId);
-		await act(async () => replies[1](result("Disposed", true)));
+		await act(async () => replies[1]({ ...result("Disposed", true), document: doc("Disposed") }));
+		expect(api.save).not.toHaveBeenCalled();
 	});
 });

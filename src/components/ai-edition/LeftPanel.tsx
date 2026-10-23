@@ -6,8 +6,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip } from "@/components/ui/tooltip";
 import { useEditorDialogActions, useEditorDialogSection } from "@/contexts/EditorDialogsContext";
 import { useScopedT } from "@/contexts/I18nContext";
-import { applyAgentDocumentIfCurrent } from "@/lib/ai-edition/store/agentDocumentApply";
-import { AgentDocumentStream } from "@/lib/ai-edition/store/agentDocumentStream";
+import {
+	applyAgentDocumentIfCurrent,
+	runAgentTurn,
+} from "@/lib/ai-edition/store/agentDocumentApply";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { useChatPromptBus } from "@/lib/ai-edition/store/useChatPromptBus";
 import { nativeBridgeClient } from "@/native/client";
@@ -446,7 +448,6 @@ export function ChatStripPanel() {
 		sessionId: string | null;
 		stopping: boolean;
 		thinking: string;
-		stream: AgentDocumentStream;
 	} | null>(null);
 	const viewRef = useRef({ projectId, sessionId: null as string | null });
 	const [llmConfig, setLlmConfig] = useState<AiEditionLlmConfig | null>(null);
@@ -535,7 +536,6 @@ export function ChatStripPanel() {
 		const run = runRef.current;
 		if (!run) return;
 		runRef.current = null;
-		run.stream.close();
 		if (run.sessionId) {
 			void nativeBridgeClient.aiEdition
 				.chatCancel(run.projectId, run.sessionId, run.id)
@@ -558,8 +558,7 @@ export function ChatStripPanel() {
 				viewRef.current.sessionId !== run.sessionId
 			)
 				return;
-			if (event.kind === "document") run.stream.push(event.document);
-			else if (event.kind === "thinking") {
+			if (event.kind === "thinking") {
 				run.thinking += event.delta;
 				setThinkingText(run.thinking);
 			} else if (event.kind === "text") setLiveText((prev) => prev + event.delta);
@@ -673,7 +672,6 @@ export function ChatStripPanel() {
 			sessionId: activeSessionId,
 			stopping: false,
 			thinking: "",
-			stream: new AgentDocumentStream(),
 		};
 		runRef.current = run;
 		latestRunIdRef.current = run.id;
@@ -726,41 +724,45 @@ export function ChatStripPanel() {
 			}
 			if (!isCurrent() || run.stopping) return;
 			run.sessionId = sessionId;
-			run.stream = new AgentDocumentStream();
-			const documentSnapshot = useProjectStore.getState().document ?? undefined;
-			const result = await nativeBridgeClient.aiEdition.chatRun(
-				projectId,
-				sessionId,
-				text,
-				documentSnapshot,
-				run.id,
+			// Capture the document and its revision together before awaiting the turn.
+			// Stop returns the completed tools' aggregate too: commit it once so the
+			// entire turn has one save and one undo step, regardless of tool count.
+			const { result, applyDocument } = await runAgentTurn((documentSnapshot) =>
+				nativeBridgeClient.aiEdition.chatRun(projectId, sessionId, text, documentSnapshot, run.id),
 			);
 			if (!isCurrent()) return;
-			// Non-streaming callers keep their existing result path. Completed tool
-			// edits already in history are never saved again as one aggregate.
-			if (!run.stream.seen && result.document && !result.cancelled)
-				run.stream.push(result.document);
-			await run.stream.finish();
-			if (!isCurrent()) return;
-			if (run.stream.failure === "conflict")
-				toast.warning(t("chat.agentEditConflict"), {
-					duration: Number.POSITIVE_INFINITY,
-					action: {
-						label: t("chat.applyAnyway"),
-						onClick: () => {
-							if (
-								latestRunIdRef.current !== run.id ||
-								viewRef.current.projectId !== projectId ||
-								viewRef.current.sessionId !== sessionId
-							)
-								return;
-							void run.stream.applyRemaining().then(() => {
-								if (run.stream.failure === "save-failed") toast.error(t("chat.applyEditsFailed"));
-							});
+			if (result.document) {
+				const applyEdits = async (options?: { ignoreConflict?: boolean }) => {
+					try {
+						const applied = await applyDocument(options);
+						if (applied === "save-failed") toast.error(t("chat.applyEditsFailed"));
+						return applied;
+					} catch (error) {
+						toast.error(t("chat.applyEditsFailed"), {
+							description: error instanceof Error ? error.message : String(error),
+						});
+						return "malformed" as const;
+					}
+				};
+				const applied = await applyEdits();
+				if (!isCurrent()) return;
+				if (applied === "conflict")
+					toast.warning(t("chat.agentEditConflict"), {
+						duration: Number.POSITIVE_INFINITY,
+						action: {
+							label: t("chat.applyAnyway"),
+							onClick: () => {
+								if (
+									latestRunIdRef.current !== run.id ||
+									viewRef.current.projectId !== projectId ||
+									viewRef.current.sessionId !== sessionId
+								)
+									return;
+								void applyEdits({ ignoreConflict: true });
+							},
 						},
-					},
-				});
-			else if (run.stream.failure === "save-failed") toast.error(t("chat.applyEditsFailed"));
+					});
+			}
 			setMessages((prev) => adoptStoredUserMessage(prev, optimisticUserId, result));
 			// A rewind confirmation opened during the turn names the message too. Stored without a
 			// checkpoint, the message has nothing to rewind to and the confirmation closes.
@@ -801,7 +803,6 @@ export function ChatStripPanel() {
 				description: err instanceof Error ? err.message : String(err),
 			});
 		} finally {
-			run.stream.close();
 			if (isCurrent()) {
 				runRef.current = null;
 				setBusy(false);
