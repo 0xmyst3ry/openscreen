@@ -60,24 +60,26 @@ pub struct SlotBook {
     ready: Option<SharedFrame>,
     /// Les cases prises par JS, que Chromium n'a pas encore relâchées, plus anciennes d'abord.
     held: Vec<Held>,
+    /// La case après la dernière prise : la recherche d'une case libre part de là.
+    next: u32,
 }
 
 impl SlotBook {
-    /// La case où écrire la prochaine frame. Une case libre d'abord ; à défaut, celle de la
-    /// frame prête que personne n'a prise, retirée puisqu'elle est périmée. `None` quand
-    /// Chromium tient toutes les cases : une case tenue n'est jamais réécrite, même perdue
-    /// (`lost`), puisqu'il peut encore la lire.
+    /// La case où écrire la prochaine frame. Une case libre d'abord, à tour de rôle à partir
+    /// de la dernière prise : la case que Chromium vient de relâcher est la dernière réécrite,
+    /// pas la première, puisque son GPU peut encore la copier dans le canvas (#1301). À défaut,
+    /// celle de la frame prête que personne n'a prise, retirée puisqu'elle est périmée. `None`
+    /// quand Chromium tient toutes les cases : une case tenue n'est jamais réécrite, même
+    /// perdue (`lost`), puisqu'il peut encore la lire.
     pub fn claim(&mut self, slots: u32) -> Option<u32> {
         let ready = self.ready.map(|frame| frame.slot);
         let is_held = |slot: u32| self.held.iter().any(|held| held.slot == slot);
-        if let Some(free) = (0..slots).find(|slot| !is_held(*slot) && Some(*slot) != ready) {
-            return Some(free);
-        }
-        if let Some(stale) = ready {
-            self.ready = None;
-            return Some(stale);
-        }
-        None
+        let slot = (0..slots)
+            .map(|i| (self.next + i) % slots)
+            .find(|slot| !is_held(*slot) && Some(*slot) != ready)
+            .or_else(|| self.ready.take().map(|frame| frame.slot))?;
+        self.next = (slot + 1) % slots;
+        Some(slot)
     }
 
     /// Une case est tenue depuis `LOST_SLOT_AFTER` : sa libération ne viendra plus.
@@ -279,6 +281,26 @@ mod tests {
         assert_eq!(book.claim(RING_SLOTS), Some(1));
         // La frame prête n'a pas bougé : JS peut toujours la prendre.
         assert_eq!(book.take(0, now), Some(frame(1, 0)));
+    }
+
+    #[test]
+    fn a_released_slot_waits_its_turn_while_others_are_free() {
+        let now = Instant::now();
+        let mut book = SlotBook::default();
+        // Régime établi : chaque frame est prise par JS, et Chromium relâche la précédente.
+        let mut previous = None;
+        for gen in 1..=3 {
+            let slot = book.claim(RING_SLOTS).unwrap();
+            book.publish(frame(gen, slot));
+            book.take(gen - 1, now);
+            if let Some(slot) = previous {
+                book.release(slot, gen - 1);
+            }
+            previous = Some(slot);
+        }
+        // Les cases déjà relâchées peuvent encore être lues par le GPU de Chromium (#1301) :
+        // la suivante va plus loin dans l'anneau au lieu de reprendre la plus petite.
+        assert_eq!(book.claim(RING_SLOTS), Some(3));
     }
 
     #[test]
