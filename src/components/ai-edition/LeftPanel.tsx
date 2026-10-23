@@ -1696,8 +1696,8 @@ export function ChatStripPanel() {
 								type="button"
 								className={styles.sendBtn}
 								aria-label={t("chat.stop")}
-								disabled={stopping}
-								onClick={() => void stop()}
+								aria-disabled={stopping || undefined}
+								onClick={stopping ? undefined : () => void stop()}
 							>
 								<Square size={14} fill="currentColor" />
 							</button>

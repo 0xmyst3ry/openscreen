@@ -126,6 +126,22 @@ function emit(
 }
 
 describe("composer Stop", () => {
+	it("keeps the Stopping tooltip keyboard-accessible without sending another cancel", async () => {
+		panel();
+		await start();
+		const stop = screen.getByRole("button", { name: "chat.stop" });
+		fireEvent.click(stop);
+		expect(stop).toHaveAttribute("aria-disabled", "true");
+		expect(stop).not.toBeDisabled();
+		fireEvent.keyDown(window, { key: "Tab" });
+		act(() => stop.focus());
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("chat.stopping");
+		expect(stop).toHaveFocus();
+		fireEvent.click(stop);
+		expect(api.cancel).toHaveBeenCalledOnce();
+		await act(async () => replies[0](result("Partial", true)));
+	});
+
 	it("commits stopped edits once, retains the live reply, ignores old events and starts the next turn", async () => {
 		panel();
 		const id = await start();
