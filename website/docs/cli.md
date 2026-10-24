@@ -131,12 +131,15 @@ openscreen export demo.openscreen                          # format and quality 
 openscreen export demo.openscreen -o out.mp4 --quality source
 openscreen export demo.openscreen -o out.gif --gif-fps 20 --gif-size large
 openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
+openscreen export demo.openscreen -o mix.m4a                          # the audio only
+openscreen export demo.openscreen -o voice.wav --track audio_1234     # one imported track alone
 ```
 
 | Option | Meaning |
 |---|---|
-| `-o, --out <path>` | Output file. The extension, `.mp4` or `.gif`, sets the format. Default: the project's path with `.mp4` or `.gif` |
-| `--format <mp4\|gif>` | Override the format stored in the project. Must agree with `--out` |
+| `-o, --out <path>` | Output file. The extension, `.mp4`, `.gif`, `.wav` or `.m4a`, sets the format. Default: the project's path with the format's extension |
+| `--format <mp4\|gif\|wav\|m4a>` | Override the format stored in the project. Must agree with `--out`. `wav` and `m4a` write the project's audio only, as the MP4 mixes it |
+| `--track <audioId>` | WAV and M4A only: write this imported audio track alone, where it plays in the MP4, with its offset, trims, gain and fades. The file lasts as long as the video. The id is the track's `audioId` (from `addAudio`, or `audioTracks` in the project) |
 | `--quality <medium\|good\|source>` | Output size: `medium` is 720p, `good` is 1080p, `source` follows the smallest clip after cropping, so it never upscales. MP4 only: a GIF starts from the source size, as in the app |
 | `--fps <24\|30\|60>` | MP4 frame rate (default 60) |
 | `--gif-fps <15\|20\|25\|30>` | GIF frame rate |
@@ -151,6 +154,8 @@ openscreen export demo.openscreen -o out.mp4 --auto-zoom --json
 MP4 exports from the CLI are always **H.264**, at 60 fps unless `--fps` says otherwise. There is no codec option.
 
 `--audio` works after the render: the video stream is copied untouched, and a new AAC track is mixed and written over the same output file.
+
+A `.wav` or `.m4a` export renders the project as the MP4 would, at 720p, and keeps only its audio, so a track lands where it lands in the video, through every cut and speed region. With `--track`, the recording's own sound, the click sounds and the other tracks are left out. An M4A keeps the MP4's AAC as is; a WAV is decoded to 16-bit PCM.
 
 **Where media may live.** When it loads a project, the app approves the referenced media automatically only inside its recordings directory or the project file's own folder. Keep a hand-written project next to its media, or record with the CLI, which uses the recordings directory.
 
@@ -209,7 +214,7 @@ With `--json`, stdout carries one JSON object per line. stderr carries diagnosti
 |---|---|---|
 | `started` | A `record`, `sources`, `export` or `captions` run begins | `command` |
 | `log` | A status line, such as `Recording started` | `message` |
-| `progress` | Export frames are encoded | `percentage`, `currentFrame`, `totalFrames`, `estimatedTimeRemaining` in seconds. While `--audio` is mixed: `percentage` and `phase: "mixing-voiceover"` |
+| `progress` | Export frames are encoded | `percentage`, `currentFrame`, `totalFrames`, `estimatedTimeRemaining` in seconds. While `--audio` is mixed: `percentage` and `phase: "mixing-voiceover"`. While a `.wav` or `.m4a` is written: `phase: "extracting-audio"` |
 | `stopping` | `record` received a stop request | `reason`: `SIGINT`, `SIGTERM` or `stdin` |
 | `warning` | The run succeeded with a caveat | `message` |
 | `error` | A failure was reported | `message` |

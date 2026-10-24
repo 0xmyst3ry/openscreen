@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { CliRequest } from "../../src/lib/cliContracts";
+import { audioRenderPath, type CliRequest } from "../../src/lib/cliContracts";
 import { createRunnerHost, type RunnerIpc } from "./runnerHost";
 
 type Listener = (event: { sender: { id: number } }, ...args: unknown[]) => unknown;
@@ -77,6 +80,38 @@ describe("createRunnerHost", () => {
 		ipc.call(1, "cli-done", { success: false, error: "no display" });
 		await expect(second.done).resolves.toEqual({ success: true, captionCount: 3 });
 		await expect(first.done).resolves.toEqual({ success: false, error: "no display" });
+	});
+
+	it("removes the video an audio export rendered its audio from, and keeps a video export's", async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), "runner-host-"));
+		const outPath = path.join(dir, "voice.wav");
+		await writeFile(audioRenderPath(outPath), "mp4");
+		await writeFile(path.join(dir, "demo.mp4"), "mp4");
+		const { ipc, host } = setup();
+		const exportOf = (format: "wav" | "mp4", out: string): CliRequest => ({
+			kind: "export",
+			projectPath: path.join(dir, "p.openscreen"),
+			outPath: out,
+			format,
+			quality: null,
+			mp4FrameRate: 60,
+			gifFrameRate: null,
+			gifSizePreset: null,
+			gifLoop: null,
+			autoZoom: false,
+			audioPath: null,
+			audioMode: "mix",
+			audioOffsetSec: 0,
+		});
+		const audio = host.start(exportOf("wav", outPath));
+		const video = host.start(exportOf("mp4", path.join(dir, "demo.mp4.render.mp4")));
+		await writeFile(path.join(dir, "demo.mp4.render.mp4.render.mp4"), "mp4");
+		ipc.call(1, "cli-done", { success: true, outputPath: outPath });
+		ipc.call(2, "cli-done", { success: true });
+		await audio.done;
+		await video.done;
+		expect((await readdir(dir)).sort()).toEqual(["demo.mp4", "demo.mp4.render.mp4.render.mp4"]);
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	it("routes logs and progress to the run they came from", () => {

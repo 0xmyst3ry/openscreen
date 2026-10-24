@@ -6,6 +6,17 @@ import type { ExportQuality, GifFrameRate, GifSizePreset, Mp4FrameRate } from ".
 
 export type CliCursorCaptureMode = "editable-overlay" | "system";
 
+export type AudioExportFormat = "wav" | "m4a";
+
+export function isAudioExportFormat(format: string | null): format is AudioExportFormat {
+	return format === "wav" || format === "m4a";
+}
+
+/** Where the audio export renders its MP4 before taking the audio out: beside the output. */
+export function audioRenderPath(outPath: string): string {
+	return `${outPath}.render.mp4`;
+}
+
 export interface CliExportRequest {
 	kind: "export";
 	/** Absolute path to the .openscreen project file. */
@@ -19,8 +30,8 @@ export interface CliExportRequest {
 	projectId?: string;
 	/** Absolute output path; null = derive from projectPath + format. */
 	outPath: string | null;
-	/** null = use the format stored in the project. */
-	format: "mp4" | "gif" | null;
+	/** null = use the format stored in the project. wav and m4a write the project's audio only. */
+	format: "mp4" | "gif" | "wav" | "m4a" | null;
 	/** null = use the quality stored in the project. */
 	quality: ExportQuality | null;
 	/** MP4 frame rate, as the Export dialog offers it. */
@@ -46,6 +57,11 @@ export interface CliExportRequest {
 	audioMode: "mix" | "replace";
 	/** Delay before the voiceover starts, in seconds. */
 	audioOffsetSec: number;
+	/**
+	 * wav/m4a only: write this imported track alone (its `audioId`), as the export mixes it,
+	 * instead of the whole programme. Absent or null = the programme audio.
+	 */
+	audioTrackId?: string | null;
 }
 
 export interface CliRecordRequest {

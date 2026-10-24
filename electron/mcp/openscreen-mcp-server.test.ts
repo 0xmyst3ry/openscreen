@@ -209,6 +209,7 @@ describe("the MCP tool surface", () => {
 			"stopRecording",
 			"setPointerTrack",
 			"exportVideo",
+			"exportAudio",
 			"getFrames",
 			"createProject",
 		]);
@@ -259,7 +260,9 @@ describe("the MCP tool surface", () => {
 			"Without a projectId they act on the project open in the editor",
 		);
 		expect(instructions).toContain("startRecording hands over to OpenScreen's recording bar");
-		expect(instructions).toContain("startRecording, exportVideo and createProject are refused too");
+		expect(instructions).toContain(
+			"startRecording, exportVideo, exportAudio and createProject are refused too",
+		);
 		expect(instructions).toContain("all of them are lost when OpenScreen quits.");
 		expect(instructions).toContain("turn on 'MCP edits' under MCP server in AI settings");
 		expect(instructions).not.toContain("Agent edits");

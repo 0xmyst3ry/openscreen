@@ -84,6 +84,29 @@ describe("parseCliArgs", () => {
 		});
 	});
 
+	it("exports the audio alone to a .wav or .m4a, the whole programme or one track", () => {
+		expect(
+			parse(["export", "a.openscreen", "-o", "voice.wav", "--track", "audio_1"]),
+		).toMatchObject({
+			kind: "export",
+			outPath: inCwd("voice.wav"),
+			format: "wav",
+			audioTrackId: "audio_1",
+		});
+		expect(parse(["export", "a.openscreen", "--format", "m4a"])).toMatchObject({ format: "m4a" });
+		// One track only makes an audio file, and an audio file takes none of the picture's options.
+		for (const args of [
+			["--track", "audio_1"],
+			["-o", "out.mp4", "--track", "audio_1"],
+			["-o", "out.wav", "--audio", "v.mp3"],
+			["-o", "out.wav", "--quality", "good"],
+			["-o", "out.m4a", "--gif-size", "small"],
+			["-o", "out.flac"],
+		]) {
+			expect(parse(["export", "a.openscreen", ...args])).toMatchObject({ kind: "error" });
+		}
+	});
+
 	it("defaults audio mode to mix and rejects --audio with gif", () => {
 		expect(parse(["export", "a.openscreen", "--audio", "v.mp3"])).toMatchObject({
 			audioMode: "mix",

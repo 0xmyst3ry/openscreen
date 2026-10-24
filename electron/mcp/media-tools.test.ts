@@ -706,6 +706,42 @@ describe("exportVideo", () => {
 	});
 });
 
+describe("exportAudio", () => {
+	it("renders the project's audio, or one track of it, to the path asked for", async () => {
+		const { projectId } = await recordTake();
+		const outPath = path.join(dir, "voice.m4a");
+		runners.results.export = { success: true, outputPath: outPath, format: "m4a" };
+		const exported = await call("exportAudio", { projectId, path: outPath, audioId: "audio_1" });
+		expect(exported.isError).toBeFalsy();
+		expect(JSON.parse(textOf(exported))).toEqual({ path: outPath, format: "m4a" });
+		expect(runners.started.at(-1)).toMatchObject({
+			kind: "export",
+			projectPath: documents.filePathFor(projectId),
+			projectId,
+			outPath,
+			format: "m4a",
+			mp4FrameRate: 60,
+			audioTrackId: "audio_1",
+		});
+		await call("exportAudio", { projectId, path: path.join(dir, "mix.wav") });
+		expect(runners.started.at(-1)).toMatchObject({ format: "wav", audioTrackId: null });
+		expect(runners.open).toBe(0);
+	});
+
+	it("refuses a path that is not audio or an unknown project, and reports a failed render", async () => {
+		const { projectId } = await recordTake();
+		const exports = () => runners.started.filter((request) => request.kind === "export").length;
+		const before = exports();
+		expect((await call("exportAudio", { projectId, path: "out.mp3" })).isError).toBe(true);
+		const unknown = await call("exportAudio", { projectId: "proj_x", path: "out.wav" });
+		expect(textOf(unknown)).toContain('No project has the id "proj_x"');
+		expect(exports()).toBe(before);
+		runners.results.export = { success: false, error: "no audio track" };
+		const failed = await call("exportAudio", { projectId, path: "out.wav" });
+		expect(textOf(failed)).toContain("no audio track");
+	});
+});
+
 describe("getFrames on a project", () => {
 	it("reads the last export at the ruler seconds the document tools use", async () => {
 		const { projectId } = await recordTake();
@@ -976,7 +1012,7 @@ describe("the media tools in the app", () => {
 		allowed = false;
 		const app = await connectApp();
 		expect(app.getInstructions()).toContain(
-			"startRecording, exportVideo and createProject are refused too while 'MCP edits'",
+			"startRecording, exportVideo, exportAudio and createProject are refused too while 'MCP edits'",
 		);
 		const started = await callOn(app, "startRecording", {});
 		expect(started.isError).toBe(true);

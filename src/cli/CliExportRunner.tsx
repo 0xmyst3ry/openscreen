@@ -18,8 +18,14 @@ import {
 	appendAutoZoomSuggestions,
 	collectAutoZoomSuggestionsForDocument,
 } from "@/lib/ai-edition/timeline/apply-auto-zooms";
-import type { CliDoneResult, CliExportRequest } from "@/lib/cliContracts";
+import {
+	audioRenderPath,
+	type CliDoneResult,
+	type CliExportRequest,
+	isAudioExportFormat,
+} from "@/lib/cliContracts";
 import { GIF_SIZE_PRESETS, type GifSizePreset } from "@/lib/exporter";
+import { extractAudio, isolateAudioTrack } from "@/lib/exporter/audioExport";
 import { calculateMp4ExportSettings } from "@/lib/exporter/mp4ExportSettings";
 import { outputFrameCount } from "@/lib/exporter/outputFrameCount";
 import { mixVoiceoverIntoVideo } from "@/lib/exporter/voiceoverMix";
@@ -67,10 +73,14 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	let axcutDocument = project.document;
 
 	const format = request.format ?? editor.exportFormat;
-	if (request.audioPath && format === "gif") {
+	const audioFormat = isAudioExportFormat(format) ? format : null;
+	if (request.audioPath && format !== "mp4") {
 		throw new Error(
-			"--audio is only supported for MP4 exports (this project's stored format is gif; pass --format mp4)",
+			`--audio is only supported for MP4 exports (this export's format is ${format}; pass --format mp4)`,
 		);
+	}
+	if (request.audioTrackId && !audioFormat) {
+		throw new Error("--track is only supported for audio exports (.wav or .m4a)");
 	}
 	if (request.quality && format === "gif") {
 		throw new Error(
@@ -82,8 +92,7 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	const gifSizePreset = request.gifSizePreset ?? editor.gifSizePreset;
 	const gifLoop = request.gifLoop ?? editor.gifLoop;
 	const mp4FrameRate = request.mp4FrameRate;
-	const outPath =
-		request.outPath ?? replaceExtension(request.projectPath, format === "gif" ? ".gif" : ".mp4");
+	const outPath = request.outPath ?? replaceExtension(request.projectPath, `.${format}`);
 	// Use the same per-clip auto-zoom suggestions as the editor, including its default span and
 	// anchoring behavior.
 	if (request.autoZoom) {
@@ -115,6 +124,10 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 		});
 	const outDims = dimsFor(quality);
 
+	// One track alone: the export of a project whose only sound is that track.
+	const soloTrack = Boolean(request.audioTrackId);
+	if (request.audioTrackId) axcutDocument = isolateAudioTrack(axcutDocument, request.audioTrackId);
+
 	const builtClips = buildNativeClipList(axcutDocument);
 	if (builtClips.length === 0) {
 		throw new Error("The project's timeline has no visible clips to export");
@@ -122,12 +135,17 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	// The scene carries the click hits, whose cues and staged samples are read out of caches a
 	// scene build cannot await — without this a cold CLI export builds its scene from empty
 	// caches and comes out silent. Clicks that will not load must not cost the export.
-	await prepareClickSound(axcutDocument).catch(() => undefined);
-	const sceneDesc = buildSceneDescription(axcutDocument);
+	if (!soloTrack) await prepareClickSound(axcutDocument).catch(() => undefined);
+	const built = buildSceneDescription(axcutDocument);
+	// A track alone is heard without the take's sound and the clicks.
+	const sceneDesc = soloTrack ? { ...built, clickSound: undefined } : built;
+	if (soloTrack && sceneDesc.audioTracks.length === 0) {
+		throw new Error(`The audio track "${request.audioTrackId}" plays nowhere in the export`);
+	}
 
 	// The webcam background effect is applied by the compositor from the scene, so the clip
 	// list needs no pre-rendering pass.
-	const clips = builtClips;
+	const clips = soloTrack ? builtClips.map((clip) => ({ ...clip, hasAudio: false })) : builtClips;
 	const sceneJson = JSON.stringify(sceneDesc);
 
 	// Progress: native pushes raw encoded-frame counts; totals and pacing are
@@ -164,6 +182,29 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 				width: dims.width,
 				height: dims.height,
 			};
+		}
+
+		if (audioFormat) {
+			// The audio of the MP4 this project exports to, rendered at the smallest size: the
+			// picture is thrown away, the frame rate stays the one the audio is laid out on.
+			const renderPath = audioRenderPath(outPath);
+			const dims = dimsFor("medium");
+			await exportMultiNative(clips, renderPath, sceneJson, {
+				width: dims.width,
+				height: dims.height,
+				fps: mp4FrameRate,
+				codec: "h264",
+				bitrate: dims.bitrate,
+			});
+			window.electronAPI.cliProgress({ percentage: 100, phase: "extracting-audio" });
+			const rendered = await fetch(toFileUrl(renderPath));
+			if (!rendered.ok) throw new Error(`Failed to read the rendered video back: ${renderPath}`);
+			const audio = await extractAudio(await rendered.blob(), audioFormat);
+			const saveResult = await window.electronAPI.writeExportToPath(audio, outPath);
+			if (!saveResult.success) {
+				throw new Error(saveResult.message ?? `Failed to write the audio to ${outPath}`);
+			}
+			return { success: true, outputPath: outPath, format };
 		}
 
 		// MP4: native writes outPath directly. When a voiceover is requested, mix

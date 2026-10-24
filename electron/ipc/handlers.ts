@@ -4229,7 +4229,7 @@ export function registerIpcHandlers(
 				return { success: false, message: "Invalid path" };
 			}
 			const lower = filePath.toLowerCase();
-			if (!lower.endsWith(".mp4") && !lower.endsWith(".gif")) {
+			if (![".mp4", ".gif", ".wav", ".m4a"].some((extension) => lower.endsWith(extension))) {
 				return { success: false, message: "Invalid file type" };
 			}
 
