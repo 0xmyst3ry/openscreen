@@ -22,6 +22,7 @@ import {
 	audioRenderPath,
 	type CliDoneResult,
 	type CliExportRequest,
+	defaultExportPath,
 	isAudioExportFormat,
 } from "@/lib/cliContracts";
 import { GIF_SIZE_PRESETS, type GifSizePreset } from "@/lib/exporter";
@@ -33,10 +34,6 @@ import { exportGifNative, exportMultiNative, nativeBridgeClient } from "@/native
 import { buildNativeClipList, buildSceneDescription } from "@/native/sceneDescription";
 import { type ExportProject, loadDocumentProject } from "./exportProject";
 import { loadCliProject, probeVideoDimensions } from "./loadCliProject";
-
-function replaceExtension(filePath: string, newExtension: string): string {
-	return filePath.replace(/\.(openscreen|json)$/i, "") + newExtension;
-}
 
 /** Mirrors ExportDialog.gifOutputDims: from the "Source" size, cap height at the preset, keep even. */
 function gifOutputDims(
@@ -92,7 +89,7 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	const gifSizePreset = request.gifSizePreset ?? editor.gifSizePreset;
 	const gifLoop = request.gifLoop ?? editor.gifLoop;
 	const mp4FrameRate = request.mp4FrameRate;
-	const outPath = request.outPath ?? replaceExtension(request.projectPath, `.${format}`);
+	const outPath = request.outPath ?? defaultExportPath(request.projectPath, format);
 	// Use the same per-clip auto-zoom suggestions as the editor, including its default span and
 	// anchoring behavior.
 	if (request.autoZoom) {
