@@ -139,7 +139,7 @@ openscreen export demo.openscreen -o voice.wav --track audio_1234     # one impo
 |---|---|
 | `-o, --out <path>` | Output file. The extension, `.mp4`, `.gif`, `.wav` or `.m4a`, sets the format. Default: the project's path with the format's extension |
 | `--format <mp4\|gif\|wav\|m4a>` | Override the format stored in the project. Must agree with `--out`. `wav` and `m4a` write the project's audio only, as the MP4 mixes it |
-| `--track <audioId>` | WAV and M4A only: write this imported audio track alone, where it plays in the MP4, with its offset, trims, gain and fades. The file lasts as long as the video. The id is the track's `audioId` (from `addAudio`, or `audioTracks` in the project) |
+| `--track <audioId>` | WAV and M4A only: write this imported audio track alone, where it plays in the MP4, with its offset, trims, gain and fades. The file lasts as long as the video. The id is the track's `audioId` (from `addAudio`), or an `audioTracks` entry's `trackId` in the project, its `id` when it has no `trackId` |
 | `--quality <medium\|good\|source>` | Output size: `medium` is 720p, `good` is 1080p, `source` follows the smallest clip after cropping, so it never upscales. MP4 only: a GIF starts from the source size, as in the app |
 | `--fps <24\|30\|60>` | MP4 frame rate (default 60) |
 | `--gif-fps <15\|20\|25\|30>` | GIF frame rate |

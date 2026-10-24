@@ -88,7 +88,7 @@ describe("createRunnerHost", () => {
 		await writeFile(audioRenderPath(outPath), "mp4");
 		await writeFile(path.join(dir, "demo.mp4"), "mp4");
 		const { ipc, host } = setup();
-		const exportOf = (format: "wav" | "mp4", out: string): CliRequest => ({
+		const exportOf = (format: "wav" | "mp4", out: string | null): CliRequest => ({
 			kind: "export",
 			projectPath: path.join(dir, "p.openscreen"),
 			outPath: out,
@@ -106,10 +106,15 @@ describe("createRunnerHost", () => {
 		const audio = host.start(exportOf("wav", outPath));
 		const video = host.start(exportOf("mp4", path.join(dir, "demo.mp4.render.mp4")));
 		await writeFile(path.join(dir, "demo.mp4.render.mp4.render.mp4"), "mp4");
+		// Without --out, a failed run reports no outputPath: the render beside p.wav still goes.
+		const failed = host.start(exportOf("wav", null));
+		await writeFile(audioRenderPath(path.join(dir, "p.wav")), "mp4");
 		ipc.call(1, "cli-done", { success: true, outputPath: outPath });
 		ipc.call(2, "cli-done", { success: true });
+		ipc.call(3, "cli-done", { success: false, error: "render failed" });
 		await audio.done;
 		await video.done;
+		await failed.done;
 		expect((await readdir(dir)).sort()).toEqual(["demo.mp4", "demo.mp4.render.mp4.render.mp4"]);
 		await rm(dir, { recursive: true, force: true });
 	});

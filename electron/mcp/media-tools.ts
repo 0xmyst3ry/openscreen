@@ -917,7 +917,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 			"exportAudio",
 			{
 				description:
-					"Write a project's audio to a WAV or an M4A, exactly as exportVideo's MP4 mixes it: the recording's sound, the imported tracks with their offset, trims, gain and fades, through the same cuts and speed regions. With audioId (addAudio's, or an audioTracks id), only that track, alone, placed where it plays in the export: the file lasts as long as the video, silent around the track. It renders the project as an export does, so it takes about as long as exportVideo.",
+					"Write a project's audio to a WAV or an M4A, exactly as exportVideo's MP4 mixes it: the recording's sound, the imported tracks with their offset, trims, gain and fades, through the same cuts and speed regions. With audioId (addAudio's, or an audioTracks entry's trackId, its id when it has no trackId), only that track, alone, placed where it plays in the export: the file lasts as long as the video, silent around the track. It renders the project as an export does, so it takes about as long as exportVideo.",
 				inputSchema: z.object({
 					projectId: z.string(),
 					path: z.string().describe(AUDIO_PATH_DESCRIPTIONS[transport]),

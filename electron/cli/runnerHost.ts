@@ -12,6 +12,7 @@ import {
 	type CliDoneResult,
 	type CliProgressEvent,
 	type CliRequest,
+	defaultExportPath,
 	isAudioExportFormat,
 } from "../../src/lib/cliContracts";
 
@@ -109,12 +110,15 @@ export function createRunnerHost<W extends RunnerWindow>(
 				runs.set(id, { request, handlers, resolve });
 			});
 			// An audio export renders an MP4 beside its output that the runner cannot delete.
+			const audioFormat =
+				request.kind === "export" && isAudioExportFormat(request.format) ? request.format : null;
 			const done =
-				request.kind === "export" && isAudioExportFormat(request.format)
+				request.kind === "export" && audioFormat
 					? reported.then(async (result) => {
-							const outPath = request.outPath ?? result.outputPath;
-							if (outPath)
-								await rm(audioRenderPath(outPath), { force: true }).catch(() => undefined);
+							// Derived as the runner derives it: a failed run reports no outputPath.
+							const outPath =
+								request.outPath ?? defaultExportPath(request.projectPath, audioFormat);
+							await rm(audioRenderPath(outPath), { force: true }).catch(() => undefined);
 							return result;
 						})
 					: reported;

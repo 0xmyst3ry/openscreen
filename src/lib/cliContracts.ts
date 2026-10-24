@@ -12,6 +12,11 @@ export function isAudioExportFormat(format: string | null): format is AudioExpor
 	return format === "wav" || format === "m4a";
 }
 
+/** Where an export without --out lands: beside the project, with the format's extension. */
+export function defaultExportPath(projectPath: string, format: string): string {
+	return `${projectPath.replace(/\.(openscreen|json)$/i, "")}.${format}`;
+}
+
 /** Where the audio export renders its MP4 before taking the audio out: beside the output. */
 export function audioRenderPath(outPath: string): string {
 	return `${outPath}.render.mp4`;
