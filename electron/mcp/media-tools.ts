@@ -14,7 +14,12 @@
 
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type {
+	CallToolResult,
+	ServerNotification,
+	ServerRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { CursorTelemetryPoint } from "../../src/components/video-editor/types";
 import {
@@ -26,7 +31,12 @@ import {
 	appendAutoZoomSuggestions,
 	collectAutoZoomSuggestionsForDocument,
 } from "../../src/lib/ai-edition/timeline/apply-auto-zooms";
-import type { CliDoneResult, CliRecordRequest, CliRequest } from "../../src/lib/cliContracts";
+import {
+	type CliDoneResult,
+	type CliRecordRequest,
+	type CliRequest,
+	isAudioExportFormat,
+} from "../../src/lib/cliContracts";
 import { HIDDEN_WINDOWS_NOTE } from "../../src/lib/cliSourcePick";
 import {
 	GIF_SIZE_PRESETS,
@@ -263,6 +273,12 @@ const EXPORT_PATH_DESCRIPTIONS: Record<McpTransport, string> = {
 		"Where to write the video: an absolute path, or one relative to this server's working directory, ending in .mp4 or .gif.",
 };
 
+const AUDIO_PATH_DESCRIPTIONS: Record<McpTransport, string> = {
+	http: "Where to write the audio: an absolute path ending in .wav or .m4a. This server runs inside the app, so it has no working directory of yours to resolve a relative one against.",
+	stdio:
+		"Where to write the audio: an absolute path, or one relative to this server's working directory, ending in .wav or .m4a.",
+};
+
 const GATED_MESSAGE = `Nothing was recorded or exported: OpenScreen lets MCP clients record and export only while the user allows it. Ask the user to turn on ${MCP_EDITS_SETTING}.`;
 
 /** A path a client passed, resolved; `null` for a relative one the in-app server cannot place. */
@@ -334,6 +350,22 @@ export async function pointerTrackEdit(
 }
 
 type Run = ReturnType<MediaToolDeps["runners"]["start"]>;
+
+/** An export's progress, sent to the client when it asked for it. */
+function progressNotifier(
+	extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+): RunnerHandlers["onProgress"] {
+	const progressToken = extra._meta?.progressToken;
+	return (progress) => {
+		if (progressToken === undefined) return;
+		void extra
+			.sendNotification({
+				method: "notifications/progress",
+				params: { progressToken, progress: progress.percentage, total: 100 },
+			})
+			.catch(() => undefined);
+	};
+}
 
 /** A runner's result, its hidden window closed: the server outlives every runner. */
 async function finish(run: Run): Promise<CliDoneResult> {
@@ -816,7 +848,6 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 						true,
 					);
 				}
-				const progressToken = extra._meta?.progressToken;
 				exporting = true;
 				try {
 					// The project as the export reads it, and when: getFrames maps ruler seconds through
@@ -847,17 +878,7 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 							audioMode: "mix",
 							audioOffsetSec: 0,
 						},
-						{
-							onProgress: (progress) => {
-								if (progressToken === undefined) return;
-								void extra
-									.sendNotification({
-										method: "notifications/progress",
-										params: { progressToken, progress: progress.percentage, total: 100 },
-									})
-									.catch(() => undefined);
-							},
-						},
+						{ onProgress: progressNotifier(extra) },
 					);
 					const result = await finish(run);
 					if (!result.success) {
@@ -886,6 +907,70 @@ export function createMediaTools(deps: MediaToolDeps): MediaTools {
 							height: result.height,
 						}),
 					);
+				} finally {
+					exporting = false;
+				}
+			},
+		);
+
+		server.registerTool(
+			"exportAudio",
+			{
+				description:
+					"Write a project's audio to a WAV or an M4A, exactly as exportVideo's MP4 mixes it: the recording's sound, the imported tracks with their offset, trims, gain and fades, through the same cuts and speed regions. With audioId (addAudio's, or an audioTracks id), only that track, alone, placed where it plays in the export: the file lasts as long as the video, silent around the track. It renders the project as an export does, so it takes about as long as exportVideo.",
+				inputSchema: z.object({
+					projectId: z.string(),
+					path: z.string().describe(AUDIO_PATH_DESCRIPTIONS[transport]),
+					audioId: z
+						.string()
+						.optional()
+						.describe("Export this imported track alone. Default: the whole programme audio."),
+				}),
+				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			},
+			async (args, extra) => {
+				if (!deps.editsAllowed()) return text(GATED_MESSAGE, true);
+				if (take) return text("A recording is running. Stop it before exporting.", true);
+				if (exporting)
+					return text("An export is already running. Wait for it, then try again.", true);
+				const outPath = clientPath(transport, args.path);
+				if (!outPath) return text(`The path must be absolute, got "${args.path}".`, true);
+				const format = path.extname(outPath).toLowerCase().slice(1);
+				if (!isAudioExportFormat(format)) {
+					return text(`The path must end in .wav or .m4a, got "${args.path}".`, true);
+				}
+				exporting = true;
+				try {
+					if (!(await deps.documents.getProject(args.projectId).catch(() => null))) {
+						return text(`No project has the id "${args.projectId}".`, true);
+					}
+					const result = await finish(
+						deps.runners.start(
+							{
+								kind: "export",
+								projectPath: deps.documents.filePathFor(args.projectId),
+								projectId: args.projectId,
+								outPath,
+								format,
+								quality: null,
+								// The frame grid exportVideo lays the audio out on by default.
+								mp4FrameRate: EXPORT_FPS,
+								gifFrameRate: null,
+								gifSizePreset: null,
+								gifLoop: null,
+								autoZoom: false,
+								audioPath: null,
+								audioMode: "mix",
+								audioOffsetSec: 0,
+								audioTrackId: args.audioId ?? null,
+							},
+							{ onProgress: progressNotifier(extra) },
+						),
+					);
+					if (!result.success) {
+						return text(`The export failed: ${result.error ?? "unknown error"}`, true);
+					}
+					return text(JSON.stringify({ path: result.outputPath, format: result.format }));
 				} finally {
 					exporting = false;
 				}

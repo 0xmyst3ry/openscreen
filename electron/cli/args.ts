@@ -6,7 +6,12 @@ import {
 	CAPTION_WORDS_PER_LINE_MAX,
 	CAPTION_WORDS_PER_LINE_MIN,
 } from "../../src/lib/ai-edition/captions/wordsPerLine";
-import type { CliExportRequest, CliRecordRequest, CliRequest } from "../../src/lib/cliContracts";
+import {
+	type CliExportRequest,
+	type CliRecordRequest,
+	type CliRequest,
+	isAudioExportFormat,
+} from "../../src/lib/cliContracts";
 import {
 	GIF_SIZE_PRESETS,
 	type GifSizePreset,
@@ -80,7 +85,7 @@ const SUBCOMMANDS = new Set([
 export const CLI_USAGE = `OpenScreen CLI
 
 Usage:
-  openscreen export <project.openscreen> [options]   Render a project to MP4/GIF
+  openscreen export <project.openscreen> [options]   Render a project to MP4/GIF, or its audio to WAV/M4A
   openscreen record [options]                        Record the screen headlessly
   openscreen sources [--json] [-o <file>]            List displays, windows, microphones and cameras
   openscreen pack <project.openscreen> --out <dir>   Copy project + media into one portable folder
@@ -91,8 +96,11 @@ Usage:
   openscreen help                                    Show this help
 
 Export options:
-  -o, --out <path>          Output file (.mp4 or .gif). Default: next to the project file
-  --format <mp4|gif>        Override the format stored in the project
+  -o, --out <path>          Output file (.mp4, .gif, .wav or .m4a). Default: next to the project file
+  --format <mp4|gif|wav|m4a>
+                            Override the format stored in the project. wav and m4a write
+                            the project's audio only, as the MP4 export mixes it
+  --track <audioId>         WAV/M4A only: write this imported audio track alone
   --quality <medium|good|source>
                             MP4 quality (default: from project)
   --fps <24|30|60>          MP4 frame rate (default 60)
@@ -221,8 +229,8 @@ function parseExport(args: string[], cwd: string): CliCommand {
 			}
 			case "--format": {
 				const [value, next] = takeValue(args, i, arg);
-				if (value !== "mp4" && value !== "gif") {
-					throw new Error(`--format must be mp4 or gif, got "${value}"`);
+				if (value !== "mp4" && value !== "gif" && !isAudioExportFormat(value)) {
+					throw new Error(`--format must be mp4, gif, wav or m4a, got "${value}"`);
 				}
 				request.format = value;
 				i = next;
@@ -271,6 +279,12 @@ function parseExport(args: string[], cwd: string): CliCommand {
 			case "--no-gif-loop":
 				request.gifLoop = arg === "--gif-loop";
 				break;
+			case "--track": {
+				const [value, next] = takeValue(args, i, arg);
+				request.audioTrackId = value;
+				i = next;
+				break;
+			}
 			case "--auto-zoom":
 				request.autoZoom = true;
 				break;
@@ -314,21 +328,24 @@ function parseExport(args: string[], cwd: string): CliCommand {
 	if (!request.projectPath) throw new Error("export requires a <project.openscreen> path");
 	if (request.outPath) {
 		const ext = path.extname(request.outPath).toLowerCase();
-		if (ext !== ".mp4" && ext !== ".gif") {
-			throw new Error(`--out must end in .mp4 or .gif, got "${request.outPath}"`);
+		const extFormat = ext.slice(1);
+		if (extFormat !== "mp4" && extFormat !== "gif" && !isAudioExportFormat(extFormat)) {
+			throw new Error(`--out must end in .mp4, .gif, .wav or .m4a, got "${request.outPath}"`);
 		}
-		const extFormat = ext === ".gif" ? "gif" : "mp4";
 		if (request.format && request.format !== extFormat) {
 			throw new Error(`--format ${request.format} conflicts with --out extension ${ext}`);
 		}
 		request.format = extFormat;
 	}
 	// After --out resolves the format, so `--audio … -o out.gif` is caught too.
-	if (request.audioPath && request.format === "gif") {
+	if (request.audioPath && (request.format === "gif" || isAudioExportFormat(request.format))) {
 		throw new Error("--audio is only supported for MP4 exports");
 	}
+	if (request.audioTrackId && !isAudioExportFormat(request.format)) {
+		throw new Error("--track is only supported for audio exports (.wav or .m4a)");
+	}
 	// The MP4 options: a GIF is sized from the source and has its own frame rate.
-	if (request.format === "gif" && request.quality) {
+	if (request.format !== "mp4" && request.format !== null && request.quality) {
 		throw new Error("--quality is only supported for MP4 exports");
 	}
 	if (request.format === "gif" && args.includes("--fps")) {
@@ -338,7 +355,7 @@ function parseExport(args: string[], cwd: string): CliCommand {
 	const gifFlag = ["--gif-fps", "--gif-size", "--gif-loop", "--no-gif-loop"].find((flag) =>
 		args.includes(flag),
 	);
-	if (request.format === "mp4" && gifFlag) {
+	if (request.format !== "gif" && request.format !== null && gifFlag) {
 		throw new Error(`${gifFlag} is only supported for GIF exports`);
 	}
 	return request;
